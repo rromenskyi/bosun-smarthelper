@@ -252,8 +252,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…` },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…` }
     };
 
     function escapeHTML(value) {
@@ -319,6 +319,24 @@
       let liveBubble = null;
       let liveProse = '';
       let liveFoldBody = null;
+      // A "queued" event arrives, at most once, before the first step_start
+      // when the local model was busy — a distinct placeholder bubble (not
+      // liveBubble/liveRow) since it never accumulates any delta text of
+      // its own; startStep() below discards it outright once real work
+      // actually begins.
+      let queuedRow = null;
+
+      function clearQueued() {
+        if (queuedRow) {
+          queuedRow.remove();
+          queuedRow = null;
+        }
+      }
+
+      function showQueued(position) {
+        clearQueued();
+        queuedRow = addMessage('assistant', text[language.value].queuedPosition(position), 'thinking live');
+      }
 
       function finalizeLiveBubble() {
         if (!liveBubble) return;
@@ -334,6 +352,7 @@
       }
 
       function startStep() {
+        clearQueued();
         finalizeLiveBubble();
         const row = addMessage('assistant', text[language.value][`${currentProvider}Waiting`], 'thinking live');
         liveRow = row;
@@ -394,7 +413,9 @@
               buffer = buffer.slice(newlineIndex + 1);
               if (!line.trim()) continue;
               const event = JSON.parse(line);
-              if (event.type === 'step_start') {
+              if (event.type === 'queued') {
+                showQueued(event.position);
+              } else if (event.type === 'step_start') {
                 startStep();
               } else if (event.type === 'delta') {
                 appendDelta(event.kind, event.text);
@@ -423,6 +444,7 @@
           addMessage('assistant', data.answer);
         }
       } catch (error) {
+        clearQueued();
         finalizeLiveBubble();
         addMessage('assistant', text[language.value][error.name === 'AbortError' ? 'cancelled' : 'error'], 'error');
       } finally {

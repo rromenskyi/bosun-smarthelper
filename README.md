@@ -25,7 +25,11 @@ Early foundation. Working today:
   instead of appearing all at once (Ollama and OpenAI-compatible SSE, both
   local and remote). A tool call's raw encoding is folded into a collapsed,
   expandable detail rather than ever shown as-is — see
-  `docs/streaming.md`. A **stop** button cancels an in-flight request.
+  `docs/streaming.md`. A **stop** button cancels an in-flight request. Only
+  the local model serializes concurrent requests (it's weak, shared
+  hardware) — a second request while it's busy is told its queue position
+  instead of waiting silently; the remote provider handles concurrency on
+  its own and is never queued.
 - **Multi-turn web sessions** — prior user/assistant turns are retained by
   session ID with configurable history and expiration limits, persisted to
   disk so they survive both a page reload and a service restart.

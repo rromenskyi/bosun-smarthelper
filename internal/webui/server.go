@@ -84,6 +84,7 @@ type streamEvent struct {
 	Text      string `json:"text,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	Message   string `json:"message,omitempty"`
+	Position  int    `json:"position,omitempty"`
 }
 
 // Status describes the provider that would currently serve a request.
@@ -100,7 +101,7 @@ type Server struct {
 	logger            *slog.Logger
 	requestTimeout    time.Duration
 	defaultLanguage   string
-	chatSlot          chan struct{}
+	local             localQueue
 	sessionsMu        sync.Mutex
 	sessions          map[string]chatSession
 	sessionOptions    SessionOptions
@@ -120,12 +121,16 @@ func (s *Server) markChatActivity() {
 	s.activityMu.Unlock()
 }
 
-// TryIdleAfter runs fn only if no chat request is currently in flight AND
-// at least quiet has passed since the last one finished, claiming the same
-// slot a chat request would (so the two never run concurrently on this
-// host's shared, weak hardware). Returns false without running fn if
-// either condition isn't met — the caller is expected to just try again
-// later (e.g. background memo tag normalization; see docs/memo-search.md).
+// TryIdleAfter runs fn only if at least quiet has passed since the last
+// chat request finished, and — only when the *local* model is what's
+// currently serving chat — no local generation is in flight either
+// (claiming the same slot handleChat's local path would, so the two never
+// run concurrently on this host's shared, weak hardware). A remote-served
+// chat has no such shared-hardware contention with a background LLM call,
+// so when online, only the quiet-period check applies. Returns false
+// without running fn if a condition isn't met — the caller is expected to
+// just try again later (e.g. background memo tag normalization; see
+// docs/memo-search.md).
 //
 // The quiet-period check matters on top of the slot check alone: without
 // it, a tick landing moments after a chat just ended would immediately
@@ -134,18 +139,21 @@ func (s *Server) markChatActivity() {
 // an instant reply.
 func (s *Server) TryIdleAfter(quiet time.Duration, fn func()) bool {
 	s.activityMu.Lock()
-	sinceLastChat := time.Since(s.lastChatAt)
+	lastChatAt := s.lastChatAt
 	s.activityMu.Unlock()
-	if !s.lastChatAt.IsZero() && sinceLastChat < quiet {
+	if !lastChatAt.IsZero() && time.Since(lastChatAt) < quiet {
 		return false
 	}
 
-	select {
-	case s.chatSlot <- struct{}{}:
-	default:
+	if s.status().Online {
+		fn()
+		return true
+	}
+
+	if !s.local.tryHold() {
 		return false
 	}
-	defer func() { <-s.chatSlot }()
+	defer s.local.release()
 	fn()
 	return true
 }
@@ -260,7 +268,6 @@ func NewServer(
 		logger:          logger,
 		requestTimeout:  requestTimeout,
 		defaultLanguage: defaultLanguage,
-		chatSlot:        make(chan struct{}, 1),
 		sessions:        sessions,
 		sessionOptions:  options,
 	}
@@ -410,25 +417,53 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
 	defer cancel()
-	select {
-	case s.chatSlot <- struct{}{}:
-		defer func() { <-s.chatSlot }()
-		defer s.markChatActivity()
-	case <-ctx.Done():
-		writeJSON(w, http.StatusGatewayTimeout, chatResponse{Error: "assistant is busy"})
-		return
+
+	// Only the local model needs serializing — it's weak, shared hardware
+	// that can't usefully run more than one generation at a time. The
+	// remote provider handles concurrent requests fine on its own, so an
+	// online request never queues at all. See docs/streaming.md.
+	streamer, supportsStreaming := s.asker.(streamingConversationAsker)
+	online := s.status().Online
+	var write func(streamEvent)
+	if !online {
+		turn, position := s.local.join()
+		if position > 0 {
+			if supportsStreaming {
+				// Tell the client immediately instead of leaving it to wait
+				// silently — see index.html's handling of "queued".
+				write = s.newNDJSONWriter(w)
+				write(streamEvent{Type: "queued", Position: position})
+			}
+			s.logger.Info("web chat queued behind the local model", "position", position)
+		}
+		select {
+		case <-turn:
+			defer s.local.release()
+			defer s.markChatActivity()
+		case <-ctx.Done():
+			s.local.abandon(turn)
+			if write != nil {
+				// Already committed to the ndjson stream via the queued
+				// event above — status 200 is locked in, so the failure
+				// has to be an event, not an HTTP status.
+				write(streamEvent{Type: "error", Message: "assistant is busy"})
+			} else {
+				writeJSON(w, http.StatusGatewayTimeout, chatResponse{Error: "assistant is busy"})
+			}
+			return
+		}
 	}
 
 	history := s.loadHistory(sessionID)
-	if !s.status().Online {
+	if !online {
 		// The local model is about to serve this request: trim to its small
 		// budget for the outgoing call only. The full history stays in the
 		// session (bounded by the larger Remote budget in saveTurn) so a
 		// later online turn isn't missing context it never actually lost.
 		history = trimHistory(history, s.sessionOptions.Local.Turns, s.sessionOptions.Local.MaxChars)
 	}
-	if streamer, ok := s.asker.(streamingConversationAsker); ok {
-		s.handleChatStreaming(w, ctx, streamer, sessionID, request.Message, history, language)
+	if supportsStreaming {
+		s.handleChatStreaming(w, ctx, streamer, sessionID, request.Message, history, language, write)
 		return
 	}
 
@@ -459,11 +494,30 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, chatResponse{Answer: answer, SessionID: sessionID})
 }
 
+// newNDJSONWriter sets the response up for newline-delimited JSON events
+// and returns a function that encodes and flushes one. Exposed separately
+// from handleChatStreaming so handleChat can emit a "queued" event (see
+// docs/streaming.md) before the asker call even starts, then hand the same
+// writer into handleChatStreaming instead of it creating a second one.
+func (s *Server) newNDJSONWriter(w http.ResponseWriter) func(streamEvent) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	flusher, _ := w.(http.Flusher)
+	encoder := json.NewEncoder(w)
+	return func(event streamEvent) {
+		_ = encoder.Encode(event)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+}
+
 // handleChatStreaming writes one JSON object per line as the answer is
 // generated. Once the first line is flushed the HTTP status is locked in as
 // 200 by Go's ResponseWriter — success/failure is communicated by the
 // event's "type" ("done" vs "error"), not the HTTP status, since there's no
-// way to change the status after streaming has started.
+// way to change the status after streaming has started. write may already
+// be set (a "queued" event was sent before this was called) — nil means
+// create a fresh one.
 func (s *Server) handleChatStreaming(
 	w http.ResponseWriter,
 	ctx context.Context,
@@ -471,15 +525,10 @@ func (s *Server) handleChatStreaming(
 	sessionID, message string,
 	history []agent.HistoryMessage,
 	language string,
+	write func(streamEvent),
 ) {
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	flusher, _ := w.(http.Flusher)
-	encoder := json.NewEncoder(w)
-	write := func(event streamEvent) {
-		_ = encoder.Encode(event)
-		if flusher != nil {
-			flusher.Flush()
-		}
+	if write == nil {
+		write = s.newNDJSONWriter(w)
 	}
 
 	answer, err := asker.AskWithHistoryStreaming(ctx, message, history, language, func(e agent.StepEvent) {

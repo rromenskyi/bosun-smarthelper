@@ -10,6 +10,7 @@ a web-transport and rendering change.
 the underlying asker supports it (`Content-Type: application/x-ndjson`):
 
 ```
+{"type":"queued","position":1}
 {"type":"step_start"}
 {"type":"delta","kind":"prose","text":"На палубе"}
 {"type":"delta","kind":"fold","text":"<tool_call>...</tool_call>"}
@@ -17,14 +18,42 @@ the underlying asker supports it (`Content-Type: application/x-ndjson`):
 {"type":"delta","kind":"prose","text":"Сейчас 21°C."}
 {"type":"done","session_id":"..."}
 ```
-or `{"type":"error","message":"..."}` in place of `done`. One `step_start`
-per LLM call in the agent's tool-calling loop; `kind: "fold"` marks text
-that shouldn't be shown as plain prose (see below). Once the first line is
-flushed, the HTTP status is locked at 200 — success/failure is the event
-type, not the status code, since there's no way to change it mid-stream.
-A non-streaming asker (any test double implementing only `Ask` or
-`AskWithHistory`) still gets the old single-JSON response; the client
-checks `Content-Type` and handles either.
+or `{"type":"error","message":"..."}` in place of `done`. `queued` appears
+at most once, only when the request had to wait — see "Only the local
+model queues" below. One `step_start` per LLM call in the agent's
+tool-calling loop; `kind: "fold"` marks text that shouldn't be shown as
+plain prose (see below). Once the first line is flushed, the HTTP status
+is locked at 200 — success/failure is the event type, not the status code,
+since there's no way to change it mid-stream. A non-streaming asker (any
+test double implementing only `Ask` or `AskWithHistory`) still gets the
+old single-JSON response; the client checks `Content-Type` and handles
+either — but never sees a `queued` event, since the buffered protocol has
+no way to send anything before the final response (see below).
+
+## Only the local model queues
+
+`handleChat` used to serialize *every* chat request through one slot
+(`chatSlot`), local or remote — but the remote provider handles concurrent
+requests fine on its own; only the local model is weak, shared hardware
+that can't usefully run more than one generation at a time. Now a request
+only touches `internal/webui/local_queue.go`'s `localQueue` when
+`Status.Online` is false; an online request is never queued or slowed down
+by another request at all.
+
+A local request that has to wait is told immediately via `{"type":
+"queued", "position": N}` (`N` = how many turns are ahead of it — 1 means
+next up, right after whoever's currently being served) instead of being
+left to wait silently the way the old single-slot semaphore did. If its
+context expires before its turn arrives, `localQueue.abandon` removes it
+from the queue — or, if the turn was granted in the exact same instant
+(a real race with Go's `select`), passes that turn on to the next waiter
+instead of leaving the slot stuck thinking someone's still holding it.
+
+`webui.Server.TryIdleAfter` (background memo tag normalization — see
+docs/memo-search.md) follows the same split: it only checks/claims the
+local slot when offline; when online, it only waits out its quiet period,
+since there's no shared-hardware contention with a background LLM call to
+a remote provider.
 
 ## Why "fold" exists: the local XML tool-call quirk
 
