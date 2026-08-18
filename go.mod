@@ -1,6 +1,6 @@
 module github.com/roman220/ai-local-smarthelper
 
-go 1.23.0
+go 1.26.0
 
 require (
 	github.com/joho/godotenv v1.5.1

@@ -1,0 +1,11 @@
+.git
+.gitignore
+bin/
+*.jsonl
+*.json
+config.yaml
+.env
+.env.example
+docs/
+deploy/
+*.md

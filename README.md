@@ -172,6 +172,17 @@ Archived notes also have `archived_at`. `list` lets the model review old notes;
 `archive` keeps a note out of the active list, while `delete` physically
 removes it.
 
+## Docker
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+Runs just the Bosun app in a container (the local LLM server stays on the
+host — see `docs/docker.md` for why, plus networking, volumes, and one-off
+command usage).
+
 ## Development
 
 ```bash

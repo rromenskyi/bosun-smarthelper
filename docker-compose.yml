@@ -1,0 +1,20 @@
+services:
+  bosun:
+    build: .
+    image: bosun-smarthelper:local
+    container_name: bosun
+    restart: unless-stopped
+    # Host networking: Bosun is a LAN-only, no-auth personal appliance that
+    # binds to an explicit private IP (see docs/local-deployment.md) and
+    # needs to reach the existing bare-metal llama-server at localhost:1234.
+    # Bridge networking would need both a port-mapping and a host-gateway
+    # alias for zero benefit on a single-host LAN box like this one.
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/etc/smarthelper/config.yaml:ro
+      - bosun-data:/home/bosun/.local/share/bosun
+
+volumes:
+  bosun-data:
