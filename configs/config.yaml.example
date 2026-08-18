@@ -82,6 +82,12 @@ web:
   # session_store_path: ""                  # Empty uses ~/.local/share/bosun/sessions.json.
                                              # Persists chat history across a page reload and a
                                              # service restart; set to a bind mount path etc. if needed.
+  # settings_store_path: ""                 # Empty uses ~/.local/share/bosun/settings.json. Seeds
+                                             # from assistant.*, llm.*.temperature, web.default_language,
+                                             # and memo.canonical_tags above on first run only — after
+                                             # that the web UI's settings page (gear icon) is the
+                                             # source of truth and edits there persist live without a
+                                             # restart. See docs/settings.md.
 
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:

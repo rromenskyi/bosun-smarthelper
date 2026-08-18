@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,8 +19,12 @@ type RemoteClient struct {
 	model        string
 	apiKey       string
 	organization string
-	temperature  float64
-	client       *http.Client
+	// temperature is guarded by temperatureMu so it can be changed live
+	// (see SetTemperature) from the web UI's settings page while requests
+	// are in flight, without a restart.
+	temperature   float64
+	temperatureMu sync.RWMutex
+	client        *http.Client
 	// streamClient has no Client.Timeout: that field bounds the entire
 	// request including reading the response body, so it would truncate a
 	// legitimately slow-but-progressing stream mid-answer. The caller's
@@ -70,6 +75,21 @@ func (c *RemoteClient) Model() string {
 
 func (c *RemoteClient) Provider() string {
 	return "remote"
+}
+
+// SetTemperature changes the sampling temperature used by future requests
+// (see docs/settings.md) — safe to call while other requests are in
+// flight; they keep whatever value they already read.
+func (c *RemoteClient) SetTemperature(v float64) {
+	c.temperatureMu.Lock()
+	c.temperature = v
+	c.temperatureMu.Unlock()
+}
+
+func (c *RemoteClient) getTemperature() float64 {
+	c.temperatureMu.RLock()
+	defer c.temperatureMu.RUnlock()
+	return c.temperature
 }
 
 // OpenAI request/response types
@@ -123,7 +143,7 @@ func (c *RemoteClient) Chat(ctx context.Context, messages []Message, tools []Too
 		Model:       c.model,
 		Messages:    messages,
 		Tools:       openAITools,
-		Temperature: c.temperature,
+		Temperature: c.getTemperature(),
 	}
 
 	if len(tools) > 0 {
@@ -199,7 +219,7 @@ func (c *RemoteClient) ChatStream(ctx context.Context, messages []Message, tools
 		Model:       c.model,
 		Messages:    messages,
 		Tools:       openAITools,
-		Temperature: c.temperature,
+		Temperature: c.getTemperature(),
 		Stream:      true,
 	}
 	if len(tools) > 0 {

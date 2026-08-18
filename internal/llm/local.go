@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,9 +28,13 @@ type LocalClient struct {
 	client        *http.Client
 	apiFormat     string
 	apiKey        string
-	temperature   float64
 	supportsTools bool
 	streamEnabled bool
+	// temperature is guarded by temperatureMu so it can be changed live
+	// (see SetTemperature) from the web UI's settings page while requests
+	// are in flight, without a restart.
+	temperature   float64
+	temperatureMu sync.RWMutex
 	// streamClient has no Client.Timeout — see the identical field on
 	// RemoteClient for why a streaming request must not be bounded by a
 	// fixed total-duration timeout.
@@ -95,6 +100,21 @@ func (c *LocalClient) Provider() string {
 	return "local"
 }
 
+// SetTemperature changes the sampling temperature used by future requests
+// (see docs/settings.md) — safe to call while other requests are in
+// flight; they keep whatever value they already read.
+func (c *LocalClient) SetTemperature(v float64) {
+	c.temperatureMu.Lock()
+	c.temperature = v
+	c.temperatureMu.Unlock()
+}
+
+func (c *LocalClient) getTemperature() float64 {
+	c.temperatureMu.RLock()
+	defer c.temperatureMu.RUnlock()
+	return c.temperature
+}
+
 // Ollama request/response types
 type ollamaRequest struct {
 	Model    string          `json:"model"`
@@ -137,7 +157,7 @@ func (c *LocalClient) Chat(ctx context.Context, messages []Message, tools []Tool
 			baseURL:      c.baseURL,
 			model:        c.model,
 			apiKey:       c.apiKey,
-			temperature:  c.temperature,
+			temperature:  c.getTemperature(),
 			client:       c.client,
 			streamClient: c.streamClient,
 		}
@@ -172,7 +192,7 @@ func (c *LocalClient) Chat(ctx context.Context, messages []Message, tools []Tool
 		Messages: ollamaMessages,
 		Tools:    ollamaTools,
 		Stream:   false,
-		Options:  map[string]any{"temperature": c.temperature},
+		Options:  map[string]any{"temperature": c.getTemperature()},
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -249,7 +269,7 @@ func (c *LocalClient) ChatStream(ctx context.Context, messages []Message, tools 
 				baseURL:      c.baseURL,
 				model:        c.model,
 				apiKey:       c.apiKey,
-				temperature:  c.temperature,
+				temperature:  c.getTemperature(),
 				client:       c.client,
 				streamClient: c.streamClient,
 			}
@@ -273,7 +293,7 @@ func (c *LocalClient) chatStreamOpenAI(ctx context.Context, messages []Message, 
 		Model:       c.model,
 		Messages:    messages,
 		Tools:       openAITools,
-		Temperature: c.temperature,
+		Temperature: c.getTemperature(),
 		Stream:      true,
 	}
 	if len(tools) > 0 {
@@ -341,7 +361,7 @@ func (c *LocalClient) chatStreamOllama(ctx context.Context, messages []Message, 
 		Messages: ollamaMessages,
 		Tools:    ollamaTools,
 		Stream:   true,
-		Options:  map[string]any{"temperature": c.temperature},
+		Options:  map[string]any{"temperature": c.getTemperature()},
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

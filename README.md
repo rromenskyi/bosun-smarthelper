@@ -46,6 +46,10 @@ Early foundation. Working today:
   it — see `docs/memo-search.md`.
 - **Online knowledge tools** — DuckDuckGo web search and Wikipedia summaries,
   automatically hidden while offline.
+- **Settings page** — the web UI's gear icon lets you edit the assistant's
+  name/style prompt, default language, LLM temperatures, and the memo tag
+  auto-normalization vocabulary live, no restart needed — see
+  `docs/settings.md`.
 - **Failure log** — tool and LLM-call errors are recorded to one file
   (`internal/errlog`), reviewable with `smarthelper errors`, to drive an
   improvement loop instead of disappearing into stderr.

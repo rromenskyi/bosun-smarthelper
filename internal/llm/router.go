@@ -179,6 +179,17 @@ func (r *Router) ActiveProvider() string {
 	return r.CurrentProvider()
 }
 
+// SetTemperatures changes both providers' sampling temperature live (see
+// docs/settings.md) — safe to call while requests are in flight.
+func (r *Router) SetTemperatures(remote, local float64) {
+	if r.remoteClient != nil {
+		r.remoteClient.SetTemperature(remote)
+	}
+	if r.localClient != nil {
+		r.localClient.SetTemperature(local)
+	}
+}
+
 // GetClient returns the appropriate client based on connectivity and config
 func (r *Router) GetClient(ctx context.Context) (Client, error) {
 	isOnline := r.NetworkAvailable(ctx)

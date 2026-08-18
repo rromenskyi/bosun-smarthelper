@@ -169,3 +169,39 @@ func TestRemoteClientChatStreamOutlivesConfiguredTimeout(t *testing.T) {
 		t.Errorf("content = %q", response.Content)
 	}
 }
+
+func TestRemoteClientSetTemperatureAppliesToNextRequest(t *testing.T) {
+	const keyEnv = "SMARTHELPER_TEST_REMOTE_TEMP_KEY"
+	t.Setenv(keyEnv, "remote-secret")
+
+	var gotTemperature float64
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var body openAIRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		gotTemperature = body.Temperature
+		return jsonResponse(`{"model":"text","choices":[{"message":{"role":"assistant","content":"ok"}}]}`), nil
+	})
+
+	client, err := NewRemoteClient("https://remote.test/v1", "text", keyEnv, "", 0.8, time.Second)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+
+	if _, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if gotTemperature != 0.8 {
+		t.Fatalf("initial temperature = %v, want 0.8", gotTemperature)
+	}
+
+	client.SetTemperature(0.2)
+	if _, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil); err != nil {
+		t.Fatalf("Chat after SetTemperature: %v", err)
+	}
+	if gotTemperature != 0.2 {
+		t.Errorf("temperature after SetTemperature = %v, want 0.2", gotTemperature)
+	}
+}

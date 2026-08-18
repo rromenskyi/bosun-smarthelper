@@ -167,6 +167,24 @@
     }
     .docs-list li span { overflow-wrap: anywhere; }
     .docs-list button { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-size: 14px; flex: 0 0 auto; }
+    dialog#settings-dialog {
+      border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
+      color: var(--text); width: min(90vw, 440px); max-height: 85vh; overflow-y: auto; padding: 18px;
+    }
+    dialog#settings-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+    dialog#settings-dialog h2 { margin: 0 0 10px; font-size: 16px; }
+    #settings-form { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .settings-label { color: var(--muted); font-size: 12px; margin-top: 8px; }
+    #settings-form input[type="text"], #settings-form input[type="number"],
+    #settings-form select, #settings-form textarea {
+      padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
+      background: rgba(8, 18, 14, .5); color: var(--text); font: inherit; resize: vertical;
+    }
+    #settings-form button {
+      margin-top: 12px; padding: 8px 10px; border-radius: 10px; border: 0;
+      background: var(--accent); color: #10251c; font-weight: 700; cursor: pointer;
+    }
+    #settings-form button:disabled { opacity: .5; cursor: wait; }
     @media (max-width: 560px) {
       .app { padding-left: 12px; padding-right: 12px; }
       header { padding-top: 15px; }
@@ -184,6 +202,7 @@
         <div><h1 id="brand">Старпом</h1><div class="subtitle" id="subtitle">Локальный помощник</div></div>
       </div>
       <div class="header-actions">
+        <button class="bell" id="settings-toggle" type="button" aria-label="Настройки" title="Настройки">⚙️</button>
         <button class="bell" id="docs-toggle" type="button" aria-label="Документы" title="Документы">📄</button>
         <button class="bell" id="bell" type="button" aria-label="Позвать старпома" title="Позвать старпома">🔔</button>
         <div class="status" id="status"><span class="dot"></span><span>Подключение…</span></div>
@@ -200,6 +219,30 @@
       </form>
       <ul class="docs-list" id="docs-list"></ul>
       <button type="button" class="clear" id="docs-close">Закрыть</button>
+    </dialog>
+
+    <dialog id="settings-dialog">
+      <h2 id="settings-title">Настройки</h2>
+      <form id="settings-form">
+        <label class="settings-label" id="settings-label-name-ru">Имя (русский)</label>
+        <input type="text" id="settings-name-ru">
+        <label class="settings-label" id="settings-label-name-en">Имя (английский)</label>
+        <input type="text" id="settings-name-en">
+        <label class="settings-label" id="settings-label-prompt">Системный промпт</label>
+        <textarea id="settings-style-prompt" rows="3"></textarea>
+        <label class="settings-label" id="settings-label-language">Язык по умолчанию</label>
+        <select id="settings-default-language"><option value="ru">Русский</option><option value="en">English</option></select>
+        <label class="settings-label" id="settings-label-remote-temp">Температура (удалённая модель)</label>
+        <input type="number" id="settings-remote-temp" min="0" max="2" step="0.05">
+        <label class="settings-label" id="settings-label-local-temp">Температура (локальная модель)</label>
+        <input type="number" id="settings-local-temp" min="0" max="2" step="0.05">
+        <label class="settings-label" id="settings-label-tags">Теги для автонормализации памяти (через запятую)</label>
+        <input type="text" id="settings-canonical-tags" placeholder="purchases, fuel_system, oil">
+        <p class="docs-hint" id="settings-tags-hint">Пусто — автонормализация тегов выключена.</p>
+        <button type="submit" id="settings-save-button">Сохранить</button>
+        <p class="docs-hint" id="settings-saved-hint" hidden>Сохранено.</p>
+      </form>
+      <button type="button" class="clear" id="settings-close">Закрыть</button>
     </dialog>
 
     <nav class="quick" aria-label="Быстрые запросы">
@@ -244,6 +287,9 @@
     const docsDialog = document.querySelector('#docs-dialog');
     const docsList = document.querySelector('#docs-list');
     const docsUploadForm = document.querySelector('#docs-upload-form');
+    const settingsToggle = document.querySelector('#settings-toggle');
+    const settingsDialog = document.querySelector('#settings-dialog');
+    const settingsForm = document.querySelector('#settings-form');
     let busy = false;
     let currentProvider = 'local';
     let waitingBubble = null;
@@ -252,8 +298,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…` },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…` }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close' }
     };
 
     function escapeHTML(value) {
@@ -491,6 +537,20 @@
       document.querySelector('#doc-title').placeholder = text[locale].docsTitlePlaceholder;
       document.querySelector('#docs-upload-button').textContent = text[locale].docsUpload;
       document.querySelector('#docs-close').textContent = text[locale].docsClose;
+      settingsToggle.title = text[locale].settingsToggleTitle;
+      settingsToggle.setAttribute('aria-label', text[locale].settingsToggleTitle);
+      document.querySelector('#settings-title').textContent = text[locale].settingsTitle;
+      document.querySelector('#settings-label-name-ru').textContent = text[locale].settingsLabelNameRu;
+      document.querySelector('#settings-label-name-en').textContent = text[locale].settingsLabelNameEn;
+      document.querySelector('#settings-label-prompt').textContent = text[locale].settingsLabelPrompt;
+      document.querySelector('#settings-label-language').textContent = text[locale].settingsLabelLanguage;
+      document.querySelector('#settings-label-remote-temp').textContent = text[locale].settingsLabelRemoteTemp;
+      document.querySelector('#settings-label-local-temp').textContent = text[locale].settingsLabelLocalTemp;
+      document.querySelector('#settings-label-tags').textContent = text[locale].settingsLabelTags;
+      document.querySelector('#settings-tags-hint').textContent = text[locale].settingsTagsHint;
+      document.querySelector('#settings-save-button').textContent = text[locale].settingsSave;
+      document.querySelector('#settings-saved-hint').textContent = text[locale].settingsSaved;
+      document.querySelector('#settings-close').textContent = text[locale].settingsClose;
     }
 
     form.addEventListener('submit', event => { event.preventDefault(); ask(input.value); });
@@ -573,6 +633,63 @@
       }
     });
 
+    async function loadSettings() {
+      let data;
+      try {
+        const response = await fetch('/api/settings');
+        data = await response.json();
+      } catch {
+        return;
+      }
+      if (!data.enabled) {
+        settingsToggle.hidden = true;
+        return;
+      }
+      const settings = data.settings;
+      document.querySelector('#settings-name-ru').value = settings.name_ru || '';
+      document.querySelector('#settings-name-en').value = settings.name_en || '';
+      document.querySelector('#settings-style-prompt').value = settings.style_prompt || '';
+      document.querySelector('#settings-default-language').value = settings.default_language || 'ru';
+      document.querySelector('#settings-remote-temp').value = settings.remote_temperature;
+      document.querySelector('#settings-local-temp').value = settings.local_temperature;
+      document.querySelector('#settings-canonical-tags').value = (settings.canonical_tags || []).join(', ');
+    }
+    settingsToggle.addEventListener('click', () => { loadSettings(); settingsDialog.showModal(); });
+    document.querySelector('#settings-close').addEventListener('click', () => settingsDialog.close());
+    settingsForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const saveButton = document.querySelector('#settings-save-button');
+      const savedHint = document.querySelector('#settings-saved-hint');
+      const tags = document.querySelector('#settings-canonical-tags').value
+        .split(',').map(tag => tag.trim()).filter(Boolean);
+      const payload = {
+        name_ru: document.querySelector('#settings-name-ru').value.trim(),
+        name_en: document.querySelector('#settings-name-en').value.trim(),
+        style_prompt: document.querySelector('#settings-style-prompt').value,
+        default_language: document.querySelector('#settings-default-language').value,
+        remote_temperature: parseFloat(document.querySelector('#settings-remote-temp').value),
+        local_temperature: parseFloat(document.querySelector('#settings-local-temp').value),
+        canonical_tags: tags
+      };
+      saveButton.disabled = true;
+      savedHint.hidden = true;
+      try {
+        const response = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (response.ok) {
+          savedHint.hidden = false;
+          setTimeout(() => { savedHint.hidden = true; }, 2000);
+        }
+      } catch {
+        // Best-effort: connectivity issues already surface via the status pill.
+      } finally {
+        saveButton.disabled = false;
+      }
+    });
+
     document.querySelector('#clear').addEventListener('click', () => {
       const previousSessionId = sessionId;
       sessionId = createSessionId();
@@ -615,6 +732,7 @@
     hydrateHistory();
     refreshStatus();
     loadDocuments();
+    loadSettings();
     setInterval(refreshStatus, 3000);
   </script>
 </body>

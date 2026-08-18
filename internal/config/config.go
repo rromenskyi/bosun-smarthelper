@@ -149,6 +149,13 @@ type WebConfig struct {
 	// page reload and a service restart. Empty disables persistence
 	// (in-memory only).
 	SessionStorePath string `mapstructure:"session_store_path"`
+	// SettingsStorePath persists the settings page's live-editable values
+	// (persona/style prompt, default language, LLM temperatures, memo tag
+	// canonicalization vocabulary — see docs/settings.md). Empty uses
+	// ~/.local/share/bosun/settings.json. Once this file exists it is the
+	// source of truth for those fields — config.yaml's own values only
+	// seed it the first time.
+	SettingsStorePath string `mapstructure:"settings_store_path"`
 }
 
 // HistoryConfig holds separate chat-history budgets per provider: a weak

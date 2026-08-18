@@ -21,6 +21,7 @@ import (
 	"github.com/roman220/ai-local-smarthelper/internal/errlog"
 	"github.com/roman220/ai-local-smarthelper/internal/llm"
 	"github.com/roman220/ai-local-smarthelper/internal/mcp"
+	"github.com/roman220/ai-local-smarthelper/internal/settings"
 	"github.com/roman220/ai-local-smarthelper/internal/tools"
 	"github.com/roman220/ai-local-smarthelper/internal/webui"
 )
@@ -115,10 +116,33 @@ func serveCmd() *cobra.Command {
 			}
 			router.CheckConnectivity(cmd.Context())
 
+			// The settings store (docs/settings.md) is seeded from config.yaml's
+			// current values the first time it's created; once its file exists,
+			// it — not config.yaml — is the source of truth for these fields, so
+			// a value saved from the settings page survives a restart.
+			settingsPath := cfg.Web.SettingsStorePath
+			if settingsPath == "" {
+				settingsPath = settings.DefaultPath()
+			}
+			settingsStore, err := settings.Load(settingsPath, settings.Data{
+				NameRU:            cfg.Assistant.NameRU,
+				NameEN:            cfg.Assistant.NameEN,
+				StylePrompt:       cfg.Assistant.StylePrompt,
+				DefaultLanguage:   cfg.Web.DefaultLanguage,
+				RemoteTemperature: cfg.LLM.Remote.Temperature,
+				LocalTemperature:  cfg.LLM.Local.Temperature,
+				CanonicalTags:     cfg.Memo.CanonicalTags,
+			})
+			if err != nil {
+				return fmt.Errorf("load settings: %w", err)
+			}
+			live := settingsStore.Get()
+			router.SetTemperatures(live.RemoteTemperature, live.LocalTemperature)
+
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 			registry, docStore := buildRegistry(cfg)
 			ag := agent.New(router, registry, router.NetworkAvailable)
-			ag.SetPersona(cfg.Assistant.NameRU, cfg.Assistant.NameEN, cfg.Assistant.StylePrompt)
+			ag.SetPersona(live.NameRU, live.NameEN, live.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
 
 			storePath := cfg.Web.SessionStorePath
@@ -132,7 +156,7 @@ func serveCmd() *cobra.Command {
 					Provider:       router.ActiveProvider(),
 					AvailableTools: registry.AvailableList(online),
 				}
-			}, requestTimeout, cfg.Web.DefaultLanguage, logger, webui.SessionOptions{
+			}, requestTimeout, live.DefaultLanguage, logger, webui.SessionOptions{
 				Local:       webui.HistoryBudget{Turns: cfg.Web.History.Local.Turns, MaxChars: cfg.Web.History.Local.MaxChars},
 				Remote:      webui.HistoryBudget{Turns: cfg.Web.History.Remote.Turns, MaxChars: cfg.Web.History.Remote.MaxChars},
 				TTL:         sessionTTL,
@@ -140,16 +164,16 @@ func serveCmd() *cobra.Command {
 				StorePath:   storePath,
 			})
 			server.SetDocumentStore(docStore)
+			server.SetSettingsStore(settingsStore)
+			server.SetTemperatureController(router)
 
-			if len(cfg.Memo.CanonicalTags) > 0 {
-				if memoTool, ok := registry.Get("memo"); ok {
-					if mt, ok := memoTool.(*tools.MemoTool); ok {
-						interval, err := time.ParseDuration(cfg.Memo.TagNormalizeInterval)
-						if err != nil || interval <= 0 {
-							interval = 5 * time.Minute
-						}
-						go runTagNormalizer(cmd.Context(), server, mt, router, cfg.Memo.CanonicalTags, interval, logger)
+			if memoTool, ok := registry.Get("memo"); ok {
+				if mt, ok := memoTool.(*tools.MemoTool); ok {
+					interval, err := time.ParseDuration(cfg.Memo.TagNormalizeInterval)
+					if err != nil || interval <= 0 {
+						interval = 5 * time.Minute
 					}
+					go runTagNormalizer(cmd.Context(), server, mt, router, settingsStore, interval, logger)
 				}
 			}
 
@@ -236,12 +260,17 @@ func errorsCmd() *cobra.Command {
 // behind because of this, and a user typing a follow-up right after a
 // reply never queues behind background maintenance. Stops when ctx is
 // cancelled (process shutdown).
+// runTagNormalizer always runs (there's no separate on/off switch at
+// startup) but is a no-op each tick when settingsStore.Get().CanonicalTags
+// is currently empty — so turning the feature on later from the settings
+// page (docs/settings.md) takes effect without a restart, at the cost of
+// one cheap check per idle tick when it's off.
 func runTagNormalizer(
 	ctx context.Context,
 	server *webui.Server,
 	memoTool *tools.MemoTool,
 	client *llm.Router,
-	canonicalTags []string,
+	settingsStore *settings.Store,
 	interval time.Duration,
 	logger *slog.Logger,
 ) {
@@ -252,6 +281,10 @@ func runTagNormalizer(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			canonicalTags := settingsStore.Get().CanonicalTags
+			if len(canonicalTags) == 0 {
+				continue
+			}
 			server.TryIdleAfter(interval, func() {
 				normCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				defer cancel()

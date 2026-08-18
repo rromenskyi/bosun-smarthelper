@@ -36,6 +36,25 @@ func TestRouterLastProvider(t *testing.T) {
 	}
 }
 
+func TestRouterSetTemperatures(t *testing.T) {
+	t.Setenv("SMARTHELPER_TEST_ROUTER_TEMP_KEY", "secret")
+	local := NewLocalClient("", "", 0.5, time.Second, true)
+	remote, err := NewRemoteClient("https://remote.test/v1", "text", "SMARTHELPER_TEST_ROUTER_TEMP_KEY", "", 0.8, time.Second)
+	if err != nil {
+		t.Fatalf("create remote client: %v", err)
+	}
+
+	router := &Router{localClient: local, remoteClient: remote, config: &config.LLMConfig{}}
+	router.SetTemperatures(0.3, 0.1)
+
+	if got := remote.getTemperature(); got != 0.3 {
+		t.Errorf("remote temperature = %v, want 0.3", got)
+	}
+	if got := local.getTemperature(); got != 0.1 {
+		t.Errorf("local temperature = %v, want 0.1", got)
+	}
+}
+
 func TestRouterRetriesTransientRemoteErrors(t *testing.T) {
 	attempts := 0
 	client := &RemoteClient{

@@ -23,6 +23,7 @@ import (
 
 	"github.com/roman220/ai-local-smarthelper/internal/agent"
 	"github.com/roman220/ai-local-smarthelper/internal/documents"
+	"github.com/roman220/ai-local-smarthelper/internal/settings"
 )
 
 const maxRequestBody = 16 * 1024
@@ -100,7 +101,6 @@ type Server struct {
 	status            func() Status
 	logger            *slog.Logger
 	requestTimeout    time.Duration
-	defaultLanguage   string
 	local             localQueue
 	sessionsMu        sync.Mutex
 	sessions          map[string]chatSession
@@ -109,6 +109,28 @@ type Server struct {
 	documentImagesDir string
 	activityMu        sync.Mutex
 	lastChatAt        time.Time
+	languageMu        sync.RWMutex
+	defaultLanguage   string
+	settingsStore     *settings.Store
+	temps             temperatureController
+}
+
+// SetDefaultLanguage changes the language used when a chat request doesn't
+// specify one — e.g. from the settings page (see docs/settings.md), live,
+// no restart. Ignored if lang isn't "ru" or "en".
+func (s *Server) SetDefaultLanguage(lang string) {
+	if lang != "ru" && lang != "en" {
+		return
+	}
+	s.languageMu.Lock()
+	s.defaultLanguage = lang
+	s.languageMu.Unlock()
+}
+
+func (s *Server) getDefaultLanguage() string {
+	s.languageMu.RLock()
+	defer s.languageMu.RUnlock()
+	return s.defaultLanguage
 }
 
 // markChatActivity records that a chat request just finished — see
@@ -286,6 +308,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/documents", s.handleDocumentUpload)
 	mux.HandleFunc("POST /api/documents/pages", s.handleDocumentAddPages)
 	mux.HandleFunc("DELETE /api/documents/{id}", s.handleDocumentDelete)
+	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
+	mux.HandleFunc("POST /api/settings", s.handleSettingsUpdate)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
 	}
@@ -395,7 +419,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	language := request.Language
 	if language == "" {
-		language = s.defaultLanguage
+		language = s.getDefaultLanguage()
 	}
 	if language != "ru" && language != "en" {
 		writeJSON(w, http.StatusBadRequest, chatResponse{Error: "unsupported language"})
