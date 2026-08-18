@@ -1,4 +1,4 @@
-.PHONY: build test lint check run-mcp clean
+.PHONY: build test lint check run-mcp run-web clean
 
 build:
 	go build -o bin/smarthelper ./cmd/smarthelper
@@ -14,6 +14,9 @@ check: lint test build
 
 run-mcp: build
 	./bin/smarthelper mcp
+
+run-web: build
+	./bin/smarthelper serve
 
 clean:
 	rm -rf bin/

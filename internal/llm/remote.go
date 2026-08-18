@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,16 @@ type RemoteClient struct {
 	apiKey       string
 	organization string
 	client       *http.Client
+}
+
+type httpStatusError struct {
+	provider   string
+	statusCode int
+	body       string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("%s error %d: %s", e.provider, e.statusCode, e.body)
 }
 
 // NewRemoteClient creates a new OpenAI-compatible client
@@ -35,7 +46,7 @@ func NewRemoteClient(baseURL, model, apiKeyEnv, organization string, timeout tim
 	}
 
 	return &RemoteClient{
-		baseURL:      baseURL,
+		baseURL:      strings.TrimRight(baseURL, "/"),
 		model:        model,
 		apiKey:       apiKey,
 		organization: organization,
@@ -117,7 +128,9 @@ func (c *RemoteClient) Chat(ctx context.Context, messages []Message, tools []Too
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	if c.organization != "" {
 		req.Header.Set("OpenAI-Organization", c.organization)
 	}
@@ -130,7 +143,11 @@ func (c *RemoteClient) Chat(ctx context.Context, messages []Message, tools []Too
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("openai error %d: %s", resp.StatusCode, string(body))
+		return nil, &httpStatusError{
+			provider:   "openai",
+			statusCode: resp.StatusCode,
+			body:       string(body),
+		}
 	}
 
 	var openAIResp openAIResponse

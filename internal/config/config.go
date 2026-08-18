@@ -10,10 +10,33 @@ import (
 
 // Config holds all configuration for the application
 type Config struct {
-	LLM     LLMConfig     `mapstructure:"llm"`
-	MCP     MCPConfig     `mapstructure:"mcp"`
-	Sensors SensorsConfig `mapstructure:"sensors"`
-	Logging LoggingConfig `mapstructure:"logging"`
+	Assistant AssistantConfig `mapstructure:"assistant"`
+	LLM       LLMConfig       `mapstructure:"llm"`
+	MCP       MCPConfig       `mapstructure:"mcp"`
+	Web       WebConfig       `mapstructure:"web"`
+	Memo      MemoConfig      `mapstructure:"memo"`
+	Online    OnlineConfig    `mapstructure:"online_tools"`
+	Sensors   SensorsConfig   `mapstructure:"sensors"`
+	Logging   LoggingConfig   `mapstructure:"logging"`
+}
+
+// AssistantConfig holds user-facing identity and optional response style.
+type AssistantConfig struct {
+	NameRU      string `mapstructure:"name_ru"`
+	NameEN      string `mapstructure:"name_en"`
+	StylePrompt string `mapstructure:"style_prompt"`
+}
+
+// MemoConfig holds persistent local memo settings.
+type MemoConfig struct {
+	Path string `mapstructure:"path"`
+}
+
+// OnlineConfig holds endpoints and timeouts for public internet tools.
+type OnlineConfig struct {
+	DuckDuckGoURL  string `mapstructure:"duckduckgo_url"`
+	WikipediaURL   string `mapstructure:"wikipedia_url"`
+	RequestTimeout string `mapstructure:"request_timeout"`
 }
 
 // LLMConfig holds LLM-related configuration
@@ -30,13 +53,18 @@ type RemoteLLMConfig struct {
 	APIKeyEnv    string `mapstructure:"api_key_env"`
 	Organization string `mapstructure:"organization"`
 	Timeout      string `mapstructure:"timeout"`
+	MaxRetries   int    `mapstructure:"max_retries"`
+	RetryBackoff string `mapstructure:"retry_backoff"`
 }
 
 // LocalLLMConfig holds local LLM (Ollama) settings
 type LocalLLMConfig struct {
-	BaseURL string `mapstructure:"base_url"`
-	Model   string `mapstructure:"model"`
-	Timeout string `mapstructure:"timeout"`
+	BaseURL       string `mapstructure:"base_url"`
+	Model         string `mapstructure:"model"`
+	APIFormat     string `mapstructure:"api_format"`
+	APIKeyEnv     string `mapstructure:"api_key_env"`
+	SupportsTools bool   `mapstructure:"supports_tools"`
+	Timeout       string `mapstructure:"timeout"`
 }
 
 // RouterConfig holds LLM router settings
@@ -54,6 +82,17 @@ type MCPConfig struct {
 	LogLevel   string `mapstructure:"log_level"`
 }
 
+// WebConfig holds settings for the LAN-only web interface.
+type WebConfig struct {
+	Bind            string `mapstructure:"bind"`
+	RequestTimeout  string `mapstructure:"request_timeout"`
+	DefaultLanguage string `mapstructure:"default_language"`
+	HistoryTurns    int    `mapstructure:"history_turns"`
+	HistoryMaxChars int    `mapstructure:"history_max_chars"`
+	SessionTTL      string `mapstructure:"session_ttl"`
+	MaxSessions     int    `mapstructure:"max_sessions"`
+}
+
 // SensorsConfig holds all sensor configurations
 type SensorsConfig struct {
 	Weather WeatherConfig `mapstructure:"weather"`
@@ -64,12 +103,17 @@ type SensorsConfig struct {
 
 // WeatherConfig holds weather sensor settings
 type WeatherConfig struct {
-	Type         string  `mapstructure:"type"`
-	MockTempC    float64 `mapstructure:"mock_temp_c"`
-	MockHumidity float64 `mapstructure:"mock_humidity"`
-	MQTTTopic    string  `mapstructure:"mqtt_topic"`
-	MQTTBroker   string  `mapstructure:"mqtt_broker"`
-	HTTPURL      string  `mapstructure:"http_url"`
+	Type            string  `mapstructure:"type"`
+	MockTempC       float64 `mapstructure:"mock_temp_c"`
+	MockHumidity    float64 `mapstructure:"mock_humidity"`
+	MQTTTopic       string  `mapstructure:"mqtt_topic"`
+	MQTTBroker      string  `mapstructure:"mqtt_broker"`
+	HTTPURL         string  `mapstructure:"http_url"`
+	GeocodingURL    string  `mapstructure:"geocoding_url"`
+	NominatimURL    string  `mapstructure:"nominatim_url"`
+	ForecastURL     string  `mapstructure:"forecast_url"`
+	DefaultLocation string  `mapstructure:"default_location"`
+	Timeout         string  `mapstructure:"timeout"`
 }
 
 // FridgeConfig holds fridge sensor settings
@@ -141,13 +185,23 @@ func Load() (*Config, error) {
 }
 
 func setDefaults(v *viper.Viper) {
+	// Assistant identity
+	v.SetDefault("assistant.name_ru", "Старпом")
+	v.SetDefault("assistant.name_en", "Bosun")
+	v.SetDefault("assistant.style_prompt", "")
+
 	// LLM defaults
 	v.SetDefault("llm.remote.base_url", "https://api.openai.com/v1")
 	v.SetDefault("llm.remote.model", "gpt-4o-mini")
 	v.SetDefault("llm.remote.api_key_env", "OPENAI_API_KEY")
 	v.SetDefault("llm.remote.timeout", "30s")
+	v.SetDefault("llm.remote.max_retries", 5)
+	v.SetDefault("llm.remote.retry_backoff", "500ms")
 	v.SetDefault("llm.local.base_url", "http://localhost:11434")
 	v.SetDefault("llm.local.model", "llama3.1:8b")
+	v.SetDefault("llm.local.api_format", "ollama")
+	v.SetDefault("llm.local.api_key_env", "")
+	v.SetDefault("llm.local.supports_tools", true)
 	v.SetDefault("llm.local.timeout", "60s")
 	v.SetDefault("llm.router.check_interval", "30s")
 	v.SetDefault("llm.router.check_timeout", "5s")
@@ -155,20 +209,39 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.router.prefer_remote", true)
 
 	// MCP defaults
-	v.SetDefault("mcp.server_name", "smarthelper")
+	v.SetDefault("mcp.server_name", "bosun")
 	v.SetDefault("mcp.transport", "stdio")
 	v.SetDefault("mcp.log_level", "info")
+
+	// Web defaults bind only to loopback. LAN deployments should use the
+	// machine's explicit private address rather than 0.0.0.0.
+	v.SetDefault("web.bind", "127.0.0.1:8080")
+	v.SetDefault("web.request_timeout", "180s")
+	v.SetDefault("web.default_language", "ru")
+	v.SetDefault("web.history_turns", 8)
+	v.SetDefault("web.history_max_chars", 12000)
+	v.SetDefault("web.session_ttl", "24h")
+	v.SetDefault("web.max_sessions", 100)
+
+	// Public, keyless online tools
+	v.SetDefault("online_tools.duckduckgo_url", "https://html.duckduckgo.com/html/")
+	v.SetDefault("online_tools.wikipedia_url", "https://{lang}.wikipedia.org/api/rest_v1/page/summary/{title}")
+	v.SetDefault("online_tools.request_timeout", "10s")
 
 	// Sensor defaults
 	v.SetDefault("sensors.weather.type", "mock")
 	v.SetDefault("sensors.weather.mock_temp_c", 22.5)
 	v.SetDefault("sensors.weather.mock_humidity", 60.0)
+	v.SetDefault("sensors.weather.geocoding_url", "https://geocoding-api.open-meteo.com/v1/search")
+	v.SetDefault("sensors.weather.nominatim_url", "https://nominatim.openstreetmap.org/search")
+	v.SetDefault("sensors.weather.forecast_url", "https://api.open-meteo.com/v1/forecast")
+	v.SetDefault("sensors.weather.timeout", "8s")
 	v.SetDefault("sensors.fridge.type", "mock")
 	v.SetDefault("sensors.fridge.mock_fridge_c", 4.0)
 	v.SetDefault("sensors.fridge.mock_freezer_c", -18.0)
 	v.SetDefault("sensors.gps.type", "mock")
-	v.SetDefault("sensors.gps.mock_latitude", 55.7558)
-	v.SetDefault("sensors.gps.mock_longitude", 37.6173)
+	v.SetDefault("sensors.gps.mock_latitude", 40.7608)
+	v.SetDefault("sensors.gps.mock_longitude", -111.8910)
 	v.SetDefault("sensors.gps.mock_speed_kmh", 0.0)
 	v.SetDefault("sensors.gps.mock_altitude_m", 150.0)
 	v.SetDefault("sensors.system.type", "native")

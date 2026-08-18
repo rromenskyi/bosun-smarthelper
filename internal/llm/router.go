@@ -2,8 +2,11 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/roman220/ai-local-smarthelper/internal/config"
@@ -11,11 +14,17 @@ import (
 
 // Router manages LLM provider selection based on connectivity
 type Router struct {
-	localClient  *LocalClient
-	remoteClient *RemoteClient
-	config       *config.LLMConfig
-	lastCheck    time.Time
-	isOnline     bool
+	localClient        *LocalClient
+	remoteClient       *RemoteClient
+	config             *config.LLMConfig
+	lastCheck          time.Time
+	isOnline           bool
+	lastProvider       string
+	providerActive     bool
+	stateMu            sync.RWMutex
+	checkMu            sync.Mutex
+	remoteMaxRetries   int
+	remoteRetryBackoff time.Duration
 }
 
 // NewRouter creates a new LLM router
@@ -29,8 +38,30 @@ func NewRouter(cfg *config.LLMConfig) (*Router, error) {
 	if remoteTimeout == 0 {
 		remoteTimeout = 30 * time.Second
 	}
+	remoteRetryBackoff, _ := time.ParseDuration(cfg.Remote.RetryBackoff)
+	if remoteRetryBackoff <= 0 {
+		remoteRetryBackoff = 500 * time.Millisecond
+	}
 
-	localClient := NewLocalClient(cfg.Local.BaseURL, cfg.Local.Model, localTimeout)
+	var localClient *LocalClient
+	var err error
+	switch cfg.Local.APIFormat {
+	case "", APIFormatOllama:
+		localClient = NewLocalClient(cfg.Local.BaseURL, cfg.Local.Model, localTimeout)
+	case APIFormatOpenAI:
+		localClient, err = NewOpenAICompatibleLocalClient(
+			cfg.Local.BaseURL,
+			cfg.Local.Model,
+			cfg.Local.APIKeyEnv,
+			localTimeout,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create local client: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported local API format %q", cfg.Local.APIFormat)
+	}
+	localClient.supportsTools = cfg.Local.SupportsTools
 
 	remoteClient, err := NewRemoteClient(
 		cfg.Remote.BaseURL,
@@ -45,15 +76,20 @@ func NewRouter(cfg *config.LLMConfig) (*Router, error) {
 	}
 
 	return &Router{
-		localClient:  localClient,
-		remoteClient: remoteClient,
-		config:       cfg,
-		isOnline:     false,
+		localClient:        localClient,
+		remoteClient:       remoteClient,
+		config:             cfg,
+		isOnline:           false,
+		remoteMaxRetries:   max(0, cfg.Remote.MaxRetries),
+		remoteRetryBackoff: remoteRetryBackoff,
 	}, nil
 }
 
 // CheckConnectivity performs a connectivity check
 func (r *Router) CheckConnectivity(ctx context.Context) bool {
+	r.checkMu.Lock()
+	defer r.checkMu.Unlock()
+
 	checkTimeout, _ := time.ParseDuration(r.config.Router.CheckTimeout)
 	if checkTimeout == 0 {
 		checkTimeout = 5 * time.Second
@@ -64,48 +100,101 @@ func (r *Router) CheckConnectivity(ctx context.Context) bool {
 
 	req, err := http.NewRequestWithContext(ctx, "HEAD", r.config.Router.CheckTarget, nil)
 	if err != nil {
-		r.isOnline = false
+		r.setConnectivity(false)
 		return false
 	}
 
 	client := &http.Client{Timeout: checkTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		r.isOnline = false
+		r.setConnectivity(false)
 		return false
 	}
 	defer resp.Body.Close()
 
-	r.isOnline = resp.StatusCode < 500
-	r.lastCheck = time.Now()
-	return r.isOnline
+	online := resp.StatusCode < 500
+	r.setConnectivity(online)
+	return online
 }
 
 // IsOnline returns the last known connectivity status
 func (r *Router) IsOnline() bool {
+	r.stateMu.RLock()
+	defer r.stateMu.RUnlock()
 	return r.isOnline
+}
+
+// NetworkAvailable returns a fresh-enough connectivity state. A stale state is
+// refreshed synchronously so the agent does not expose online tools after the
+// connection has disappeared.
+func (r *Router) NetworkAvailable(ctx context.Context) bool {
+	checkInterval, _ := time.ParseDuration(r.config.Router.CheckInterval)
+	if checkInterval <= 0 {
+		checkInterval = 30 * time.Second
+	}
+	r.stateMu.RLock()
+	lastCheck := r.lastCheck
+	online := r.isOnline
+	r.stateMu.RUnlock()
+	if time.Since(lastCheck) <= checkInterval {
+		return online
+	}
+	return r.CheckConnectivity(ctx)
+}
+
+// CurrentProvider returns the provider that would serve a request using the
+// most recent connectivity state.
+func (r *Router) CurrentProvider() string {
+	if r.config.Router.PreferRemote && r.IsOnline() && r.remoteClient != nil {
+		return "remote"
+	}
+	return "local"
+}
+
+// LastProvider returns the provider used for the latest request attempt. It
+// changes to local as soon as a remote failure triggers fallback.
+func (r *Router) LastProvider() string {
+	r.stateMu.RLock()
+	provider := r.lastProvider
+	r.stateMu.RUnlock()
+	if provider != "" {
+		return provider
+	}
+	return r.CurrentProvider()
+}
+
+// ActiveProvider returns the provider serving an in-flight request, or the
+// provider that would be selected for the next request when idle.
+func (r *Router) ActiveProvider() string {
+	r.stateMu.RLock()
+	provider := r.lastProvider
+	active := r.providerActive
+	r.stateMu.RUnlock()
+	if active && provider != "" {
+		return provider
+	}
+	return r.CurrentProvider()
 }
 
 // GetClient returns the appropriate client based on connectivity and config
 func (r *Router) GetClient(ctx context.Context) (Client, error) {
-	// Check if we need to re-check connectivity
-	checkInterval, _ := time.ParseDuration(r.config.Router.CheckInterval)
-	if checkInterval == 0 {
-		checkInterval = 30 * time.Second
-	}
-
-	if time.Since(r.lastCheck) > checkInterval {
-		go r.CheckConnectivity(context.Background()) // Async update
-	}
+	isOnline := r.NetworkAvailable(ctx)
 
 	preferRemote := r.config.Router.PreferRemote
 
-	if preferRemote && r.isOnline && r.remoteClient != nil {
+	if preferRemote && isOnline && r.remoteClient != nil {
 		return r.remoteClient, nil
 	}
 
 	// Fallback to local
 	return r.localClient, nil
+}
+
+func (r *Router) setConnectivity(online bool) {
+	r.stateMu.Lock()
+	r.isOnline = online
+	r.lastCheck = time.Now()
+	r.stateMu.Unlock()
 }
 
 // Chat routes the request to the appropriate provider
@@ -115,16 +204,89 @@ func (r *Router) Chat(ctx context.Context, messages []Message, tools []ToolDefin
 		return nil, fmt.Errorf("get client: %w", err)
 	}
 
-	resp, err := client.Chat(ctx, messages, tools)
+	r.setActiveProvider(client.Provider())
+	defer r.clearActiveProvider()
+	var resp *Response
+	if client.Provider() == "remote" {
+		resp, err = r.chatRemoteWithRetry(ctx, client, messages, tools)
+	} else {
+		resp, err = client.Chat(ctx, messages, tools)
+	}
 	if err != nil {
 		// If remote fails and we haven't tried local, try local
 		if client.Provider() == "remote" && r.localClient != nil {
+			if isNetworkConnectivityError(err) {
+				r.setConnectivity(false)
+			}
+			r.setActiveProvider("local")
 			return r.localClient.Chat(ctx, messages, tools)
 		}
 		return nil, err
 	}
 
 	return resp, nil
+}
+
+func isNetworkConnectivityError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
+func (r *Router) chatRemoteWithRetry(
+	ctx context.Context,
+	client Client,
+	messages []Message,
+	tools []ToolDefinition,
+) (*Response, error) {
+	var lastErr error
+	for attempt := 0; attempt <= r.remoteMaxRetries; attempt++ {
+		response, err := client.Chat(ctx, messages, tools)
+		if err == nil {
+			return response, nil
+		}
+		lastErr = err
+		if attempt == r.remoteMaxRetries || !isRetryableRemoteError(err) {
+			break
+		}
+
+		delay := r.remoteRetryBackoff * time.Duration(1<<attempt)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil, lastErr
+}
+
+func isRetryableRemoteError(err error) bool {
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.statusCode == http.StatusTooManyRequests || statusErr.statusCode >= 500
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
+func (r *Router) setLastProvider(provider string) {
+	r.stateMu.Lock()
+	r.lastProvider = provider
+	r.stateMu.Unlock()
+}
+
+func (r *Router) setActiveProvider(provider string) {
+	r.stateMu.Lock()
+	r.lastProvider = provider
+	r.providerActive = true
+	r.stateMu.Unlock()
+}
+
+func (r *Router) clearActiveProvider() {
+	r.stateMu.Lock()
+	r.providerActive = false
+	r.stateMu.Unlock()
 }
 
 // LocalClient returns the local client for direct access

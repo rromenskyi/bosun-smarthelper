@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#13231e">
+  <title>Bosun · Старпом</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1512;
+      --panel: rgba(22, 39, 33, .92);
+      --panel-2: #1c312a;
+      --line: rgba(196, 226, 211, .14);
+      --text: #f2f7f4;
+      --muted: #9fb5aa;
+      --accent: #8de0b7;
+      --accent-strong: #b8f1d2;
+      --user: #315f4e;
+      --danger: #ffb4a8;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 20% 0%, rgba(68, 133, 105, .22), transparent 38rem),
+        linear-gradient(145deg, #08110e, var(--bg));
+    }
+    button, textarea, select { font: inherit; }
+    button { color: inherit; }
+    .app {
+      width: min(100%, 860px);
+      height: 100dvh;
+      min-height: 0;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      overflow: hidden;
+      padding: env(safe-area-inset-top) 18px env(safe-area-inset-bottom);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 22px 2px 14px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark {
+      width: 42px; height: 42px; border-radius: 14px;
+      display: grid; place-items: center;
+      background: var(--accent); color: #0c2119; font-weight: 900; font-size: 20px;
+      box-shadow: 0 10px 30px rgba(83, 193, 143, .22);
+    }
+    h1 { margin: 0; font-size: 18px; letter-spacing: -.02em; }
+    .subtitle { margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .status {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 8px 10px; border: 1px solid var(--line); border-radius: 999px;
+      color: var(--muted); font-size: 12px; background: rgba(8, 18, 14, .5);
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+    .quick { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 14px; scrollbar-width: none; }
+    .quick::-webkit-scrollbar { display: none; }
+    .chip {
+      flex: 0 0 auto; border: 1px solid var(--line); background: var(--panel);
+      border-radius: 999px; padding: 9px 13px; cursor: pointer; color: var(--accent-strong);
+    }
+    .chip:hover { border-color: rgba(141, 224, 183, .45); }
+    .messages {
+      overflow-y: auto;
+      min-height: 0;
+      padding: 12px 2px 24px;
+      overscroll-behavior: contain;
+      scroll-behavior: smooth;
+      scrollbar-color: rgba(141, 224, 183, .28) transparent;
+    }
+    .empty { max-width: 540px; margin: 12vh auto 0; text-align: center; color: var(--muted); }
+    .empty strong { display: block; color: var(--text); font-size: clamp(24px, 6vw, 42px); letter-spacing: -.04em; margin-bottom: 10px; }
+    .message { display: flex; margin: 11px 0; animation: appear .22s ease-out; }
+    .message.user { justify-content: flex-end; }
+    .bubble {
+      max-width: min(82%, 650px); padding: 12px 15px; border-radius: 18px;
+      line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
+      background: var(--panel-2); border: 1px solid var(--line);
+    }
+    .user .bubble { background: var(--user); border-bottom-right-radius: 6px; }
+    .assistant .bubble { border-bottom-left-radius: 6px; }
+    .error .bubble { color: var(--danger); }
+    .thinking .bubble { color: var(--muted); animation: pulse 1.2s ease-in-out infinite alternate; }
+    form {
+      padding: 12px 0 max(16px, env(safe-area-inset-bottom));
+      background: var(--bg);
+    }
+    .composer {
+      display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end;
+      padding: 10px; border: 1px solid var(--line); border-radius: 22px;
+      background: rgba(20, 36, 30, .96); box-shadow: 0 18px 60px rgba(0, 0, 0, .3);
+    }
+    textarea {
+      resize: none; min-height: 46px; max-height: 150px; padding: 12px 10px;
+      border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.35;
+    }
+    textarea::placeholder { color: #7f978c; }
+    .send {
+      width: 46px; height: 46px; border-radius: 15px; border: 0; cursor: pointer;
+      background: var(--accent); color: #10251c; font-size: 20px; font-weight: 900;
+    }
+    .send:disabled { opacity: .4; cursor: wait; }
+    .form-meta { display: flex; justify-content: space-between; align-items: center; padding: 7px 5px 0; color: var(--muted); font-size: 11px; }
+    select { color: var(--muted); border: 0; background: transparent; outline: 0; }
+    option { color: #111; }
+    .clear { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+    @keyframes appear { from { opacity: 0; transform: translateY(5px); } }
+    @keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
+    @media (max-width: 560px) {
+      .app { padding-left: 12px; padding-right: 12px; }
+      header { padding-top: 15px; }
+      .status span:last-child { display: none; }
+      .bubble { max-width: 90%; }
+      .empty { margin-top: 8vh; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div class="brand">
+        <div class="mark">B</div>
+        <div><h1 id="brand">Старпом</h1><div class="subtitle" id="subtitle">Локальный помощник</div></div>
+      </div>
+      <div class="status" id="status"><span class="dot"></span><span>Подключение…</span></div>
+    </header>
+
+    <nav class="quick" aria-label="Быстрые запросы">
+      <button class="chip" data-tool="get_weather" data-ru="Какая сейчас погода?" data-en="What is the weather now?" data-label-ru="Погода" data-label-en="Weather">Погода</button>
+      <button class="chip" data-tool="get_fridge_temp" data-ru="Какая температура в холодильнике и морозилке?" data-en="What are the fridge and freezer temperatures?" data-label-ru="Холодильник" data-label-en="Fridge">Холодильник</button>
+      <button class="chip" data-tool="get_gps" data-ru="Где я сейчас и с какой скоростью двигаюсь?" data-en="Where am I and how fast am I moving?" data-label-ru="GPS" data-label-en="GPS">GPS</button>
+      <button class="chip" data-tool="get_system_info" data-ru="Покажи состояние системы." data-en="Show system status." data-label-ru="Система" data-label-en="System">Система</button>
+      <button class="chip" data-tool="memo" data-ru="Покажи мои активные заметки." data-en="Show my active memos." data-label-ru="Заметки" data-label-en="Memos">Заметки</button>
+      <button class="chip" data-tool="web_search" data-ru="Найди в интернете свежую информацию." data-en="Search the web for current information." data-label-ru="Поиск" data-label-en="Search">Поиск</button>
+      <button class="chip" data-tool="wikipedia" data-ru="Найди справку в Википедии." data-en="Look up a topic on Wikipedia." data-label-ru="Википедия" data-label-en="Wikipedia">Википедия</button>
+    </nav>
+
+    <section class="messages" id="messages" aria-live="polite">
+      <div class="empty" id="empty"><strong id="empty-title">Чем помочь?</strong><span id="empty-body">Спроси о погоде, холодильнике, местоположении или состоянии системы.</span></div>
+    </section>
+
+    <form id="chat-form">
+      <div class="composer">
+        <textarea id="message" rows="1" maxlength="4000" placeholder="Напиши сообщение…" required></textarea>
+        <button class="send" id="send" type="submit" aria-label="Отправить">↑</button>
+      </div>
+      <div class="form-meta">
+        <select id="language" aria-label="Язык ответа"><option value="ru">Русский</option><option value="en">English</option></select>
+        <button class="clear" id="clear" type="button">Очистить чат</button>
+      </div>
+    </form>
+  </main>
+
+  <script>
+    const form = document.querySelector('#chat-form');
+    const input = document.querySelector('#message');
+    const messages = document.querySelector('#messages');
+    const empty = document.querySelector('#empty');
+    const send = document.querySelector('#send');
+    const language = document.querySelector('#language');
+    let busy = false;
+    let currentProvider = 'local';
+    let waitingBubble = null;
+    const sessionStorageKey = 'bosun-session-id';
+    let sessionId = localStorage.getItem(sessionStorageKey) || createSessionId();
+    localStorage.setItem(sessionStorageKey, sessionId);
+
+    const text = {
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — это может занять до минуты…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — this may take up to a minute…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat' }
+    };
+
+    function addMessage(role, value, extra = '') {
+      empty.hidden = true;
+      const row = document.createElement('div');
+      row.className = `message ${role} ${extra}`;
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = value;
+      row.appendChild(bubble);
+      messages.appendChild(row);
+      scrollToBottom();
+      return row;
+    }
+
+    function scrollToBottom() {
+      requestAnimationFrame(() => messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' }));
+    }
+
+    async function ask(value) {
+      if (busy || !value.trim()) return;
+      busy = true;
+      send.disabled = true;
+      addMessage('user', value.trim());
+      input.value = '';
+      resizeInput();
+      const waiting = addMessage('assistant', text[language.value][`${currentProvider}Waiting`], 'thinking');
+      waitingBubble = waiting.querySelector('.bubble');
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: value.trim(), language: language.value, session_id: sessionId })
+        });
+        const data = await response.json();
+        waiting.remove();
+        waitingBubble = null;
+        if (!response.ok) throw new Error(data.error || 'request failed');
+        if (data.session_id) {
+          sessionId = data.session_id;
+          localStorage.setItem(sessionStorageKey, sessionId);
+        }
+        addMessage('assistant', data.answer);
+      } catch (error) {
+        waiting.remove();
+        waitingBubble = null;
+        addMessage('assistant', text[language.value].error, 'error');
+      } finally {
+        busy = false;
+        send.disabled = false;
+        input.focus();
+      }
+    }
+
+    function resizeInput() {
+      input.style.height = 'auto';
+      input.style.height = `${Math.min(input.scrollHeight, 150)}px`;
+    }
+
+    function createSessionId() {
+      if (crypto.randomUUID) return crypto.randomUUID();
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    function updateLanguage() {
+      const locale = language.value;
+      document.documentElement.lang = locale;
+      input.placeholder = text[locale].placeholder;
+      document.querySelector('#brand').textContent = text[locale].brand;
+      document.querySelector('#subtitle').textContent = text[locale].subtitle;
+      document.querySelector('#empty-title').textContent = text[locale].emptyTitle;
+      document.querySelector('#empty-body').textContent = text[locale].emptyBody;
+      document.querySelector('#clear').textContent = text[locale].clear;
+      document.querySelector('#status span:last-child').textContent = text[locale][currentProvider];
+      if (waitingBubble) waitingBubble.textContent = text[locale][`${currentProvider}Waiting`];
+      document.querySelectorAll('.chip').forEach(button => { button.textContent = button.dataset[`label${locale === 'ru' ? 'Ru' : 'En'}`]; });
+    }
+
+    form.addEventListener('submit', event => { event.preventDefault(); ask(input.value); });
+    input.addEventListener('input', resizeInput);
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+    });
+    document.querySelectorAll('.chip').forEach(button => button.addEventListener('click', () => ask(button.dataset[language.value])));
+    document.querySelector('#clear').addEventListener('click', () => {
+      const previousSessionId = sessionId;
+      sessionId = createSessionId();
+      localStorage.setItem(sessionStorageKey, sessionId);
+      fetch('/api/session/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: previousSessionId })
+      }).catch(() => {});
+      messages.querySelectorAll('.message').forEach(node => node.remove());
+      empty.hidden = false;
+    });
+    language.addEventListener('change', updateLanguage);
+
+    function refreshStatus() {
+      fetch('/api/status').then(response => response.json()).then(data => {
+        currentProvider = data.provider === 'remote' ? 'remote' : 'local';
+        if (Array.isArray(data.available_tools)) {
+          const available = new Set(data.available_tools);
+          document.querySelectorAll('.chip[data-tool]').forEach(button => {
+            button.hidden = !available.has(button.dataset.tool);
+          });
+        }
+        updateLanguage();
+      }).catch(updateLanguage);
+    }
+    refreshStatus();
+    setInterval(refreshStatus, 3000);
+  </script>
+</body>
+</html>

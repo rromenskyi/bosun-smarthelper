@@ -1,7 +1,13 @@
-# ai-local-smarthelper configuration example
+# Bosun (Starpom) configuration example
 # Copy to ~/.config/smarthelper/config.yaml or ./config.yaml
 
 # LLM Configuration
+# Assistant identity and optional personality.
+assistant:
+  name_ru: "Старпом"
+  name_en: "Bosun"
+  style_prompt: ""                       # Example: Reply with light pirate flavor; stay clear and accurate.
+
 llm:
   # Remote LLM (OpenAI-compatible API)
   remote:
@@ -10,12 +16,17 @@ llm:
     api_key_env: "OPENAI_API_KEY"           # Env var name for API key
     # organization: ""                      # Optional: OpenAI organization
     # timeout: 30s                          # Request timeout
+    max_retries: 5                         # Retry network, 429, and 5xx failures
+    retry_backoff: 500ms                   # Exponential delay between attempts
 
   # Local LLM (Ollama)
   local:
     base_url: "http://localhost:11434"      # Ollama API endpoint
     model: "llama3.1:8b"                    # Model name (must be pulled)
-    # timeout: 60s                          # Request timeout (local can be slower)
+    api_format: "ollama"                     # ollama, or openai for LM Studio
+    # api_key_env: "LOCAL_LLM_API_KEY"       # Optional; used by openai format
+    supports_tools: true                     # false enables prompt-based fallback
+    # timeout: 120s                         # Weak hardware may need a long timeout
 
   # Router settings
   router:
@@ -26,15 +37,35 @@ llm:
 
 # MCP Server Configuration
 mcp:
-  server_name: "smarthelper"                # Server identifier
+  server_name: "bosun"                      # Server identifier
   transport: "stdio"                        # Transport: stdio (only supported)
   # log_level: "info"                       # debug, info, warn, error
+
+# LAN-only web interface
+web:
+  bind: "127.0.0.1:8080"                   # Use an explicit private LAN IP for phone access
+  request_timeout: 180s                     # Local inference can be slow on weak hardware
+  default_language: "ru"                   # ru or en
+  history_turns: 8                          # Completed user/assistant turns retained per session
+  history_max_chars: 12000                  # Bound local-model context growth
+  session_ttl: 24h                          # In-memory session expiration
+  max_sessions: 100                         # Evict the oldest session above this limit
+
+# Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
+memo:
+  path: ""
+
+# Public, keyless tools hidden automatically in offline mode.
+online_tools:
+  duckduckgo_url: "https://html.duckduckgo.com/html/"
+  wikipedia_url: "https://{lang}.wikipedia.org/api/rest_v1/page/summary/{title}"
+  request_timeout: 10s
 
 # Sensor Configuration
 sensors:
   # Outdoor weather sensor
   weather:
-    type: "mock"                            # mock, mqtt, http, 1wire
+    type: "mock"                            # mock or open_meteo
     # For mock type:
     mock_temp_c: 22.5
     mock_humidity: 60
@@ -43,6 +74,13 @@ sensors:
     # mqtt_broker: "tcp://localhost:1883"
     # For http type:
     # http_url: "http://weather-station.local/api"
+    # For Open-Meteo (no API key required):
+    # type: "open_meteo"
+    # default_location: "Denver"             # Used when the tool receives no location
+    # geocoding_url: "https://geocoding-api.open-meteo.com/v1/search"
+    # nominatim_url: "https://nominatim.openstreetmap.org/search" # Landmark fallback
+    # forecast_url: "https://api.open-meteo.com/v1/forecast"
+    # timeout: 8s
 
   # Refrigerator temperature
   fridge:
@@ -54,8 +92,8 @@ sensors:
   # GPS / Location
   gps:
     type: "mock"
-    mock_latitude: 55.7558
-    mock_longitude: 37.6173
+    mock_latitude: 40.7608                   # Salt Lake City
+    mock_longitude: -111.8910
     mock_speed_kmh: 0
     mock_altitude_m: 150
     # For serial GPS (NMEA):

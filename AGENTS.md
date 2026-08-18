@@ -53,14 +53,15 @@ internal/
     types.go                # Tool interface + Registry
     weather.go, fridge.go, gps.go, system.go
   config/                   # Config loading (viper: YAML + env vars)
+  webui/                    # Embedded LAN-only browser UI + JSON chat API
 configs/
   config.yaml.example
 ```
 
 `internal/llm` (routing between local/remote models) and `internal/mcp`
-(exposing tools) are independent building blocks today — there is no agent
-loop yet that wires an LLM conversation to tool calls end-to-end. That loop
-(`smarthelper chat`) is the next milestone; see `SPEC.md` for scope.
+(exposing tools) remain independent building blocks. `internal/agent` connects
+an LLM conversation directly to the same tool registry for the one-shot
+`smarthelper chat` command and the `smarthelper serve` web interface.
 
 ## LLM Router Logic (`internal/llm/router.go`)
 

@@ -1,8 +1,9 @@
-# ai-local-smarthelper — Specification
+# Bosun (Старпом) — Specification
 
 ## Vision
 
-A local-first AI assistant that works **offline** (small local LLM) and
+Bosun (called «Старпом» in Russian) is a local-first AI assistant that works
+**offline** (small local LLM) and
 **online** (OpenAI-compatible remote LLM), with **MCP (Model Context
 Protocol)** tools for real-world sensor access — outdoor temperature, fridge
 temperature, GPS coordinates/speed, system status, and more as they're added.
@@ -24,9 +25,11 @@ concurrency for connectivity checks, and first-class stdio handling for MCP.
 - Automatic failover: remote call failure falls back to local mid-request.
 - Endpoints, models, and timeouts are configurable via `config.yaml` / env vars.
 - Both providers implement the same `llm.Client` interface (`internal/llm/types.go`).
+- A fresh connectivity state also filters the tool definitions sent to the
+  model. Network-dependent tools are not advertised in offline mode.
 
-Status: **implemented** (`internal/llm/{types,local,remote,router}.go`), unit-testable
-via mock HTTP servers (not yet added — see Roadmap).
+Status: **implemented** (`internal/llm/{types,local,remote,router}.go`) with
+in-memory HTTP transport tests for Ollama and OpenAI-compatible wire formats.
 
 ### 2. MCP Tool Layer
 
@@ -34,14 +37,18 @@ Exposed over stdio as an MCP server (`smarthelper mcp`):
 
 | Tool | Description | Example result |
 |------|-------------|-----------------|
-| `get_weather` | Outdoor temperature/humidity | `{"temperature_c": 22.5, "humidity": 60}` |
+| `get_weather` | Current weather and 1–16 day forecast | `{"temperature_c": 22.5, "daily_forecast": [...]}` |
 | `get_fridge_temp` | Fridge/freezer temperature | `{"fridge_c": 4.0, "freezer_c": -18.0}` |
-| `get_gps` | Coordinates, speed, altitude | `{"latitude": 55.75, "longitude": 37.61, "speed_kmh": 0}` |
+| `get_gps` | Coordinates, speed, altitude | `{"latitude": 40.7608, "longitude": -111.891, "speed_kmh": 0}` |
 | `get_system_info` | CPU, RAM, disk, uptime | `{"cpu_percent": [...], "memory": {...}}` |
+| `memo` | Dated persistent local notes | `{"key":"shopping","updated_at":"...","age_days":2}` |
+| `web_search` | DuckDuckGo results | `{"query":"...","results":[...]}` |
+| `wikipedia` | Encyclopedia summary | `{"title":"...","extract":"...","url":"..."}` |
 
-Status: **implemented**, all four tools currently backed by `mock` config
-(fixed/configurable values) — real sensor backends (1-Wire, MQTT, serial GPS)
-are not wired up yet. Extensible: implement `tools.Tool` and register it.
+Status: **implemented**. All four tools have local/mock paths. Weather also has
+an online Open-Meteo backend with Open-Meteo city geocoding, Nominatim landmark
+fallback, and daily forecasts. Real hardware backends (1-Wire, MQTT, serial
+GPS) are not wired up yet. Extensible: implement `tools.Tool` and register it.
 
 ### 3. Agent Rules
 
@@ -81,7 +88,7 @@ llm:
 mcp:
   server_name, transport, log_level
 sensors:
-  weather: {type: mock|mqtt|http|1wire, ...}
+  weather: {type: mock|open_meteo, default_location, timeout, ...}
   fridge:  {type: mock|mqtt, ...}
   gps:     {type: mock|serial, ...}
   system:  {type: native}
@@ -92,51 +99,66 @@ logging:
 ### 6. Runtime Flow (target — see Roadmap)
 
 ```
-User query
+User query (smarthelper chat)
     │
     ▼
-Connectivity check (router.CheckConnectivity)
+Connectivity check (router.CheckConnectivity — configurable check_target)
     │
-    ├─ online + remote configured ──▶ Remote LLM (OpenAI-compatible)
+    ├─ online + remote configured ──▶ Remote LLM (OpenAI-compatible, configurable endpoint)
     │                                     │ request fails
     │                                     ▼
-    └─ offline / remote unavailable ──▶ Local LLM (Ollama)
+    └─ offline / remote unavailable ──▶ Local LLM (Ollama, local fallback)
                                               │
                                               ▼
-                                   Tool calls via MCP registry
+                                agent.Agent loop: tool calls via registry
                                               │
                                               ▼
                                       Response to user
 ```
 
-Today, the router and the MCP tool server are independent, tested building
-blocks. The box that connects them — an actual conversation loop that takes a
-user message, calls the LLM with tool definitions, executes any tool calls,
-and feeds results back — does not exist yet. That's `smarthelper chat`.
+The router (local/remote selection with configurable endpoints and
+connectivity-based fallback) and the MCP tool server are independent, tested
+building blocks. `internal/agent` is the box that connects an LLM client to
+the tool registry: it runs the loop — call the model, execute any tool calls
+it returns, feed results back as `tool` messages, repeat until a final answer
+or `maxToolIterations` is hit. `smarthelper chat "<message>"` runs one turn of
+this loop through the router (remote-when-online, local-when-offline).
+
+Before each turn, the agent obtains a fresh-enough connectivity state and
+builds an availability-filtered tool contract. A tool whose configured
+backend implements `tools.NetworkDependentTool` and returns `true` is omitted
+while offline. The web UI applies the same available-tool list to its quick
+actions. See `docs/offline-mode.md`.
 
 ### 7. MVP Scope (v0.1) — Status
 
 - [x] Language decided: Go
 - [x] Config loading + validation (viper, YAML + `SMARTHELPER_*` env overrides)
 - [x] Local LLM client (Ollama HTTP API, `/api/chat`)
-- [x] Remote LLM client (OpenAI-compatible `/chat/completions`)
+- [x] Remote LLM client (OpenAI-compatible `/chat/completions`), endpoint/model configurable
 - [x] Router: connectivity check + local/remote selection + failover
+- [x] Offline tool filtering for the LLM contract and web quick actions
 - [x] MCP server (stdio, JSON-RPC 2.0): `initialize`, `tools/list`, `tools/call`
 - [x] 4 built-in tools: `get_weather`, `get_fridge_temp`, `get_gps`, `get_system_info` (mock backends)
-- [x] CLI: `smarthelper version`, `smarthelper mcp`
+- [x] `internal/agent` — conversation loop wiring an LLM client to the tool registry
+- [x] CLI: `smarthelper version`, `smarthelper mcp`, `smarthelper chat "<message>"`
+- [x] LAN-only responsive web UI and JSON chat API (`smarthelper serve`)
+- [x] Bounded multi-turn web sessions (in memory; reset on service restart)
+- [x] Persistent dated memo tool with list/archive/delete lifecycle
+- [x] DuckDuckGo and Wikipedia tools with offline filtering
 - [x] `make check` (fmt + vet + test + build) passing
-- [ ] `smarthelper chat` — agent loop wiring LLM ⇄ tools together
 - [ ] Real sensor backends (1-Wire temp probes, MQTT, serial GPS/OBD2)
 - [ ] Integration tests against a real Ollama instance
+- [ ] Durable chat persistence across service restarts
 
-### 8. Local Web UI + Voice Interface (planned)
+### 8. Local Web UI + Voice Interface
 
 Target device is weak/low-power ("nano"-class embedded hardware) — the local
 LLM must stay small (0.8B–2B parameter tier; already validated against real
 hardware via `test-llm-0.8b.sh` / `test-llm-2b.sh` style smoke tests) for
 usable latency offline.
 
-- **Web server**: serves a small UI reachable from a phone browser over the
+- **Web server (implemented)**: serves a small UI reachable from a phone browser over the
   LAN. **No authentication** — trusted local network only, never exposed
   beyond it (no port-forwarding, no public bind address; bind to the LAN
   interface, not `0.0.0.0` on anything internet-facing).
@@ -146,8 +168,8 @@ usable latency offline.
   primary target language for STT/TTS (Whisper supports it natively; TTS
   engine choice must too).
 
-This depends on `smarthelper chat` (§7) existing first — the web UI is a
-client of that conversation loop, not a separate feature.
+The web UI is a client of the same conversation loop as `smarthelper chat`,
+not a separate assistant implementation.
 
 ### 9. Non-Goals (for now)
 
@@ -160,14 +182,9 @@ client of that conversation loop, not a separate feature.
 
 ## Roadmap (next after this foundation)
 
-1. `smarthelper chat`: read a user message, call `llm.Router.Chat` with the
-   tool registry's definitions, execute any returned tool calls, loop until
-   the model returns a final answer.
-2. Real backends for at least one sensor (e.g. 1-Wire `w1_slave` for
+1. Real backends for at least one sensor (e.g. 1-Wire `w1_slave` for
    outdoor/fridge temperature) to replace `mock`.
-3. Integration test tier (`tests/integration/`) that talks to a real Ollama
-   instance when `OLLAMA_HOST` is set, skipped otherwise.
-4. Local web server (LAN-only, no auth) exposing a minimal chat UI for phone
-   browsers, built on top of the `chat` loop from (1).
-5. Voice interface: Whisper STT + TTS, language-configurable (Russian first),
+2. Integration test tier (`tests/integration/`) that talks to a configured
+   local model server when its endpoint is available, skipped otherwise.
+3. Voice interface: Whisper STT + TTS, language-configurable (Russian first),
    as an alternate front-end to the same `chat` loop.
