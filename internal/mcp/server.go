@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/roman220/ai-local-smarthelper/internal/errlog"
 	"github.com/roman220/ai-local-smarthelper/internal/tools"
 )
 
@@ -21,6 +22,7 @@ type Server struct {
 	version  string
 	registry *tools.Registry
 	logger   *slog.Logger
+	errLog   *errlog.Logger
 }
 
 // NewServer creates an MCP server backed by the given tool registry.
@@ -29,6 +31,13 @@ func NewServer(name, version string, registry *tools.Registry, logger *slog.Logg
 		logger = slog.Default()
 	}
 	return &Server{name: name, version: version, registry: registry, logger: logger}
+}
+
+// SetErrorLog wires a failure log for tool call errors (see internal/errlog).
+// A nil logger (the default) means failures are simply returned to the
+// caller as a JSON-RPC error, not recorded anywhere durable.
+func (s *Server) SetErrorLog(logger *errlog.Logger) {
+	s.errLog = logger
 }
 
 type request struct {
@@ -133,17 +142,23 @@ type callParams struct {
 func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error) {
 	var params callParams
 	if err := json.Unmarshal(raw, &params); err != nil {
-		return nil, fmt.Errorf("invalid tool call params: %w", err)
+		err = fmt.Errorf("invalid tool call params: %w", err)
+		s.errLog.Record("tool_call", "(unparsed)", err)
+		return nil, err
 	}
 
 	tool, ok := s.registry.Get(params.Name)
 	if !ok {
-		return nil, fmt.Errorf("unknown tool: %s", params.Name)
+		err := fmt.Errorf("unknown tool: %s", params.Name)
+		s.errLog.Record("tool_call", params.Name, err)
+		return nil, err
 	}
 
 	result, err := tool.Execute(ctx, params.Arguments)
 	if err != nil {
-		return nil, fmt.Errorf("execute %s: %w", params.Name, err)
+		err = fmt.Errorf("execute %s: %w", params.Name, err)
+		s.errLog.Record("tool_call", params.Name, err)
+		return nil, err
 	}
 
 	payload, err := json.Marshal(result)

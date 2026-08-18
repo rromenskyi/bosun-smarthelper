@@ -22,15 +22,18 @@ Early foundation. Working today:
 - **LAN web UI** — `smarthelper serve` exposes the same agent loop through a
   responsive, dependency-free interface for phone and desktop browsers.
 - **Multi-turn web sessions** — prior user/assistant turns are retained by
-  session ID with configurable history and expiration limits.
+  session ID with configurable history and expiration limits, persisted to
+  disk so they survive both a page reload and a service restart.
 - **Persistent local memos** — dated notes can be written, read, listed,
   archived, and deleted through the `memo` tool.
 - **Online knowledge tools** — DuckDuckGo web search and Wikipedia summaries,
   automatically hidden while offline.
+- **Failure log** — tool and LLM-call errors are recorded to one file
+  (`internal/errlog`), reviewable with `smarthelper errors`, to drive an
+  improvement loop instead of disappearing into stderr.
 
-Not yet built: chat persistence across service restarts and real sensor
-hardware backends.
-See `SPEC.md` for the full roadmap.
+Not yet built: real sensor hardware backends. See `SPEC.md` for the full
+roadmap.
 
 ## Architecture
 
@@ -101,6 +104,9 @@ zero edits for local-only testing.
 # Run the browser interface on the configured private address
 ./bin/smarthelper serve
 
+# Review recent tool/LLM failures (see internal/errlog)
+./bin/smarthelper errors
+
 # Print version
 ./bin/smarthelper version
 ```
@@ -137,11 +143,20 @@ system prompt, and chat history are kept small enough for a weak local model.
 
 ## Chat sessions and memos
 
-The web client keeps a random session ID in browser local storage. Bosun keeps
-completed user/assistant turns in memory and supplies them to the next model
-request. Tool protocol messages are not retained. “Clear chat” deletes the
-server-side session and creates a new ID. History limits, TTL, and maximum
-session count are configured under `web`; service restart clears chat history.
+The web client keeps a random session ID in browser local storage and, on
+load, fetches `/api/history?session_id=...` to repopulate the visible
+transcript — so a page reload doesn't wipe the conversation you can see.
+Bosun keeps completed user/assistant turns (tool protocol messages are not
+retained) and supplies them to the next model request; how much of that
+history is actually sent depends on which provider is serving the request —
+see `docs/token-budget.md`. “Clear chat” deletes the server-side session and
+creates a new ID.
+
+Sessions are persisted to disk (`web.session_store_path`, default
+`~/.local/share/bosun/sessions.json`), atomically like the memo store, so a
+service restart doesn't lose chat history either — only an expired TTL or an
+explicit “clear chat” does. History limits, TTL, and maximum session count
+are configured under `web`.
 
 Memos are separate from transient chat history. They are stored atomically in
 `~/.local/share/bosun/memos.json` by default and survive service restarts. Each

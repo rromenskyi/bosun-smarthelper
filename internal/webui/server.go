@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +95,10 @@ type SessionOptions struct {
 	Remote      HistoryBudget
 	TTL         time.Duration
 	MaxSessions int
+	// StorePath persists sessions to disk so chat history survives a page
+	// reload and a service restart. Empty disables persistence (in-memory
+	// only, the prior behavior).
+	StorePath string
 }
 
 // NewServer creates a single-user web server backed by the existing agent.
@@ -149,6 +155,17 @@ func NewServer(
 	if options.MaxSessions <= 0 {
 		options.MaxSessions = 100
 	}
+
+	sessions := make(map[string]chatSession)
+	if options.StorePath != "" {
+		loaded, err := loadSessionStore(options.StorePath)
+		if err != nil {
+			logger.Warn("could not load persisted chat sessions; starting empty", "error", err)
+		} else {
+			sessions = loaded
+		}
+	}
+
 	return &Server{
 		asker:           asker,
 		status:          status,
@@ -156,7 +173,7 @@ func NewServer(
 		requestTimeout:  requestTimeout,
 		defaultLanguage: defaultLanguage,
 		chatSlot:        make(chan struct{}, 1),
-		sessions:        make(map[string]chatSession),
+		sessions:        sessions,
 		sessionOptions:  options,
 	}
 }
@@ -166,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
+	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/session/clear", s.handleSessionClear)
 	return securityHeaders(mux)
@@ -215,6 +233,21 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.status())
+}
+
+// handleHistory returns a session's stored transcript so the client can
+// repopulate the visible chat log after a page reload. An unknown or
+// missing session_id yields an empty list rather than an error — this is a
+// hydration nicety, not something worth surfacing as a failure.
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	messages := []agent.HistoryMessage{}
+	if validSessionID(sessionID) {
+		if history := s.loadHistory(sessionID); history != nil {
+			messages = history
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
 }
 
 type chatRequest struct {
@@ -329,6 +362,7 @@ func (s *Server) handleSessionClear(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sessionsMu.Lock()
 	delete(s.sessions, request.SessionID)
+	s.persistLocked()
 	s.sessionsMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"cleared": true})
 }
@@ -382,6 +416,7 @@ func (s *Server) saveTurn(sessionID, userMessage, answer string) {
 	session.History = trimHistory(session.History, s.sessionOptions.Remote.Turns, s.sessionOptions.Remote.MaxChars)
 	session.UpdatedAt = now
 	s.sessions[sessionID] = session
+	s.persistLocked()
 }
 
 func (s *Server) purgeExpiredLocked(now time.Time) {
@@ -402,6 +437,97 @@ func (s *Server) evictOldestLocked() {
 		}
 	}
 	delete(s.sessions, oldestID)
+}
+
+// sessionStoreFile is the on-disk shape written to SessionOptions.StorePath.
+type sessionStoreFile struct {
+	Sessions map[string]chatSession `json:"sessions"`
+}
+
+// DefaultSessionStorePath mirrors the memo/error-log convention
+// (~/.local/share/bosun/...). NewServer does NOT resolve an empty StorePath
+// to this by itself — empty means "no persistence" at the library level, so
+// tests and other callers that don't set it never touch the real
+// filesystem. Application wiring (cmd/smarthelper) calls this explicitly.
+func DefaultSessionStorePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "sessions.json"
+	}
+	return filepath.Join(home, ".local", "share", "bosun", "sessions.json")
+}
+
+// loadSessionStore reads a persisted session store. A missing file yields an
+// empty, non-nil map and no error.
+func loadSessionStore(path string) (map[string]chatSession, error) {
+	file, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return make(map[string]chatSession), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open session store: %w", err)
+	}
+	defer file.Close()
+
+	var data sessionStoreFile
+	if err := json.NewDecoder(file).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode session store: %w", err)
+	}
+	if data.Sessions == nil {
+		data.Sessions = make(map[string]chatSession)
+	}
+	return data.Sessions, nil
+}
+
+// persistLocked writes the current session map to disk. Caller must hold
+// s.sessionsMu. A failure is logged, not returned — chat keeps working
+// in-memory even if the disk write fails.
+func (s *Server) persistLocked() {
+	if s.sessionOptions.StorePath == "" {
+		return
+	}
+	snapshot := make(map[string]chatSession, len(s.sessions))
+	for id, session := range s.sessions {
+		snapshot[id] = session
+	}
+	if err := writeSessionStore(s.sessionOptions.StorePath, snapshot); err != nil {
+		s.logger.Warn("persist chat sessions", "error", err)
+	}
+}
+
+// writeSessionStore atomically replaces path's contents (temp file + rename),
+// matching the memo store's durability pattern.
+func writeSessionStore(path string, sessions map[string]chatSession) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create session store directory: %w", err)
+	}
+	payload, err := json.Marshal(sessionStoreFile{Sessions: sessions})
+	if err != nil {
+		return fmt.Errorf("encode session store: %w", err)
+	}
+	temporary, err := os.CreateTemp(directory, ".sessions-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary session store: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return fmt.Errorf("set session store permissions: %w", err)
+	}
+	if _, err := temporary.Write(payload); err != nil {
+		temporary.Close()
+		return fmt.Errorf("write session store: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return fmt.Errorf("sync session store: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close session store: %w", err)
+	}
+	return os.Rename(temporaryPath, path)
 }
 
 func trimHistory(history []agent.HistoryMessage, maxTurns, maxChars int) []agent.HistoryMessage {

@@ -148,13 +148,13 @@ models without native tool calling, conservative default history limits).
 - [x] `internal/agent` — conversation loop wiring an LLM client to the tool registry
 - [x] CLI: `smarthelper version`, `smarthelper mcp`, `smarthelper chat "<message>"`
 - [x] LAN-only responsive web UI and JSON chat API (`smarthelper serve`)
-- [x] Bounded multi-turn web sessions (in memory; reset on service restart)
+- [x] Bounded multi-turn web sessions, persisted to disk (survive a page reload and a service restart)
 - [x] Persistent dated memo tool with list/archive/delete lifecycle
 - [x] DuckDuckGo and Wikipedia tools with offline filtering
+- [x] Centralized tool/LLM failure log (`internal/errlog`) reviewable via `smarthelper errors`
 - [x] `make check` (fmt + vet + test + build) passing
 - [ ] Real sensor backends (1-Wire temp probes, MQTT, serial GPS/OBD2)
 - [ ] Integration tests against a real Ollama instance
-- [ ] Durable chat persistence across service restarts
 
 ### 8. Local Web UI + Voice Interface
 

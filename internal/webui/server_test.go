@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +176,92 @@ func TestServerChatLanguagePassedSeparatelyFromMessage(t *testing.T) {
 	}
 	if asker.messages[1] != "What's the weather?" || asker.languages[1] != "en" {
 		t.Errorf("call 1: message=%q language=%q, want unmodified message and language=en", asker.messages[1], asker.languages[1])
+	}
+}
+
+func TestServerSessionPersistsAcrossRestart(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "sessions.json")
+	options := SessionOptions{TTL: time.Hour, MaxSessions: 10, StorePath: storePath}
+
+	first := &conversationFakeAsker{answers: []string{"Приятно познакомиться."}}
+	server1 := NewServer(first, nil, time.Second, "ru", nil, options)
+	request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"Меня зовут Рома","session_id":"restart-test-session"}`))
+	response := httptest.NewRecorder()
+	server1.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	// Simulate a service restart: a fresh Server pointed at the same store path.
+	second := &conversationFakeAsker{answers: []string{"Тебя зовут Рома."}}
+	server2 := NewServer(second, nil, time.Second, "ru", nil, options)
+	history := server2.loadHistory("restart-test-session")
+	if len(history) != 2 || history[0].Content != "Меня зовут Рома" {
+		t.Fatalf("history after restart = %#v, want the turn saved before restart", history)
+	}
+}
+
+func TestServerHistoryEndpointHydratesTranscript(t *testing.T) {
+	asker := &conversationFakeAsker{answers: []string{"Привет!"}}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	handler := server.Handler()
+
+	chatRequest := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"Привет","session_id":"history-endpoint-test"}`))
+	chatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(chatResponse, chatRequest)
+	if chatResponse.Code != http.StatusOK {
+		t.Fatalf("chat status = %d", chatResponse.Code)
+	}
+
+	historyRequest := httptest.NewRequest(http.MethodGet, "/api/history?session_id=history-endpoint-test", nil)
+	historyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(historyResponse, historyRequest)
+	if historyResponse.Code != http.StatusOK {
+		t.Fatalf("history status = %d", historyResponse.Code)
+	}
+
+	var payload struct {
+		Messages []agent.HistoryMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(historyResponse.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode history response: %v", err)
+	}
+	if len(payload.Messages) != 2 || payload.Messages[0].Role != "user" || payload.Messages[0].Content != "Привет" {
+		t.Errorf("messages = %#v, want the stored turn", payload.Messages)
+	}
+
+	// An unknown session_id hydrates to an empty (not null) list.
+	unknownRequest := httptest.NewRequest(http.MethodGet, "/api/history?session_id=does-not-exist-12345678", nil)
+	unknownResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unknownResponse, unknownRequest)
+	var emptyPayload struct {
+		Messages []agent.HistoryMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(unknownResponse.Body).Decode(&emptyPayload); err != nil {
+		t.Fatalf("decode empty history response: %v", err)
+	}
+	if emptyPayload.Messages == nil || len(emptyPayload.Messages) != 0 {
+		t.Errorf("messages = %#v, want an empty non-nil list", emptyPayload.Messages)
+	}
+}
+
+func TestServerSessionClearRemovesPersistedSession(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "sessions.json")
+	options := SessionOptions{TTL: time.Hour, MaxSessions: 10, StorePath: storePath}
+	asker := &conversationFakeAsker{answers: []string{"Ответ."}}
+	server := NewServer(asker, nil, time.Second, "ru", nil, options)
+	handler := server.Handler()
+
+	chatRequest := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"Привет","session_id":"clear-persist-test"}`))
+	handler.ServeHTTP(httptest.NewRecorder(), chatRequest)
+
+	clearRequest := httptest.NewRequest(http.MethodPost, "/api/session/clear", strings.NewReader(`{"session_id":"clear-persist-test"}`))
+	handler.ServeHTTP(httptest.NewRecorder(), clearRequest)
+
+	// A fresh server reading the same store must not see the cleared session.
+	reloaded := NewServer(&conversationFakeAsker{answers: []string{"unused"}}, nil, time.Second, "ru", nil, options)
+	if history := reloaded.loadHistory("clear-persist-test"); len(history) != 0 {
+		t.Errorf("history after clear+restart = %#v, want empty", history)
 	}
 }
 

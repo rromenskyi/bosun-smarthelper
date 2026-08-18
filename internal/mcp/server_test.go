@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/roman220/ai-local-smarthelper/internal/config"
+	"github.com/roman220/ai-local-smarthelper/internal/errlog"
 	"github.com/roman220/ai-local-smarthelper/internal/tools"
 )
 
@@ -66,5 +68,30 @@ func TestServer_ToolsListAndCall(t *testing.T) {
 	}
 	if unknownResp.Error == nil {
 		t.Fatal("expected error for unknown method")
+	}
+}
+
+func TestServer_RecordsFailedToolCallToErrorLog(t *testing.T) {
+	server := newTestServer()
+	logPath := filepath.Join(t.TempDir(), "errors.jsonl")
+	errLog, err := errlog.Open(logPath)
+	if err != nil {
+		t.Fatalf("errlog.Open: %v", err)
+	}
+	server.SetErrorLog(errLog)
+
+	input := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"does_not_exist","arguments":{}}}` + "\n"
+	var out bytes.Buffer
+	if err := server.Serve(context.Background(), strings.NewReader(input), &out); err != nil {
+		t.Fatalf("Serve returned error: %v", err)
+	}
+	errLog.Close()
+
+	entries, err := errlog.ReadAll(logPath)
+	if err != nil {
+		t.Fatalf("errlog.ReadAll: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Category != "tool_call" || entries[0].Detail != "does_not_exist" {
+		t.Fatalf("entries = %#v, want one tool_call/does_not_exist entry", entries)
 	}
 }

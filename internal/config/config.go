@@ -15,6 +15,7 @@ type Config struct {
 	MCP       MCPConfig       `mapstructure:"mcp"`
 	Web       WebConfig       `mapstructure:"web"`
 	Memo      MemoConfig      `mapstructure:"memo"`
+	ErrorLog  ErrorLogConfig  `mapstructure:"error_log"`
 	Online    OnlineConfig    `mapstructure:"online_tools"`
 	Sensors   SensorsConfig   `mapstructure:"sensors"`
 	Logging   LoggingConfig   `mapstructure:"logging"`
@@ -29,6 +30,13 @@ type AssistantConfig struct {
 
 // MemoConfig holds persistent local memo settings.
 type MemoConfig struct {
+	Path string `mapstructure:"path"`
+}
+
+// ErrorLogConfig holds settings for the tool/LLM failure log used to drive
+// an improvement loop (see internal/errlog). Empty Path resolves to
+// errlog.DefaultPath() (~/.local/share/bosun/errors.jsonl).
+type ErrorLogConfig struct {
 	Path string `mapstructure:"path"`
 }
 
@@ -90,6 +98,10 @@ type WebConfig struct {
 	History         HistoryConfig `mapstructure:"history"`
 	SessionTTL      string        `mapstructure:"session_ttl"`
 	MaxSessions     int           `mapstructure:"max_sessions"`
+	// SessionStorePath persists chat sessions to disk so history survives a
+	// page reload and a service restart. Empty disables persistence
+	// (in-memory only).
+	SessionStorePath string `mapstructure:"session_store_path"`
 }
 
 // HistoryConfig holds separate chat-history budgets per provider: a weak
@@ -229,7 +241,7 @@ func setDefaults(v *viper.Viper) {
 	// Web defaults bind only to loopback. LAN deployments should use the
 	// machine's explicit private address rather than 0.0.0.0.
 	v.SetDefault("web.bind", "127.0.0.1:8080")
-	v.SetDefault("web.request_timeout", "180s")
+	v.SetDefault("web.request_timeout", "600s")
 	v.SetDefault("web.default_language", "ru")
 	// Two budgets: the local fallback model has a tight context window, the
 	// remote model's is effectively unlimited by comparison. Which one is

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/roman220/ai-local-smarthelper/internal/errlog"
 	"github.com/roman220/ai-local-smarthelper/internal/llm"
 	"github.com/roman220/ai-local-smarthelper/internal/tools"
 )
@@ -30,8 +31,8 @@ type ChatClient interface {
 // HistoryMessage is a completed user or assistant message retained between
 // turns. Internal tool protocol messages are intentionally not persisted.
 type HistoryMessage struct {
-	Role    string
-	Content string
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 // Agent runs the LLM ⇄ tools conversation loop for a single request.
@@ -42,6 +43,7 @@ type Agent struct {
 	nameRU              string
 	nameEN              string
 	stylePrompt         string
+	errLog              *errlog.Logger
 }
 
 // New creates an Agent backed by the given chat client and tool registry.
@@ -66,6 +68,13 @@ func (a *Agent) SetPersona(nameRU, nameEN, stylePrompt string) {
 		a.nameEN = strings.TrimSpace(nameEN)
 	}
 	a.stylePrompt = strings.TrimSpace(stylePrompt)
+}
+
+// SetErrorLog wires a failure log for tool and LLM-call errors. A nil logger
+// (the default) means failures are simply returned to the caller as before,
+// not recorded anywhere durable.
+func (a *Agent) SetErrorLog(logger *errlog.Logger) {
+	a.errLog = logger
 }
 
 // Ask sends a single user message through the conversation loop, executing
@@ -113,6 +122,7 @@ func (a *Agent) AskWithHistory(
 	for i := 0; i < maxToolIterations; i++ {
 		resp, err := a.client.Chat(ctx, messages, toolDefs)
 		if err != nil {
+			a.errLog.Record("llm_chat", a.chatProvider(), err)
 			return "", fmt.Errorf("chat: %w", err)
 		}
 
@@ -147,6 +157,7 @@ func (a *Agent) AskWithHistory(
 func (a *Agent) executeToolAsJSON(ctx context.Context, call llm.ToolCall, online bool) string {
 	result, err := a.executeTool(ctx, call, online)
 	if err != nil {
+		a.errLog.Record("tool_call", call.Function.Name, err)
 		result = map[string]any{"error": err.Error()}
 	}
 
@@ -195,4 +206,18 @@ func (a *Agent) isOnline(ctx context.Context) bool {
 		return true
 	}
 	return a.networkAvailability(ctx)
+}
+
+// providerNamer is implemented by llm.Router (CurrentProvider). It's an
+// optional capability, checked with a type assertion, so a bare llm.Client
+// used directly in tests doesn't need to implement it.
+type providerNamer interface {
+	CurrentProvider() string
+}
+
+func (a *Agent) chatProvider() string {
+	if namer, ok := a.client.(providerNamer); ok {
+		return namer.CurrentProvider()
+	}
+	return "unknown"
 }

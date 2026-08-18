@@ -26,7 +26,8 @@ llm:
     api_format: "ollama"                     # ollama, or openai for LM Studio
     # api_key_env: "LOCAL_LLM_API_KEY"       # Optional; used by openai format
     supports_tools: true                     # false enables prompt-based fallback
-    # timeout: 120s                         # Weak hardware may need a long timeout
+    # timeout: 300s                         # Weak hardware may need several minutes; at ~6 tok/s
+                                             # a single long tool-using answer can take that long
 
   # Router settings
   router:
@@ -44,7 +45,8 @@ mcp:
 # LAN-only web interface
 web:
   bind: "127.0.0.1:8080"                   # Use an explicit private LAN IP for phone access
-  request_timeout: 180s                     # Local inference can be slow on weak hardware
+  request_timeout: 600s                     # Bounds the whole chat request (incl. tool calls);
+                                             # keep well above llm.local.timeout for headroom
   default_language: "ru"                   # ru or en
   # Which budget applies to a given request is decided at request time from
   # current connectivity (see docs/token-budget.md), so a chat that switches
@@ -58,11 +60,20 @@ web:
     remote:
       turns: 40                             # Remote context is comparatively unlimited
       max_chars: 60000                      # ~15000 tokens; still bounded so a session can't grow forever
-  session_ttl: 24h                          # In-memory session expiration
+  session_ttl: 24h                          # Session expiration (persisted sessions too)
   max_sessions: 100                         # Evict the oldest session above this limit
+  # session_store_path: ""                  # Empty uses ~/.local/share/bosun/sessions.json.
+                                             # Persists chat history across a page reload and a
+                                             # service restart; set to a bind mount path etc. if needed.
 
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:
+  path: ""
+
+# Failure log for tool/LLM errors, reviewed later to drive fixes — not a
+# general-purpose logger. Empty path uses ~/.local/share/bosun/errors.jsonl.
+# Inspect with `smarthelper errors`.
+error_log:
   path: ""
 
 # Public, keyless tools hidden automatically in offline mode.

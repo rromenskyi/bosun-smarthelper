@@ -2,26 +2,36 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/roman220/ai-local-smarthelper/internal/config"
+	"github.com/roman220/ai-local-smarthelper/internal/errlog"
 	"github.com/roman220/ai-local-smarthelper/internal/llm"
 	"github.com/roman220/ai-local-smarthelper/internal/tools"
 )
 
 // fakeClient replays a fixed sequence of responses, one per Chat call, and
-// records the messages it was called with.
+// records the messages it was called with. If shouldFail is set, the call
+// at index failOnCall returns an error instead of consuming a response.
 type fakeClient struct {
-	responses []*llm.Response
-	calls     int
-	seen      [][]llm.Message
-	seenTools [][]llm.ToolDefinition
+	responses  []*llm.Response
+	calls      int
+	seen       [][]llm.Message
+	seenTools  [][]llm.ToolDefinition
+	shouldFail bool
+	failOnCall int
 }
 
 func (f *fakeClient) Chat(ctx context.Context, messages []llm.Message, toolDefs []llm.ToolDefinition) (*llm.Response, error) {
 	f.seen = append(f.seen, messages)
 	f.seenTools = append(f.seenTools, toolDefs)
+	if f.shouldFail && f.calls == f.failOnCall {
+		f.calls++
+		return nil, errors.New("simulated chat failure")
+	}
 	resp := f.responses[f.calls]
 	f.calls++
 	return resp, nil
@@ -156,6 +166,44 @@ func TestAgent_Ask_UnknownTool(t *testing.T) {
 	}
 	if answer != "I couldn't find that." {
 		t.Errorf("answer = %q, want graceful fallback", answer)
+	}
+}
+
+func TestAgent_RecordsToolAndChatFailuresToErrorLog(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "errors.jsonl")
+	errLog, err := errlog.Open(logPath)
+	if err != nil {
+		t.Fatalf("errlog.Open: %v", err)
+	}
+	defer errLog.Close()
+
+	toolCall := llm.ToolCall{ID: "call_1", Type: "function"}
+	toolCall.Function.Name = "does_not_exist"
+	client := &fakeClient{
+		responses:  []*llm.Response{{ToolCalls: []llm.ToolCall{toolCall}}},
+		shouldFail: true,
+		failOnCall: 1, // the second Chat call (after the tool result) fails
+	}
+	ag := New(client, tools.NewRegistry())
+	ag.SetErrorLog(errLog)
+
+	if _, err := ag.Ask(context.Background(), "do the impossible"); err == nil {
+		t.Fatal("expected an error from the failing second Chat call")
+	}
+	errLog.Close()
+
+	entries, err := errlog.ReadAll(logPath)
+	if err != nil {
+		t.Fatalf("errlog.ReadAll: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d, want 2: %#v", len(entries), entries)
+	}
+	if entries[0].Category != "tool_call" || entries[0].Detail != "does_not_exist" {
+		t.Errorf("entry 0 = %#v, want tool_call/does_not_exist", entries[0])
+	}
+	if entries[1].Category != "llm_chat" {
+		t.Errorf("entry 1 = %#v, want category llm_chat", entries[1])
 	}
 }
 
