@@ -58,11 +58,13 @@ close that gap for scanned manuals; it isn't installed yet.
 for a bulk import that already has its own pre-segmented pages and image
 files — e.g. an HTML-based manual site's pages, where the importer script
 copies image files directly into `ImagesDir()` and references them by the
-resulting `/document-images/...` path. This is how the CHARM Ford E-350
-service manual (see chat history around 2026-08-18) was loaded: 22
-documents (one per manual chapter), text pages chunked normally, diagram
-pages (e.g. the fuse panel charts under Power and Ground Distribution)
-added with their original image and a short caption as text.
+resulting `/document-images/...` path. `examples/import-manual/` is the
+reusable version of the pipeline that loaded the CHARM Ford E-350 service
+manual this way: one document per manual chapter, text pages chunked
+normally, diagram pages (e.g. the fuse panel charts under Power and
+Ground Distribution) OCR'd and added with their original image plus a
+caption as text — see that directory's README for prerequisites and how
+to point it at a different manual.
 
 ## Chunking
 

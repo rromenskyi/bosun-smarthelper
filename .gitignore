@@ -13,3 +13,7 @@
 # Editor / OS
 .DS_Store
 *.swp
+
+# Python (examples/)
+__pycache__/
+*.pyc
