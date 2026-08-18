@@ -86,6 +86,13 @@ web:
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:
   path: ""
+  # Free-form tags (written by the model at write time — see
+  # docs/memo-search.md) can be auto-mapped onto this fixed list in the
+  # background, purely additive, whenever no chat request is in flight.
+  # Empty (the default) disables background tag normalization entirely —
+  # tags/list/search's tag filter still work against the free-form tags.
+  # canonical_tags: ["purchases", "fuel_system", "oil", "engine", "electrical", "maintenance"]
+  # tag_normalize_interval: 5m
 
 # Uploaded reference documents (manuals, how-tos) for semantic search —
 # uploaded only via the web UI, never an LLM-callable action. Empty path

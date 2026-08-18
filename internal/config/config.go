@@ -33,6 +33,17 @@ type AssistantConfig struct {
 // MemoConfig holds persistent local memo settings.
 type MemoConfig struct {
 	Path string `mapstructure:"path"`
+	// CanonicalTags, if non-empty, enables background tag normalization
+	// (see internal/tools' NormalizeTags and docs/memo-search.md): memos
+	// with free-form tags get mapped onto this fixed vocabulary, added
+	// alongside (never replacing) the original tags. Empty disables the
+	// feature entirely — no background LLM calls are made.
+	CanonicalTags []string `mapstructure:"canonical_tags"`
+	// TagNormalizeInterval is how often the background pass checks for
+	// work. Defaults to 5m. Each check only runs if no chat request is in
+	// flight (see webui.Server.TryIdle), so a busy assistant never falls
+	// behind — normalization just waits for the next quiet interval.
+	TagNormalizeInterval string `mapstructure:"tag_normalize_interval"`
 }
 
 // DocumentsConfig holds settings for uploaded reference documents (see
@@ -276,6 +287,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.router.prefer_remote", true)
 	v.SetDefault("llm.embeddings.base_url", "")
 	v.SetDefault("llm.embeddings.timeout", "10s")
+	v.SetDefault("memo.tag_normalize_interval", "5m")
 
 	// MCP defaults
 	v.SetDefault("mcp.server_name", "bosun")

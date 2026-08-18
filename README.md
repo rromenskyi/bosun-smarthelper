@@ -140,7 +140,7 @@ are rejected. No authentication is provided, so keep it on a trusted LAN.
 | `get_fridge_temp` | Refrigerator/freezer temperature | `zone?` (`fridge`\|`freezer`) |
 | `get_gps` | Coordinates, speed, altitude | — |
 | `get_system_info` | CPU, RAM, disk, uptime | `include?` (`cpu`,`memory`,`disk`,`host`) |
-| `memo` | Persistent dated notes; `search` finds memos and uploaded documents by meaning | `action`, `key?`, `content?`, `include_archived?`, `query?`, `limit?` |
+| `memo` | Persistent dated notes; `search` finds memos and uploaded documents by meaning; `tag` filters either for exact recall | `action`, `key?`, `content?`, `tags?`, `include_archived?`, `tag?`, `query?`, `limit?` |
 | `web_search` | DuckDuckGo web results | `query`, `limit?` |
 | `wikipedia` | Wikipedia summary and source URL | `title`, `lang?` |
 | `get_directions` | Google/Apple Maps links for a destination (route from the current GPS location when available) | `destination` |

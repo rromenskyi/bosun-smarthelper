@@ -108,6 +108,22 @@ type Server struct {
 	documentImagesDir string
 }
 
+// TryIdle runs fn only if no chat request is currently in flight, claiming
+// the same slot a chat request would (so the two never run concurrently on
+// this host's shared, weak hardware). Returns false without running fn if
+// the slot was busy — the caller is expected to just try again later
+// (e.g. background memo tag normalization; see docs/memo-search.md).
+func (s *Server) TryIdle(fn func()) bool {
+	select {
+	case s.chatSlot <- struct{}{}:
+	default:
+		return false
+	}
+	defer func() { <-s.chatSlot }()
+	fn()
+	return true
+}
+
 // SetDocumentStore wires in reference-document upload/search — see
 // docs/memo-search.md. Optional: nil (the default) means the
 // /api/documents endpoints report the feature as disabled rather than

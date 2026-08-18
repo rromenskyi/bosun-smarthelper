@@ -176,3 +176,61 @@ func TestMemoToolSearchMergesDocumentResults(t *testing.T) {
 		t.Fatalf("results = %#v, want a single document match", results)
 	}
 }
+
+func TestMemoToolWriteWithTagsAndFilter(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+
+	written, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil today",
+		"tags": []any{"maintenance", "oil"},
+	})
+	if err != nil {
+		t.Fatalf("write memo: %v", err)
+	}
+	tags, _ := written.(map[string]any)["tags"].([]string)
+	if len(tags) != 2 || tags[0] != "maintenance" || tags[1] != "oil" {
+		t.Errorf("tags = %#v, want [maintenance oil]", written.(map[string]any)["tags"])
+	}
+
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "groceries", "content": "Bought supplies",
+		"tags": []any{"purchases"},
+	}); err != nil {
+		t.Fatalf("write memo: %v", err)
+	}
+
+	// Omitting "tags" on a re-write must not clear existing tags.
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil today, again",
+	}); err != nil {
+		t.Fatalf("re-write memo: %v", err)
+	}
+	read, err := tool.Execute(ctx, map[string]any{"action": "read", "key": "oil-change"})
+	if err != nil {
+		t.Fatalf("read memo: %v", err)
+	}
+	if tags, _ := read.(map[string]any)["tags"].([]string); len(tags) != 2 {
+		t.Errorf("tags after re-write without tags param = %#v, want unchanged", read.(map[string]any)["tags"])
+	}
+
+	listResult, err := tool.Execute(ctx, map[string]any{"action": "list", "tag": "purchases"})
+	if err != nil {
+		t.Fatalf("list with tag filter: %v", err)
+	}
+	listView := listResult.(map[string]any)
+	memos := listView["memos"].([]map[string]any)
+	if len(memos) != 1 || memos[0]["key"] != "groceries" {
+		t.Fatalf("tag-filtered list = %#v, want only groceries", memos)
+	}
+
+	// Tag filter narrows the substring-fallback search too.
+	searchResult, err := tool.Execute(ctx, map[string]any{"action": "search", "query": "oil", "tag": "purchases"})
+	if err != nil {
+		t.Fatalf("search with tag filter: %v", err)
+	}
+	searchView := searchResult.(map[string]any)
+	if searchView["count"] != 0 {
+		t.Errorf("tag-filtered search count = %v, want 0 (oil-change isn't tagged purchases)", searchView["count"])
+	}
+}

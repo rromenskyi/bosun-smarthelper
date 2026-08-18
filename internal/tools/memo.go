@@ -32,6 +32,14 @@ type memoRecord struct {
 	UpdatedAt  string    `json:"updated_at"`
 	ArchivedAt string    `json:"archived_at,omitempty"`
 	Embedding  []float32 `json:"embedding,omitempty"`
+	// Tags are free-form, written by the model at the same time as content
+	// (no extra LLM call). CanonicalTags are filled in later, out of band,
+	// by NormalizeTags mapping Tags onto config.MemoConfig.CanonicalTags —
+	// additive, so a free tag is never destroyed by normalization. See
+	// docs/memo-search.md.
+	Tags             []string `json:"tags,omitempty"`
+	CanonicalTags    []string `json:"canonical_tags,omitempty"`
+	TagsNormalizedAt string   `json:"tags_normalized_at,omitempty"`
 }
 
 type memoFile struct {
@@ -65,7 +73,7 @@ func (t *MemoTool) Name() string {
 }
 
 func (t *MemoTool) Description() string {
-	return "Write, read, list, search, archive, or delete persistent local memos. Listing exposes timestamps, status, and age_days so old notes can be reviewed. Search finds memos and uploaded reference documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question that a stored document (e.g. a manual) might answer. A search result may include image_url when the source is a diagram rather than text (e.g. a fuse panel chart) — include it in your answer as a markdown image: ![description](image_url)."
+	return "Write, read, list, search, archive, or delete persistent local memos. Listing exposes timestamps, status, and age_days so old notes can be reviewed. Search finds memos and uploaded reference documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question that a stored document (e.g. a manual) might answer. A search result may include image_url when the source is a diagram rather than text (e.g. a fuse panel chart) — include it in your answer as a markdown image: ![description](image_url). When writing, add a few short lowercase tags describing the topic (e.g. \"purchases\", \"fuel_system\", \"oil\") — use list or search with tag to reliably find every memo on a topic, not just the closest-sounding ones."
 }
 
 func (t *MemoTool) InputSchema() map[string]any {
@@ -85,9 +93,18 @@ func (t *MemoTool) InputSchema() map[string]any {
 				"type":        "string",
 				"description": "Memo text; required for write and omitted for read.",
 			},
+			"tags": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "For write, a few short lowercase topic tags (e.g. [\"purchases\", \"fuel_system\"]). Omit to leave existing tags on a memo unchanged.",
+			},
 			"include_archived": map[string]any{
 				"type":        "boolean",
 				"description": "For list, include archived memos as well as active memos.",
+			},
+			"tag": map[string]any{
+				"type":        "string",
+				"description": "For list or search, only consider memos tagged with this exact topic — use for \"show me every memo about X\" instead of relying on similarity alone.",
 			},
 			"query": map[string]any{
 				"type":        "string",
@@ -101,6 +118,39 @@ func (t *MemoTool) InputSchema() map[string]any {
 		"required":             []string{"action"},
 		"additionalProperties": false,
 	}
+}
+
+// hasTag reports whether tag (case-insensitive) is present in either the
+// free-form or normalized-canonical tag list.
+func hasTag(record memoRecord, tag string) bool {
+	tag = strings.ToLower(tag)
+	for _, t := range record.Tags {
+		if strings.ToLower(t) == tag {
+			return true
+		}
+	}
+	for _, t := range record.CanonicalTags {
+		if strings.ToLower(t) == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func parseTags(raw any) []string {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	tags := make([]string, 0, len(items))
+	for _, item := range items {
+		s, ok := item.(string)
+		s = strings.ToLower(strings.TrimSpace(s))
+		if ok && s != "" {
+			tags = append(tags, s)
+		}
+	}
+	return tags
 }
 
 func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error) {
@@ -128,10 +178,15 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 		return memoView(record, time.Now()), nil
 	case "list":
 		includeArchived, _ := args["include_archived"].(bool)
+		tagFilter, _ := args["tag"].(string)
+		tagFilter = strings.TrimSpace(tagFilter)
 		now := time.Now()
 		records := make([]memoRecord, 0, len(data.Memos))
 		for _, record := range data.Memos {
 			if record.Status == "archived" && !includeArchived {
+				continue
+			}
+			if tagFilter != "" && !hasTag(record, tagFilter) {
 				continue
 			}
 			records = append(records, record)
@@ -162,6 +217,9 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 		record.Status = "active"
 		record.UpdatedAt = now
 		record.ArchivedAt = ""
+		if rawTags, ok := args["tags"]; ok {
+			record.Tags = parseTags(rawTags)
+		}
 		if t.embed != nil {
 			// Best-effort: a slow or unreachable embeddings server must
 			// never block saving the memo itself. A missing vector just
@@ -229,12 +287,17 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 	if raw, ok := args["limit"].(float64); ok && raw > 0 {
 		limit = int(raw)
 	}
+	tagFilter, _ := args["tag"].(string)
+	tagFilter = strings.TrimSpace(tagFilter)
 
 	var candidates []scoredMemo
 	if t.embed != nil {
 		if queryVector, err := t.embed.Embed(ctx, query); err == nil {
 			for _, record := range data.Memos {
 				if record.Status == "archived" || len(record.Embedding) == 0 {
+					continue
+				}
+				if tagFilter != "" && !hasTag(record, tagFilter) {
 					continue
 				}
 				candidates = append(candidates, scoredMemo{record, embeddings.CosineSimilarity(queryVector, record.Embedding)})
@@ -245,6 +308,9 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 		lowerQuery := strings.ToLower(query)
 		for _, record := range data.Memos {
 			if record.Status == "archived" {
+				continue
+			}
+			if tagFilter != "" && !hasTag(record, tagFilter) {
 				continue
 			}
 			if strings.Contains(strings.ToLower(record.Content), lowerQuery) || strings.Contains(strings.ToLower(record.Key), lowerQuery) {
@@ -306,6 +372,12 @@ func memoView(record memoRecord, now time.Time) map[string]any {
 	}
 	if record.ArchivedAt != "" {
 		view["archived_at"] = record.ArchivedAt
+	}
+	if len(record.Tags) > 0 {
+		view["tags"] = record.Tags
+	}
+	if len(record.CanonicalTags) > 0 {
+		view["canonical_tags"] = record.CanonicalTags
 	}
 	return view
 }

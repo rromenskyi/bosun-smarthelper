@@ -141,6 +141,18 @@ func serveCmd() *cobra.Command {
 			})
 			server.SetDocumentStore(docStore)
 
+			if len(cfg.Memo.CanonicalTags) > 0 {
+				if memoTool, ok := registry.Get("memo"); ok {
+					if mt, ok := memoTool.(*tools.MemoTool); ok {
+						interval, err := time.ParseDuration(cfg.Memo.TagNormalizeInterval)
+						if err != nil || interval <= 0 {
+							interval = 5 * time.Minute
+						}
+						go runTagNormalizer(cmd.Context(), server, mt, router, cfg.Memo.CanonicalTags, interval, logger)
+					}
+				}
+			}
+
 			logger.Info("starting web interface", "address", cfg.Web.Bind)
 			return server.Serve(cmd.Context(), cfg.Web.Bind)
 		},
@@ -215,6 +227,41 @@ func errorsCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum recent entries to show (0 = all)")
 	return cmd
+}
+
+// runTagNormalizer periodically maps memos' free-form tags onto
+// cfg.Memo.CanonicalTags (see internal/tools/memo_tags.go), but only when
+// server.TryIdle reports no chat request is in flight — a busy assistant
+// never falls behind because of this, it just waits for the next quiet
+// tick. Stops when ctx is cancelled (process shutdown).
+func runTagNormalizer(
+	ctx context.Context,
+	server *webui.Server,
+	memoTool *tools.MemoTool,
+	client *llm.Router,
+	canonicalTags []string,
+	interval time.Duration,
+	logger *slog.Logger,
+) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			server.TryIdle(func() {
+				normCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				defer cancel()
+				updated, err := memoTool.NormalizeTags(normCtx, client, canonicalTags, 10)
+				if err != nil {
+					logger.Warn("memo tag normalization failed", "error", err)
+				} else if updated > 0 {
+					logger.Info("normalized memo tags", "count", updated)
+				}
+			})
+		}
+	}
 }
 
 // buildRegistry also returns the document store (see internal/documents)

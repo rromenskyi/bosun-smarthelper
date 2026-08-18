@@ -24,19 +24,21 @@ faulty compressor even if it never uses the word "fridge."
   `search` action rather than registering a second tool — so the contract
   doesn't grow at all.
 
-## Images: diagrams without OCR
+## Images: diagrams, with OCR where possible
 
 Some reference material — a fuse panel chart, a wiring diagram — is a
-picture, not text. There's no vision model or OCR in this pipeline (see
-"PDF ingestion" below for what that does and doesn't cover), so a
-`Chunk` can instead carry an `ImageURL` alongside little or no text: the
-page's title/caption becomes the (short, low-precision) embeddable text,
-and the image itself is surfaced directly to the human. A `search` result
-with an image includes `image_url`; the memo tool's description tells the
-model to drop it into its answer as a normal markdown image
-(`![description](image_url)`), and the web UI already renders that inline
-— see `renderMessageHTML` in `index.html`. Images are served from
-`internal/documents.Store.ImagesDir()` (a sibling directory to
+picture, not text. There's no vision model here (nothing "looks at" the
+image at answer time), but a `Chunk` can carry an `ImageURL` alongside
+text recognized from it by OCR (`tesseract`, `eng+rus` — see "PDF
+ingestion" below and `examples/import-manual/`), so it's still findable
+by actual content, not just a generic caption. OCR quality varies with
+scan/render quality and isn't guaranteed to find anything; when it
+doesn't, the page's title/caption is what's left to search against. A
+`search` result with an image includes `image_url`; the memo tool's
+description tells the model to drop it into its answer as a normal
+markdown image (`![description](image_url)`), and the web UI already
+renders that inline — see `renderMessageHTML` in `index.html`. Images are
+served from `internal/documents.Store.ImagesDir()` (a sibling directory to
 `documents.json`) via `GET /document-images/...` in `server.go`.
 
 ## PDF ingestion
@@ -96,6 +98,41 @@ failure:
 - Embeddings configured but unreachable at *search* time — same substring
   fallback, per store, independently.
 
+## Tags: exact recall vs. similarity
+
+Semantic search answers "find something like X," ranked by similarity —
+great for a one-shot lookup, but it can't guarantee *every* matching memo
+comes back, since a top-K cutoff can drop a real match that just happens
+to be phrased differently. "Show me every purchase" needs exact recall,
+which similarity ranking alone doesn't promise.
+
+`write` accepts an optional `tags` array — the model adds a few short
+topic tags in the same call that saves the content, so this costs nothing
+beyond a few extra output tokens (no second LLM call). `list` and `search`
+accept a `tag` filter that only considers memos carrying that exact tag
+(case-insensitive, matched against both `tags` and `canonical_tags` below)
+— that's the exact-recall path.
+
+### Background normalization (optional)
+
+Free-form tags drift: "бензонасос" today, "топливная система" next month,
+never matching each other. If `memo.canonical_tags` is configured,
+`internal/tools/memo_tags.go`'s `NormalizeTags` periodically batches
+memos with unmapped free tags into **one** LLM call (not one call per
+memo) asking it to map each onto that fixed vocabulary. A match is added
+to `canonical_tags` — `tags` is never modified or replaced, so a free tag
+is never destroyed, and both remain searchable via `tag`.
+
+This only runs between chat turns, never during one: `cmd/smarthelper`'s
+`runTagNormalizer` ticks on `memo.tag_normalize_interval` (default 5m),
+calling `webui.Server.TryIdle`, which claims the *same* slot a real chat
+request would (see the single-in-flight-request semaphore discussed in
+chat history around 2026-08-18) — if a request is in flight, that tick is
+skipped and tried again next interval, so background maintenance can never
+make the assistant feel slower. Leaving `canonical_tags` empty (the
+default) disables the whole pass — no ticker, no LLM calls, `tag` filters
+still work against whatever free-form tags already exist.
+
 ## Why a second local llama-server instance
 
 Neither this deployment's remote proxy (`405 Method Not Allowed` on
@@ -118,4 +155,9 @@ llm:
 
 documents:
   path: ""  # empty uses ~/.local/share/bosun/documents.json
+
+memo:
+  path: ""
+  canonical_tags: []  # empty disables background tag normalization
+  tag_normalize_interval: 5m
 ```
