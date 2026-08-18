@@ -30,6 +30,10 @@ type LocalClient struct {
 	temperature   float64
 	supportsTools bool
 	streamEnabled bool
+	// streamClient has no Client.Timeout — see the identical field on
+	// RemoteClient for why a streaming request must not be bounded by a
+	// fixed total-duration timeout.
+	streamClient *http.Client
 }
 
 // NewLocalClient creates a new Ollama client
@@ -48,6 +52,7 @@ func NewLocalClient(baseURL, model string, temperature float64, timeout time.Dur
 		temperature:   temperature,
 		supportsTools: true,
 		streamEnabled: streamEnabled,
+		streamClient:  &http.Client{},
 	}
 }
 
@@ -78,6 +83,7 @@ func NewOpenAICompatibleLocalClient(baseURL, model, apiKeyEnv string, temperatur
 		temperature:   temperature,
 		supportsTools: true,
 		streamEnabled: streamEnabled,
+		streamClient:  &http.Client{},
 	}, nil
 }
 
@@ -128,11 +134,12 @@ type ollamaToolCall struct {
 func (c *LocalClient) Chat(ctx context.Context, messages []Message, tools []ToolDefinition) (*Response, error) {
 	if c.apiFormat == APIFormatOpenAI {
 		client := &RemoteClient{
-			baseURL:     c.baseURL,
-			model:       c.model,
-			apiKey:      c.apiKey,
-			temperature: c.temperature,
-			client:      c.client,
+			baseURL:      c.baseURL,
+			model:        c.model,
+			apiKey:       c.apiKey,
+			temperature:  c.temperature,
+			client:       c.client,
+			streamClient: c.streamClient,
 		}
 		if !c.supportsTools && len(tools) > 0 {
 			return chatWithPromptedTools(ctx, client, messages, tools)
@@ -239,11 +246,12 @@ func (c *LocalClient) ChatStream(ctx context.Context, messages []Message, tools 
 	if c.apiFormat == APIFormatOpenAI {
 		if !c.supportsTools && len(tools) > 0 {
 			client := &RemoteClient{
-				baseURL:     c.baseURL,
-				model:       c.model,
-				apiKey:      c.apiKey,
-				temperature: c.temperature,
-				client:      c.client,
+				baseURL:      c.baseURL,
+				model:        c.model,
+				apiKey:       c.apiKey,
+				temperature:  c.temperature,
+				client:       c.client,
+				streamClient: c.streamClient,
 			}
 			return chatWithPromptedTools(ctx, client, messages, tools)
 		}
@@ -287,7 +295,7 @@ func (c *LocalClient) chatStreamOpenAI(ctx context.Context, messages []Message, 
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
-	resp, err := c.client.Do(req)
+	resp, err := c.streamClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -347,7 +355,7 @@ func (c *LocalClient) chatStreamOllama(ctx context.Context, messages []Message, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.client.Do(req)
+	resp, err := c.streamClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

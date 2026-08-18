@@ -331,7 +331,7 @@ func TestLocalClientChatStreamOllama(t *testing.T) {
 	})
 
 	client := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second, true)
-	client.client.Transport = transport
+	client.streamClient.Transport = transport
 
 	var deltas []StreamDelta
 	response, err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "weather?"}}, nil,
@@ -373,7 +373,7 @@ func TestLocalClientChatStreamOpenAI_FoldsToolCallXML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
-	client.client.Transport = transport
+	client.streamClient.Transport = transport
 
 	var prose, fold strings.Builder
 	response, err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "weather?"}}, []ToolDefinition{{

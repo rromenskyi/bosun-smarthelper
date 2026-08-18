@@ -86,7 +86,7 @@ func TestRemoteClientChatStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
-	client.client.Transport = transport
+	client.streamClient.Transport = transport
 
 	var deltas []StreamDelta
 	response, err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "weather?"}}, nil,
@@ -102,5 +102,70 @@ func TestRemoteClientChatStream(t *testing.T) {
 	}
 	if len(deltas) != 2 {
 		t.Fatalf("deltas = %d, want 2", len(deltas))
+	}
+}
+
+// slowBodyReader trickles out fixed chunks with a delay between each,
+// simulating a real SSE stream where total duration grows with answer
+// length rather than arriving all at once.
+type slowBodyReader struct {
+	chunks [][]byte
+	delay  time.Duration
+}
+
+func (r *slowBodyReader) Read(p []byte) (int, error) {
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(r.delay)
+	n := copy(p, r.chunks[0])
+	r.chunks[0] = r.chunks[0][n:]
+	if len(r.chunks[0]) == 0 {
+		r.chunks = r.chunks[1:]
+	}
+	return n, nil
+}
+
+func (r *slowBodyReader) Close() error { return nil }
+
+// TestRemoteClientChatStreamOutlivesConfiguredTimeout guards against
+// regressing the streamClient split: llm.remote.timeout bounds a single
+// blocking Chat() round trip, but http.Client.Timeout covers the entire
+// body read — reusing that same bounded client for ChatStream would
+// truncate a legitimately slow-but-progressing answer mid-stream well
+// before the caller's own (much larger) per-request deadline.
+func TestRemoteClientChatStreamOutlivesConfiguredTimeout(t *testing.T) {
+	const keyEnv = "SMARTHELPER_TEST_REMOTE_SLOW_KEY"
+	t.Setenv(keyEnv, "remote-secret")
+
+	lines := [][]byte{
+		[]byte(`data: {"model":"text","choices":[{"delta":{"content":"one "}}]}` + "\n"),
+		[]byte(`data: {"model":"text","choices":[{"delta":{"content":"two "}}]}` + "\n"),
+		[]byte(`data: {"model":"text","choices":[{"delta":{"content":"three"}}]}` + "\n"),
+		[]byte("data: [DONE]\n"),
+	}
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       &slowBodyReader{chunks: lines, delay: 30 * time.Millisecond},
+		}, nil
+	})
+
+	// llm.remote.timeout is 50ms — well under the ~120ms this stream takes
+	// to fully arrive. Only streamClient (no Client.Timeout) makes that
+	// survivable.
+	client, err := NewRemoteClient("https://remote.test/v1", "text", keyEnv, "", 0.8, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.streamClient.Transport = transport
+
+	response, err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "weather?"}}, nil, func(StreamDelta) {})
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v, want the slow stream to survive past the 50ms Chat() timeout", err)
+	}
+	if response.Content != "one two three" {
+		t.Errorf("content = %q", response.Content)
 	}
 }

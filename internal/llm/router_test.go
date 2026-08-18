@@ -93,24 +93,26 @@ func (e *fakeNetError) Temporary() bool { return true }
 
 func TestRouterChatStream_RetriesBeforeFirstDelta(t *testing.T) {
 	attempts := 0
+	testClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts < 3 {
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       io.NopCloser(strings.NewReader(`{"error":"temporary"}`)),
+				Header:     make(http.Header),
+			}, nil
+		}
+		sse := `data: {"model":"text","choices":[{"delta":{"content":"ok"}}]}` + "\ndata: [DONE]\n"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})}
 	remote := &RemoteClient{
 		baseURL: "https://remote.test/v1", model: "text", apiKey: "test",
-		client: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-			attempts++
-			if attempts < 3 {
-				return &http.Response{
-					StatusCode: http.StatusServiceUnavailable,
-					Body:       io.NopCloser(strings.NewReader(`{"error":"temporary"}`)),
-					Header:     make(http.Header),
-				}, nil
-			}
-			sse := `data: {"model":"text","choices":[{"delta":{"content":"ok"}}]}` + "\ndata: [DONE]\n"
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-				Body:       io.NopCloser(strings.NewReader(sse)),
-			}, nil
-		})},
+		client:       testClient,
+		streamClient: testClient,
 	}
 	router := &Router{
 		remoteClient:       remote,
@@ -136,23 +138,27 @@ func TestRouterChatStream_RetriesBeforeFirstDelta(t *testing.T) {
 func TestRouterChatStream_NoRetryOrFallbackAfterDeltaSent(t *testing.T) {
 	attempts := 0
 	sseFirstLine := `data: {"model":"text","choices":[{"delta":{"content":"partial"}}]}` + "\n"
+	testClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(&failingReader{data: []byte(sseFirstLine), err: &fakeNetError{msg: "connection reset"}}),
+		}, nil
+	})}
 	remote := &RemoteClient{
 		baseURL: "https://remote.test/v1", model: "text", apiKey: "test",
-		client: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-			attempts++
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-				Body:       io.NopCloser(&failingReader{data: []byte(sseFirstLine), err: &fakeNetError{msg: "connection reset"}}),
-			}, nil
-		})},
+		client:       testClient,
+		streamClient: testClient,
 	}
 	local := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second, true)
 	localCalled := false
-	local.client.Transport = roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+	localTransport := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		localCalled = true
 		return jsonResponse(`{"model":"test-model","message":{"role":"assistant","content":"local answer"},"done":true}`), nil
 	})
+	local.client.Transport = localTransport
+	local.streamClient.Transport = localTransport
 
 	router := &Router{
 		remoteClient:       remote,

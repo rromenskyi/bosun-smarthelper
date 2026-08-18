@@ -20,6 +20,13 @@ type RemoteClient struct {
 	organization string
 	temperature  float64
 	client       *http.Client
+	// streamClient has no Client.Timeout: that field bounds the entire
+	// request including reading the response body, so it would truncate a
+	// legitimately slow-but-progressing stream mid-answer. The caller's
+	// context (e.g. the web server's per-request timeout, chosen with
+	// multi-step tool-using turns in mind) is the correct authority for
+	// how long a streaming exchange may run instead.
+	streamClient *http.Client
 }
 
 type httpStatusError struct {
@@ -53,6 +60,7 @@ func NewRemoteClient(baseURL, model, apiKeyEnv, organization string, temperature
 		organization: organization,
 		temperature:  temperature,
 		client:       &http.Client{Timeout: timeout},
+		streamClient: &http.Client{},
 	}, nil
 }
 
@@ -216,7 +224,7 @@ func (c *RemoteClient) ChatStream(ctx context.Context, messages []Message, tools
 		req.Header.Set("OpenAI-Organization", c.organization)
 	}
 
-	resp, err := c.client.Do(req)
+	resp, err := c.streamClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
