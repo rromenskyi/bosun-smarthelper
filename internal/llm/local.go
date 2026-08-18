@@ -133,6 +133,7 @@ func (c *LocalClient) Chat(ctx context.Context, messages []Message, tools []Tool
 		if err != nil {
 			return nil, err
 		}
+		stripLeakedReasoningMarker(response)
 		parseLlamaToolCalls(response)
 		return response, nil
 	}
@@ -214,7 +215,28 @@ func (c *LocalClient) Chat(ctx context.Context, messages []Message, tools []Tool
 var (
 	llamaToolCallPattern  = regexp.MustCompile(`(?s)<tool_call>\s*<function=([^>\n]+)>\s*(.*?)</function>\s*</tool_call>`)
 	llamaParameterPattern = regexp.MustCompile(`(?s)<parameter=([^>\n]+)>\s*(.*?)\s*</parameter>`)
+
+	// Observed once: llama-server with --skip-chat-parsing let a raw,
+	// malformed reasoning-channel token fragment through verbatim (e.g.
+	// "0thought\n<channel|>actual answer..."). Anchored to the very start
+	// of the content so it can never eat a legitimate later occurrence.
+	leakedReasoningMarkerPattern = regexp.MustCompile(`(?s)^\s*\S{0,32}\s*<channel\|>\s*`)
 )
+
+// stripLeakedReasoningMarker removes a leaked raw special-token fragment
+// that can precede the real answer when llama-server runs with
+// --skip-chat-parsing and the model/template's reasoning-channel format
+// isn't fully re-rendered by the detokenizer. This is a compatibility
+// workaround for what we've actually seen, not a general "clean up
+// anything odd" filter.
+func stripLeakedReasoningMarker(response *Response) {
+	if response == nil {
+		return
+	}
+	if loc := leakedReasoningMarkerPattern.FindStringIndex(response.Content); loc != nil {
+		response.Content = strings.TrimSpace(response.Content[loc[1]:])
+	}
+}
 
 // parseLlamaToolCalls converts the XML emitted by tool-aware GGUF chat
 // templates when llama-server runs with --skip-chat-parsing into the canonical

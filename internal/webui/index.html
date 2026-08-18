@@ -126,6 +126,7 @@
       background: var(--accent); color: #10251c; font-size: 20px; font-weight: 900;
     }
     .send:disabled { opacity: .4; cursor: wait; }
+    .send.stop { background: var(--danger); color: #3a0f0a; }
     .form-meta { display: flex; justify-content: space-between; align-items: center; padding: 7px 5px 0; color: var(--muted); font-size: 11px; }
     select { color: var(--muted); border: 0; background: transparent; outline: 0; }
     option { color: #111; }
@@ -171,7 +172,7 @@
     <form id="chat-form">
       <div class="composer">
         <textarea id="message" rows="1" maxlength="4000" placeholder="Напиши сообщение…" required></textarea>
-        <button class="send" id="send" type="submit" aria-label="Отправить">↑</button>
+        <button class="send" id="send" type="button" aria-label="Отправить">↑</button>
       </div>
       <div class="form-meta">
         <select id="language" aria-label="Язык ответа"><option value="ru">Русский</option><option value="en">English</option></select>
@@ -200,8 +201,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'] },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'] }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response' }
     };
 
     function escapeHTML(value) {
@@ -237,20 +238,31 @@
       requestAnimationFrame(() => messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' }));
     }
 
+    let activeAbortController = null;
+
+    function setSendButtonState(isBusy) {
+      send.textContent = isBusy ? '■' : '↑';
+      send.classList.toggle('stop', isBusy);
+      send.setAttribute('aria-label', text[language.value][isBusy ? 'stopLabel' : 'sendLabel']);
+    }
+
     async function ask(value) {
       if (busy || !value.trim()) return;
       busy = true;
-      send.disabled = true;
+      setSendButtonState(true);
       addMessage('user', value.trim());
       input.value = '';
       resizeInput();
       const waiting = addMessage('assistant', text[language.value][`${currentProvider}Waiting`], 'thinking');
       waitingBubble = waiting.querySelector('.bubble');
+      const controller = new AbortController();
+      activeAbortController = controller;
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: value.trim(), language: language.value, session_id: sessionId })
+          body: JSON.stringify({ message: value.trim(), language: language.value, session_id: sessionId }),
+          signal: controller.signal
         });
         const data = await response.json();
         waiting.remove();
@@ -264,12 +276,17 @@
       } catch (error) {
         waiting.remove();
         waitingBubble = null;
-        addMessage('assistant', text[language.value].error, 'error');
+        addMessage('assistant', text[language.value][error.name === 'AbortError' ? 'cancelled' : 'error'], 'error');
       } finally {
         busy = false;
-        send.disabled = false;
+        activeAbortController = null;
+        setSendButtonState(false);
         input.focus();
       }
+    }
+
+    function cancelActive() {
+      if (activeAbortController) activeAbortController.abort();
     }
 
     function resizeInput() {
@@ -300,6 +317,7 @@
     }
 
     form.addEventListener('submit', event => { event.preventDefault(); ask(input.value); });
+    send.addEventListener('click', () => { if (busy) cancelActive(); else form.requestSubmit(); });
     input.addEventListener('input', resizeInput);
     input.addEventListener('keydown', event => {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }

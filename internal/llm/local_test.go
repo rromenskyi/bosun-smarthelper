@@ -283,3 +283,27 @@ Denver
 		t.Errorf("arguments = %s", call.Function.Arguments)
 	}
 }
+
+func TestStripLeakedReasoningMarker(t *testing.T) {
+	response := &Response{Content: "0thought\n<channel|>Слушаюсь, капитан! Вот ссылки."}
+	stripLeakedReasoningMarker(response)
+	if response.Content != "Слушаюсь, капитан! Вот ссылки." {
+		t.Errorf("content = %q", response.Content)
+	}
+}
+
+func TestStripLeakedReasoningMarker_NoMarkerLeavesContentUnchanged(t *testing.T) {
+	response := &Response{Content: "Normal answer with no leaked marker."}
+	stripLeakedReasoningMarker(response)
+	if response.Content != "Normal answer with no leaked marker." {
+		t.Errorf("content = %q, should be unchanged", response.Content)
+	}
+}
+
+func TestStripLeakedReasoningMarker_OnlyStripsAtStart(t *testing.T) {
+	response := &Response{Content: "The channel|> marker mid-sentence should stay untouched."}
+	stripLeakedReasoningMarker(response)
+	if response.Content != "The channel|> marker mid-sentence should stay untouched." {
+		t.Errorf("content = %q, a mid-sentence occurrence must not be stripped", response.Content)
+	}
+}

@@ -339,10 +339,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		answer, err = s.asker.Ask(ctx, request.Message)
 	}
 	if err != nil {
-		s.logger.Error("web chat failed", "error", err)
 		status := http.StatusBadGateway
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		switch {
+		case errors.Is(ctx.Err(), context.Canceled):
+			// The client (e.g. the "stop" button) cancelled the request —
+			// routine, not a failure worth an ERROR log line.
+			s.logger.Info("web chat cancelled by client")
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			s.logger.Warn("web chat timed out", "error", err)
 			status = http.StatusGatewayTimeout
+		default:
+			s.logger.Error("web chat failed", "error", err)
 		}
 		writeJSON(w, status, chatResponse{Error: "assistant request failed"})
 		return

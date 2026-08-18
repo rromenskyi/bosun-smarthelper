@@ -122,7 +122,12 @@ func (a *Agent) AskWithHistory(
 	for i := 0; i < maxToolIterations; i++ {
 		resp, err := a.client.Chat(ctx, messages, toolDefs)
 		if err != nil {
-			a.errLog.Record("llm_chat", a.chatProvider(), err)
+			// A cancelled or expired context (user hit "stop", or the request
+			// timeout fired) isn't a bug to track — only record genuine
+			// provider failures.
+			if ctx.Err() == nil {
+				a.errLog.Record("llm_chat", a.chatProvider(), err)
+			}
 			return "", fmt.Errorf("chat: %w", err)
 		}
 
@@ -157,7 +162,9 @@ func (a *Agent) AskWithHistory(
 func (a *Agent) executeToolAsJSON(ctx context.Context, call llm.ToolCall, online bool) string {
 	result, err := a.executeTool(ctx, call, online)
 	if err != nil {
-		a.errLog.Record("tool_call", call.Function.Name, err)
+		if ctx.Err() == nil {
+			a.errLog.Record("tool_call", call.Function.Name, err)
+		}
 		result = map[string]any{"error": err.Error()}
 	}
 
