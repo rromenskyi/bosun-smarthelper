@@ -204,13 +204,29 @@
       en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'] }
     };
 
+    function escapeHTML(value) {
+      return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Renders a small, safe subset of markdown: [text](url) links and
+    // **bold**. Text is HTML-escaped first, then only the two patterns
+    // below are turned back into tags — nothing else from model output is
+    // ever treated as HTML. URLs exclude quote characters so a crafted
+    // link can't break out of the href attribute.
+    function renderMessageHTML(value) {
+      let html = escapeHTML(value);
+      html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s")']+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      return html;
+    }
+
     function addMessage(role, value, extra = '') {
       empty.hidden = true;
       const row = document.createElement('div');
       row.className = `message ${role} ${extra}`;
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
-      bubble.textContent = value;
+      bubble.innerHTML = renderMessageHTML(value);
       row.appendChild(bubble);
       messages.appendChild(row);
       scrollToBottom();
