@@ -18,6 +18,7 @@ type RemoteClient struct {
 	model        string
 	apiKey       string
 	organization string
+	temperature  float64
 	client       *http.Client
 }
 
@@ -32,7 +33,7 @@ func (e *httpStatusError) Error() string {
 }
 
 // NewRemoteClient creates a new OpenAI-compatible client
-func NewRemoteClient(baseURL, model, apiKeyEnv, organization string, timeout time.Duration) (*RemoteClient, error) {
+func NewRemoteClient(baseURL, model, apiKeyEnv, organization string, temperature float64, timeout time.Duration) (*RemoteClient, error) {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
@@ -50,6 +51,7 @@ func NewRemoteClient(baseURL, model, apiKeyEnv, organization string, timeout tim
 		model:        model,
 		apiKey:       apiKey,
 		organization: organization,
+		temperature:  temperature,
 		client:       &http.Client{Timeout: timeout},
 	}, nil
 }
@@ -109,9 +111,10 @@ func (c *RemoteClient) Chat(ctx context.Context, messages []Message, tools []Too
 	}
 
 	reqBody := openAIRequest{
-		Model:    c.model,
-		Messages: messages,
-		Tools:    openAITools,
+		Model:       c.model,
+		Messages:    messages,
+		Tools:       openAITools,
+		Temperature: c.temperature,
 	}
 
 	if len(tools) > 0 {

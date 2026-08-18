@@ -13,7 +13,7 @@ import (
 
 func TestRouterLastProvider(t *testing.T) {
 	router := &Router{
-		localClient: NewLocalClient("", "", time.Second),
+		localClient: NewLocalClient("", "", 0.5, time.Second),
 		config:      &config.LLMConfig{},
 	}
 	if got := router.LastProvider(); got != "local" {

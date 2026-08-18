@@ -30,6 +30,9 @@ func TestRemoteClientChat(t *testing.T) {
 		if request.ToolChoice != "auto" || len(request.Tools) != 1 {
 			t.Errorf("tool configuration = choice %q, tools %d", request.ToolChoice, len(request.Tools))
 		}
+		if request.Temperature != 0.8 {
+			t.Errorf("temperature = %v, want 0.8", request.Temperature)
+		}
 
 		return jsonResponse(`{
 			"model":"text",
@@ -40,7 +43,7 @@ func TestRemoteClientChat(t *testing.T) {
 		}`), nil
 	})
 
-	client, err := NewRemoteClient("https://remote.test/v1/", "text", keyEnv, "org-test", time.Second)
+	client, err := NewRemoteClient("https://remote.test/v1/", "text", keyEnv, "org-test", 0.8, time.Second)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}

@@ -53,7 +53,7 @@ func TestLocalClientOllamaToolCallRoundTrip(t *testing.T) {
 		}`), nil
 	})
 
-	client := NewLocalClient("http://ollama.test/", "test-model", time.Second)
+	client := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second)
 	client.client.Transport = transport
 	first, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "weather?"}}, []ToolDefinition{{
 		Name:       "get_weather",
@@ -64,6 +64,9 @@ func TestLocalClientOllamaToolCallRoundTrip(t *testing.T) {
 	}
 	if got := first.ToolCalls[0].Function.Arguments; got != `{"location":"Denver"}` {
 		t.Fatalf("arguments = %q, want JSON object encoded as a string", got)
+	}
+	if got := requests[0].Options["temperature"]; got != 0.5 {
+		t.Errorf("options.temperature = %v, want 0.5", got)
 	}
 
 	toolCall := first.ToolCalls[0]
@@ -103,7 +106,7 @@ func TestOpenAICompatibleLocalClient(t *testing.T) {
 		}`), nil
 	})
 
-	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1/", "default", keyEnv, time.Second)
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1/", "default", keyEnv, 0.5, time.Second)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -143,7 +146,7 @@ func TestOpenAICompatibleLocalClientPromptedToolFallback(t *testing.T) {
 		}`), nil
 	})
 
-	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", time.Second)
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -180,7 +183,7 @@ func TestOpenAICompatibleLocalClientRecognizesToolMention(t *testing.T) {
 		}`), nil
 	})
 
-	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", time.Second)
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -202,7 +205,7 @@ func TestOpenAICompatibleLocalClientRecognizesToolMention(t *testing.T) {
 func TestOpenAICompatibleLocalClientRequiresConfiguredKey(t *testing.T) {
 	const keyEnv = "SMARTHELPER_TEST_MISSING_LOCAL_KEY"
 	t.Setenv(keyEnv, "")
-	if _, err := NewOpenAICompatibleLocalClient("", "", keyEnv, time.Second); err == nil {
+	if _, err := NewOpenAICompatibleLocalClient("", "", keyEnv, 0.5, time.Second); err == nil {
 		t.Fatal("expected an error for a missing configured API key")
 	}
 }

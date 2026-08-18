@@ -26,11 +26,12 @@ type LocalClient struct {
 	client        *http.Client
 	apiFormat     string
 	apiKey        string
+	temperature   float64
 	supportsTools bool
 }
 
 // NewLocalClient creates a new Ollama client
-func NewLocalClient(baseURL, model string, timeout time.Duration) *LocalClient {
+func NewLocalClient(baseURL, model string, temperature float64, timeout time.Duration) *LocalClient {
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
 	}
@@ -42,13 +43,14 @@ func NewLocalClient(baseURL, model string, timeout time.Duration) *LocalClient {
 		model:         model,
 		client:        &http.Client{Timeout: timeout},
 		apiFormat:     APIFormatOllama,
+		temperature:   temperature,
 		supportsTools: true,
 	}
 }
 
 // NewOpenAICompatibleLocalClient creates a local client for servers such as
 // LM Studio that expose an OpenAI-compatible chat completions endpoint.
-func NewOpenAICompatibleLocalClient(baseURL, model, apiKeyEnv string, timeout time.Duration) (*LocalClient, error) {
+func NewOpenAICompatibleLocalClient(baseURL, model, apiKeyEnv string, temperature float64, timeout time.Duration) (*LocalClient, error) {
 	if baseURL == "" {
 		baseURL = "http://localhost:1234/v1"
 	}
@@ -70,6 +72,7 @@ func NewOpenAICompatibleLocalClient(baseURL, model, apiKeyEnv string, timeout ti
 		client:        &http.Client{Timeout: timeout},
 		apiFormat:     APIFormatOpenAI,
 		apiKey:        apiKey,
+		temperature:   temperature,
 		supportsTools: true,
 	}, nil
 }
@@ -121,10 +124,11 @@ type ollamaToolCall struct {
 func (c *LocalClient) Chat(ctx context.Context, messages []Message, tools []ToolDefinition) (*Response, error) {
 	if c.apiFormat == APIFormatOpenAI {
 		client := &RemoteClient{
-			baseURL: c.baseURL,
-			model:   c.model,
-			apiKey:  c.apiKey,
-			client:  c.client,
+			baseURL:     c.baseURL,
+			model:       c.model,
+			apiKey:      c.apiKey,
+			temperature: c.temperature,
+			client:      c.client,
 		}
 		if !c.supportsTools && len(tools) > 0 {
 			return chatWithPromptedTools(ctx, client, messages, tools)
@@ -157,6 +161,7 @@ func (c *LocalClient) Chat(ctx context.Context, messages []Message, tools []Tool
 		Messages: ollamaMessages,
 		Tools:    ollamaTools,
 		Stream:   false,
+		Options:  map[string]any{"temperature": c.temperature},
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

@@ -47,12 +47,13 @@ func NewRouter(cfg *config.LLMConfig) (*Router, error) {
 	var err error
 	switch cfg.Local.APIFormat {
 	case "", APIFormatOllama:
-		localClient = NewLocalClient(cfg.Local.BaseURL, cfg.Local.Model, localTimeout)
+		localClient = NewLocalClient(cfg.Local.BaseURL, cfg.Local.Model, cfg.Local.Temperature, localTimeout)
 	case APIFormatOpenAI:
 		localClient, err = NewOpenAICompatibleLocalClient(
 			cfg.Local.BaseURL,
 			cfg.Local.Model,
 			cfg.Local.APIKeyEnv,
+			cfg.Local.Temperature,
 			localTimeout,
 		)
 		if err != nil {
@@ -68,6 +69,7 @@ func NewRouter(cfg *config.LLMConfig) (*Router, error) {
 		cfg.Remote.Model,
 		cfg.Remote.APIKeyEnv,
 		cfg.Remote.Organization,
+		cfg.Remote.Temperature,
 		remoteTimeout,
 	)
 	if err != nil {

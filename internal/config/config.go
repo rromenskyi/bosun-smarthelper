@@ -64,23 +64,25 @@ type LLMConfig struct {
 
 // RemoteLLMConfig holds remote LLM (OpenAI-compatible) settings
 type RemoteLLMConfig struct {
-	BaseURL      string `mapstructure:"base_url"`
-	Model        string `mapstructure:"model"`
-	APIKeyEnv    string `mapstructure:"api_key_env"`
-	Organization string `mapstructure:"organization"`
-	Timeout      string `mapstructure:"timeout"`
-	MaxRetries   int    `mapstructure:"max_retries"`
-	RetryBackoff string `mapstructure:"retry_backoff"`
+	BaseURL      string  `mapstructure:"base_url"`
+	Model        string  `mapstructure:"model"`
+	APIKeyEnv    string  `mapstructure:"api_key_env"`
+	Organization string  `mapstructure:"organization"`
+	Temperature  float64 `mapstructure:"temperature"`
+	Timeout      string  `mapstructure:"timeout"`
+	MaxRetries   int     `mapstructure:"max_retries"`
+	RetryBackoff string  `mapstructure:"retry_backoff"`
 }
 
 // LocalLLMConfig holds local LLM (Ollama) settings
 type LocalLLMConfig struct {
-	BaseURL       string `mapstructure:"base_url"`
-	Model         string `mapstructure:"model"`
-	APIFormat     string `mapstructure:"api_format"`
-	APIKeyEnv     string `mapstructure:"api_key_env"`
-	SupportsTools bool   `mapstructure:"supports_tools"`
-	Timeout       string `mapstructure:"timeout"`
+	BaseURL       string  `mapstructure:"base_url"`
+	Model         string  `mapstructure:"model"`
+	APIFormat     string  `mapstructure:"api_format"`
+	APIKeyEnv     string  `mapstructure:"api_key_env"`
+	SupportsTools bool    `mapstructure:"supports_tools"`
+	Temperature   float64 `mapstructure:"temperature"`
+	Timeout       string  `mapstructure:"timeout"`
 }
 
 // RouterConfig holds LLM router settings
@@ -227,6 +229,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.remote.base_url", "https://api.openai.com/v1")
 	v.SetDefault("llm.remote.model", "gpt-4o-mini")
 	v.SetDefault("llm.remote.api_key_env", "OPENAI_API_KEY")
+	v.SetDefault("llm.remote.temperature", 0.8)
 	v.SetDefault("llm.remote.timeout", "30s")
 	v.SetDefault("llm.remote.max_retries", 5)
 	v.SetDefault("llm.remote.retry_backoff", "500ms")
@@ -235,6 +238,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.local.api_format", "ollama")
 	v.SetDefault("llm.local.api_key_env", "")
 	v.SetDefault("llm.local.supports_tools", true)
+	// Lower than remote: a weak local model is already shakier on
+	// tool-call/format compliance (see stripLeakedReasoningMarker), so less
+	// randomness matters more here than response variety.
+	v.SetDefault("llm.local.temperature", 0.55)
 	v.SetDefault("llm.local.timeout", "60s")
 	v.SetDefault("llm.router.check_interval", "30s")
 	v.SetDefault("llm.router.check_timeout", "5s")

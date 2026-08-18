@@ -15,6 +15,8 @@ llm:
     model: "gpt-4o-mini"                    # Model name
     api_key_env: "OPENAI_API_KEY"           # Env var name for API key
     # organization: ""                      # Optional: OpenAI organization
+    temperature: 0.8                       # Remote is robust enough at this to stay in-format;
+                                            # higher keeps long roleplay from feeling repetitive
     # timeout: 30s                          # Request timeout
     max_retries: 5                         # Retry network, 429, and 5xx failures
     retry_backoff: 500ms                   # Exponential delay between attempts
@@ -26,6 +28,8 @@ llm:
     api_format: "ollama"                     # ollama, or openai for LM Studio
     # api_key_env: "LOCAL_LLM_API_KEY"       # Optional; used by openai format
     supports_tools: true                     # false enables prompt-based fallback
+    temperature: 0.55                      # Lower than remote: a weak local model is already
+                                            # shakier on tool-call format; less randomness helps
     # timeout: 300s                         # Weak hardware may need several minutes; at ~6 tok/s
                                              # a single long tool-using answer can take that long
 
