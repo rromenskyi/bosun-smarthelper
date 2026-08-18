@@ -148,6 +148,14 @@ embeddings anyway) can serve embeddings. `llama-embed` in
 since that's this deployment's primary language) dedicated to this — see
 `docs/docker.md`.
 
+Unlike `llama-chat`, embeddings are only needed for occasional memo/
+document writes and searches, not every chat turn, so `llama-embed` runs
+with `--sleep-idle-seconds 300`: llama.cpp fully unloads the model (frees
+~500MB RSS, confirmed by hand) after 5 minutes with no request, and
+transparently reloads it on the next one (~2s, imperceptible for a
+background operation). This is a genuine unload/reload, not a pause —
+see `handle_sleeping_state` in llama.cpp's `server-context.cpp`.
+
 ## Config
 
 ```yaml

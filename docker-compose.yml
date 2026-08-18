@@ -45,10 +45,16 @@ services:
     network_mode: host
     volumes:
       - ${LLAMA_HF_CACHE}:/home/ubuntu/.cache/huggingface
+    # --sleep-idle-seconds: embeddings are only needed for occasional memo/
+    # document writes and searches, not every chat turn — unlike llama-chat,
+    # it's worth fully unloading this model (frees ~500MB RSS; confirmed via
+    # manual test) after 5 minutes idle. Reload on the next request costs
+    # ~2s, imperceptible for a background operation.
     command: >-
       -hf nomic-ai/nomic-embed-text-v2-moe-GGUF:Q8_0
       --alias embed --host 127.0.0.1 --port 1235
       --embeddings -c 512 -np 1 -t 2
+      --sleep-idle-seconds 300
 
 volumes:
   bosun-data:
