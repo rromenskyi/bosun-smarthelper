@@ -129,12 +129,19 @@ are rejected. No authentication is provided, so keep it on a trusted LAN.
 | `memo` | Persistent dated notes | `action`, `key?`, `content?`, `include_archived?` |
 | `web_search` | DuckDuckGo web results | `query`, `limit?` |
 | `wikipedia` | Wikipedia summary and source URL | `title`, `lang?` |
+| `get_directions` | Google/Apple Maps links for a destination (route from the current GPS location when available) | `destination` |
 
-All four have local/mock paths. Weather can use `type: open_meteo` for live
-weather without an API key; it resolves cities through Open-Meteo, named
-landmarks through Nominatim when needed, and fetches forecasts from
-Open-Meteo. This backend is automatically hidden from the model while
-offline. The mock GPS defaults to Salt Lake City (`40.7608, -111.8910`).
+All four sensor tools have local/mock paths. Weather can use `type:
+open_meteo` for live weather without an API key; it resolves cities through
+Open-Meteo, named landmarks through Nominatim when needed, and fetches
+forecasts from Open-Meteo. This backend is automatically hidden from the
+model while offline. The mock GPS defaults to Salt Lake City (`40.7608,
+-111.8910`).
+
+`get_directions` uses the same geocoding cascade (Open-Meteo, then Nominatim
+for named landmarks) to resolve a destination, then returns map links rather
+than guessing when the place is ambiguous or not found — the model is
+instructed to ask for a more specific place instead.
 
 See [`docs/offline-mode.md`](docs/offline-mode.md) for connectivity behavior
 and the contract required by future online tools, and

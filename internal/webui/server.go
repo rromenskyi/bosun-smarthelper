@@ -207,10 +207,14 @@ func (s *Server) Serve(ctx context.Context, address string) error {
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// A single chat request can legitimately run for minutes (slow local
+		// hardware) — far longer than a restart should wait. Give it a short
+		// grace period, then abandon in-flight requests rather than treat a
+		// timeout here as a failure; the process is exiting either way.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown web server: %w", err)
+			s.logger.Warn("graceful shutdown timed out; abandoning in-flight requests", "error", err)
 		}
 		return nil
 	case err := <-errCh:

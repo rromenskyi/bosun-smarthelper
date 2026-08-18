@@ -82,6 +82,13 @@ online_tools:
   wikipedia_url: "https://{lang}.wikipedia.org/api/rest_v1/page/summary/{title}"
   request_timeout: 10s
 
+# Geocoding for get_directions (Google/Apple Maps links). Hidden automatically
+# offline like the other online tools above.
+maps:
+  geocoding_url: "https://geocoding-api.open-meteo.com/v1/search"
+  nominatim_url: "https://nominatim.openstreetmap.org/search"
+  timeout: 8s
+
 # Sensor Configuration
 sensors:
   # Outdoor weather sensor

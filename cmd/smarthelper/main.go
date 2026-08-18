@@ -218,6 +218,7 @@ func buildRegistry(cfg *config.Config) *tools.Registry {
 	registry.Register(tools.NewMemoTool(&cfg.Memo))
 	registry.Register(tools.NewWebSearchTool(&cfg.Online))
 	registry.Register(tools.NewWikipediaTool(&cfg.Online))
+	registry.Register(tools.NewDirectionsTool(&cfg.Maps, &cfg.Sensors.GPS))
 	registry.Register(tools.NewWeatherTool(&cfg.Sensors.Weather))
 	registry.Register(tools.NewFridgeTool(&cfg.Sensors.Fridge))
 	registry.Register(tools.NewGPSTool(&cfg.Sensors.GPS))

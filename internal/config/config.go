@@ -17,6 +17,7 @@ type Config struct {
 	Memo      MemoConfig      `mapstructure:"memo"`
 	ErrorLog  ErrorLogConfig  `mapstructure:"error_log"`
 	Online    OnlineConfig    `mapstructure:"online_tools"`
+	Maps      MapsConfig      `mapstructure:"maps"`
 	Sensors   SensorsConfig   `mapstructure:"sensors"`
 	Logging   LoggingConfig   `mapstructure:"logging"`
 }
@@ -45,6 +46,13 @@ type OnlineConfig struct {
 	DuckDuckGoURL  string `mapstructure:"duckduckgo_url"`
 	WikipediaURL   string `mapstructure:"wikipedia_url"`
 	RequestTimeout string `mapstructure:"request_timeout"`
+}
+
+// MapsConfig holds geocoding endpoints for the get_directions tool.
+type MapsConfig struct {
+	GeocodingURL string `mapstructure:"geocoding_url"`
+	NominatimURL string `mapstructure:"nominatim_url"`
+	Timeout      string `mapstructure:"timeout"`
 }
 
 // LLMConfig holds LLM-related configuration
@@ -258,6 +266,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("online_tools.duckduckgo_url", "https://html.duckduckgo.com/html/")
 	v.SetDefault("online_tools.wikipedia_url", "https://{lang}.wikipedia.org/api/rest_v1/page/summary/{title}")
 	v.SetDefault("online_tools.request_timeout", "10s")
+
+	// Geocoding for get_directions (same free public services as weather)
+	v.SetDefault("maps.geocoding_url", "https://geocoding-api.open-meteo.com/v1/search")
+	v.SetDefault("maps.nominatim_url", "https://nominatim.openstreetmap.org/search")
+	v.SetDefault("maps.timeout", "8s")
 
 	// Sensor defaults
 	v.SetDefault("sensors.weather.type", "mock")
