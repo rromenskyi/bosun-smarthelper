@@ -522,6 +522,13 @@ func (s *Server) handleDocumentUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read file"})
 		return
 	}
+	// Only plain text is supported (see docs/memo-search.md) — a PDF or
+	// other binary file silently "uploads" as garbage otherwise, since
+	// there's no format-specific parsing here at all.
+	if !utf8.Valid(content) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file must be plain UTF-8 text — convert a PDF to text first"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
 	defer cancel()

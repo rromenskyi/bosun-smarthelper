@@ -120,3 +120,39 @@ func TestServerDocumentUploadRequiresFile(t *testing.T) {
 		t.Errorf("status = %d, want 400", response.Code)
 	}
 }
+
+func TestServerDocumentUploadRejectsBinaryContent(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "manual.pdf")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	// %PDF header plus an invalid UTF-8 byte sequence, like a real PDF's
+	// binary body — must be rejected, not silently ingested as garbage text.
+	if _, err := part.Write([]byte("%PDF-1.4\n\xff\xfe\x00binary")); err != nil {
+		t.Fatalf("write file content: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/documents", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", response.Code)
+	}
+
+	list, err := server.documents.List()
+	if err != nil {
+		t.Fatalf("list documents: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("documents = %#v, want none stored after a rejected upload", list)
+	}
+}
