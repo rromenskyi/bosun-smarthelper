@@ -234,7 +234,16 @@ func TestServerChatSessionHistoryAndClear(t *testing.T) {
 func TestServerChatHistoryLocalVsRemoteBudget(t *testing.T) {
 	online := false
 	asker := &conversationFakeAsker{answers: []string{"a1", "a2", "a3", "a4"}}
-	status := func() Status { return Status{Online: online, Provider: "local"} }
+	// Provider must track online — handleChat gates on Provider (which
+	// accounts for llm.router.prefer_remote), not Online, since the two can
+	// disagree (see docs/streaming.md).
+	status := func() Status {
+		provider := "local"
+		if online {
+			provider = "remote"
+		}
+		return Status{Online: online, Provider: provider}
+	}
 	server := NewServer(asker, status, time.Second, "ru", nil, SessionOptions{
 		Local:       HistoryBudget{Turns: 1, MaxChars: 4000},
 		Remote:      HistoryBudget{Turns: 10, MaxChars: 40000},

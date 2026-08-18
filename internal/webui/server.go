@@ -122,15 +122,16 @@ func (s *Server) markChatActivity() {
 }
 
 // TryIdleAfter runs fn only if at least quiet has passed since the last
-// chat request finished, and — only when the *local* model is what's
-// currently serving chat — no local generation is in flight either
-// (claiming the same slot handleChat's local path would, so the two never
-// run concurrently on this host's shared, weak hardware). A remote-served
-// chat has no such shared-hardware contention with a background LLM call,
-// so when online, only the quiet-period check applies. Returns false
-// without running fn if a condition isn't met — the caller is expected to
-// just try again later (e.g. background memo tag normalization; see
-// docs/memo-search.md).
+// chat request finished, and — only when Status.Provider is "local" (not
+// merely whether the internet is reachable; a reachable-but-not-preferred
+// remote still means Provider is "local" — see Router.CurrentProvider) —
+// no local generation is in flight either (claiming the same slot
+// handleChat's local path would, so the two never run concurrently on
+// this host's shared, weak hardware). A remote-served chat has no such
+// shared-hardware contention with a background LLM call, so in that case
+// only the quiet-period check applies. Returns false without running fn if
+// a condition isn't met — the caller is expected to just try again later
+// (e.g. background memo tag normalization; see docs/memo-search.md).
 //
 // The quiet-period check matters on top of the slot check alone: without
 // it, a tick landing moments after a chat just ended would immediately
@@ -145,7 +146,7 @@ func (s *Server) TryIdleAfter(quiet time.Duration, fn func()) bool {
 		return false
 	}
 
-	if s.status().Online {
+	if s.status().Provider != "local" {
 		fn()
 		return true
 	}
@@ -420,12 +421,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Only the local model needs serializing — it's weak, shared hardware
 	// that can't usefully run more than one generation at a time. The
-	// remote provider handles concurrent requests fine on its own, so an
-	// online request never queues at all. See docs/streaming.md.
+	// remote provider handles concurrent requests fine on its own, so a
+	// remote-served request never queues at all. Gate on Provider, not
+	// Online: Online only reflects internet reachability, whereas Provider
+	// accounts for llm.router.prefer_remote too — with prefer_remote
+	// false, Provider is "local" even while genuinely online. See
+	// docs/streaming.md.
 	streamer, supportsStreaming := s.asker.(streamingConversationAsker)
-	online := s.status().Online
+	servedLocally := s.status().Provider == "local"
 	var write func(streamEvent)
-	if !online {
+	if servedLocally {
 		turn, position := s.local.join()
 		if position > 0 {
 			if supportsStreaming {
@@ -455,7 +460,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	history := s.loadHistory(sessionID)
-	if !online {
+	if servedLocally {
 		// The local model is about to serve this request: trim to its small
 		// budget for the outgoing call only. The full history stays in the
 		// session (bounded by the larger Remote budget in saveTurn) so a
