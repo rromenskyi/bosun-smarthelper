@@ -231,9 +231,11 @@ func errorsCmd() *cobra.Command {
 
 // runTagNormalizer periodically maps memos' free-form tags onto
 // cfg.Memo.CanonicalTags (see internal/tools/memo_tags.go), but only when
-// server.TryIdle reports no chat request is in flight — a busy assistant
-// never falls behind because of this, it just waits for the next quiet
-// tick. Stops when ctx is cancelled (process shutdown).
+// server.TryIdleAfter reports no chat request is in flight and none has
+// finished in the last interval either — a busy assistant never falls
+// behind because of this, and a user typing a follow-up right after a
+// reply never queues behind background maintenance. Stops when ctx is
+// cancelled (process shutdown).
 func runTagNormalizer(
 	ctx context.Context,
 	server *webui.Server,
@@ -250,7 +252,7 @@ func runTagNormalizer(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			server.TryIdle(func() {
+			server.TryIdleAfter(interval, func() {
 				normCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				defer cancel()
 				updated, err := memoTool.NormalizeTags(normCtx, client, canonicalTags, 10)

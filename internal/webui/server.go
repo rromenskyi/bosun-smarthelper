@@ -106,14 +106,40 @@ type Server struct {
 	sessionOptions    SessionOptions
 	documents         *documents.Store
 	documentImagesDir string
+	activityMu        sync.Mutex
+	lastChatAt        time.Time
 }
 
-// TryIdle runs fn only if no chat request is currently in flight, claiming
-// the same slot a chat request would (so the two never run concurrently on
-// this host's shared, weak hardware). Returns false without running fn if
-// the slot was busy — the caller is expected to just try again later
-// (e.g. background memo tag normalization; see docs/memo-search.md).
-func (s *Server) TryIdle(fn func()) bool {
+// markChatActivity records that a chat request just finished — see
+// TryIdleAfter. Zero value (never called) reads as "idle forever," so
+// background work is allowed to run immediately after a fresh start with
+// no chat history yet.
+func (s *Server) markChatActivity() {
+	s.activityMu.Lock()
+	s.lastChatAt = time.Now()
+	s.activityMu.Unlock()
+}
+
+// TryIdleAfter runs fn only if no chat request is currently in flight AND
+// at least quiet has passed since the last one finished, claiming the same
+// slot a chat request would (so the two never run concurrently on this
+// host's shared, weak hardware). Returns false without running fn if
+// either condition isn't met — the caller is expected to just try again
+// later (e.g. background memo tag normalization; see docs/memo-search.md).
+//
+// The quiet-period check matters on top of the slot check alone: without
+// it, a tick landing moments after a chat just ended would immediately
+// claim the slot for up to fn's own duration, so a user typing a follow-up
+// right then would queue behind background maintenance instead of getting
+// an instant reply.
+func (s *Server) TryIdleAfter(quiet time.Duration, fn func()) bool {
+	s.activityMu.Lock()
+	sinceLastChat := time.Since(s.lastChatAt)
+	s.activityMu.Unlock()
+	if !s.lastChatAt.IsZero() && sinceLastChat < quiet {
+		return false
+	}
+
 	select {
 	case s.chatSlot <- struct{}{}:
 	default:
@@ -387,6 +413,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	select {
 	case s.chatSlot <- struct{}{}:
 		defer func() { <-s.chatSlot }()
+		defer s.markChatActivity()
 	case <-ctx.Done():
 		writeJSON(w, http.StatusGatewayTimeout, chatResponse{Error: "assistant is busy"})
 		return

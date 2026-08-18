@@ -123,15 +123,19 @@ memo) asking it to map each onto that fixed vocabulary. A match is added
 to `canonical_tags` — `tags` is never modified or replaced, so a free tag
 is never destroyed, and both remain searchable via `tag`.
 
-This only runs between chat turns, never during one: `cmd/smarthelper`'s
-`runTagNormalizer` ticks on `memo.tag_normalize_interval` (default 5m),
-calling `webui.Server.TryIdle`, which claims the *same* slot a real chat
-request would (see the single-in-flight-request semaphore discussed in
-chat history around 2026-08-18) — if a request is in flight, that tick is
-skipped and tried again next interval, so background maintenance can never
-make the assistant feel slower. Leaving `canonical_tags` empty (the
-default) disables the whole pass — no ticker, no LLM calls, `tag` filters
-still work against whatever free-form tags already exist.
+This only runs between chat turns, never during or right after one:
+`cmd/smarthelper`'s `runTagNormalizer` ticks on
+`memo.tag_normalize_interval` (default 5m), calling
+`webui.Server.TryIdleAfter(interval, ...)`, which requires *both* that no
+chat request is currently in flight (the same single-in-flight-request
+slot a real chat request claims) *and* that at least `interval` has
+passed since the last one finished. The second condition matters on its
+own: without it, a tick landing moments after a chat just ended would
+immediately grab the slot for its own duration, so a user typing a
+follow-up right then would queue behind background maintenance instead of
+getting an instant reply. Leaving `canonical_tags` empty (the default)
+disables the whole pass — no ticker, no LLM calls, `tag` filters still
+work against whatever free-form tags already exist.
 
 ## Why a second local llama-server instance
 
