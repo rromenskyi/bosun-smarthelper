@@ -269,16 +269,18 @@
       // produce several steps (a tool-decision step, then the real answer) —
       // each step_start finalizes the previous live bubble and starts a new
       // one.
+      let liveRow = null;
       let liveBubble = null;
       let liveProse = '';
       let liveFoldBody = null;
 
       function finalizeLiveBubble() {
         if (!liveBubble) return;
-        liveBubble.classList.remove('thinking');
+        liveRow.classList.remove('thinking');
         const fold = liveFoldBody ? liveFoldBody.closest('details') : null;
         liveBubble.innerHTML = renderMessageHTML(liveProse);
         if (fold) liveBubble.appendChild(fold);
+        liveRow = null;
         liveBubble = null;
         liveProse = '';
         liveFoldBody = null;
@@ -288,14 +290,15 @@
       function startStep() {
         finalizeLiveBubble();
         const row = addMessage('assistant', text[language.value][`${currentProvider}Waiting`], 'thinking live');
+        liveRow = row;
         liveBubble = row.querySelector('.bubble');
         waitingBubble = liveBubble;
       }
 
       function appendDelta(kind, deltaText) {
         if (!liveBubble) startStep();
-        if (liveBubble.classList.contains('thinking')) {
-          liveBubble.classList.remove('thinking');
+        if (liveRow.classList.contains('thinking')) {
+          liveRow.classList.remove('thinking');
           liveBubble.textContent = '';
           waitingBubble = null;
         }
