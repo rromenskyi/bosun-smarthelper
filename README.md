@@ -21,6 +21,11 @@ Early foundation. Working today:
   tool registry and executes tool calls until the model returns an answer.
 - **LAN web UI** — `smarthelper serve` exposes the same agent loop through a
   responsive, dependency-free interface for phone and desktop browsers.
+- **Streamed answers** — the web UI's final answer fills in progressively
+  instead of appearing all at once (Ollama and OpenAI-compatible SSE, both
+  local and remote). A tool call's raw encoding is folded into a collapsed,
+  expandable detail rather than ever shown as-is — see
+  `docs/streaming.md`. A **stop** button cancels an in-flight request.
 - **Multi-turn web sessions** — prior user/assistant turns are retained by
   session ID with configurable history and expiration limits, persisted to
   disk so they survive both a page reload and a service restart.

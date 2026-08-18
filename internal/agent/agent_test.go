@@ -37,6 +37,83 @@ func (f *fakeClient) Chat(ctx context.Context, messages []llm.Message, toolDefs 
 	return resp, nil
 }
 
+// fakeStreamingClient replays responses like fakeClient but also implements
+// llm.StreamingClient, emitting each response's Content as a single
+// synthetic prose delta — enough to test agent-level event sequencing
+// without a real SSE/NDJSON fixture (that's covered in internal/llm).
+type fakeStreamingClient struct {
+	fakeClient
+}
+
+func (f *fakeStreamingClient) ChatStream(ctx context.Context, messages []llm.Message, toolDefs []llm.ToolDefinition, onDelta func(llm.StreamDelta)) (*llm.Response, error) {
+	resp, err := f.Chat(ctx, messages, toolDefs)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Content != "" {
+		onDelta(llm.StreamDelta{Kind: "prose", Text: resp.Content})
+	}
+	return resp, nil
+}
+
+func TestAgent_AskWithHistoryStreaming_EmitsStepAndDeltaEvents(t *testing.T) {
+	toolCall := llm.ToolCall{ID: "call_1", Type: "function"}
+	toolCall.Function.Name = "get_weather"
+	toolCall.Function.Arguments = "{}"
+
+	client := &fakeStreamingClient{fakeClient: fakeClient{responses: []*llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall}},
+		{Content: "It's 21.5°C outside."},
+	}}}
+
+	registry := tools.NewRegistry()
+	registry.Register(tools.NewWeatherTool(&config.WeatherConfig{Type: "mock", MockTempC: 21.5, MockHumidity: 50}))
+	ag := New(client, registry)
+
+	var events []StepEvent
+	answer, err := ag.AskWithHistoryStreaming(context.Background(), "weather?", nil, "", func(e StepEvent) {
+		events = append(events, e)
+	})
+	if err != nil {
+		t.Fatalf("AskWithHistoryStreaming returned error: %v", err)
+	}
+	if answer != "It's 21.5°C outside." {
+		t.Errorf("answer = %q", answer)
+	}
+
+	wantTypes := []string{"step_start", "delta", "step_start", "delta"}
+	if len(events) != len(wantTypes) {
+		t.Fatalf("events = %#v, want %d events of types %v", events, len(wantTypes), wantTypes)
+	}
+	for i, want := range wantTypes {
+		if events[i].Type != want {
+			t.Errorf("event %d type = %q, want %q", i, events[i].Type, want)
+		}
+	}
+	if events[1].Delta.Kind != "fold" || !strings.Contains(events[1].Delta.Text, "temperature_c") {
+		t.Errorf("tool-result delta = %+v, want a fold delta containing the tool's JSON result", events[1].Delta)
+	}
+	if events[3].Delta.Kind != "prose" || events[3].Delta.Text != "It's 21.5°C outside." {
+		t.Errorf("final delta = %+v", events[3].Delta)
+	}
+}
+
+func TestAgent_AskWithHistory_NilEventCallbackStillWorks(t *testing.T) {
+	// AskWithHistory delegates to AskWithHistoryStreaming(onEvent: nil) — a
+	// client that DOES implement StreamingClient must still behave
+	// correctly when nobody's listening for events.
+	client := &fakeStreamingClient{fakeClient: fakeClient{responses: []*llm.Response{{Content: "Hello there."}}}}
+	ag := New(client, tools.NewRegistry())
+
+	answer, err := ag.Ask(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Ask returned error: %v", err)
+	}
+	if answer != "Hello there." {
+		t.Errorf("answer = %q", answer)
+	}
+}
+
 func TestAgent_Ask_HidesNetworkToolsOffline(t *testing.T) {
 	client := &fakeClient{responses: []*llm.Response{{Content: "Offline."}}}
 	registry := tools.NewRegistry()

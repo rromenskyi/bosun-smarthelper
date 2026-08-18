@@ -77,6 +77,15 @@ func (a *Agent) SetErrorLog(logger *errlog.Logger) {
 	a.errLog = logger
 }
 
+// StepEvent is emitted during a streaming conversation turn. Type is
+// "step_start" (a new LLM call in the loop is beginning — the caller should
+// start a new bubble/message) or "delta" (Delta carries the incremental
+// text; see llm.StreamDelta for what Kind means).
+type StepEvent struct {
+	Type  string
+	Delta llm.StreamDelta
+}
+
 // Ask sends a single user message through the conversation loop, executing
 // any tool calls the model requests, and returns its final text answer.
 func (a *Agent) Ask(ctx context.Context, userMessage string) (string, error) {
@@ -94,33 +103,50 @@ func (a *Agent) AskWithHistory(
 	history []HistoryMessage,
 	language string,
 ) (string, error) {
+	return a.AskWithHistoryStreaming(ctx, userMessage, history, language, nil)
+}
+
+// AskWithHistoryStreaming is AskWithHistory with an additional callback: if
+// the underlying client supports streaming (llm.StreamingClient, checked
+// via type assertion), onEvent is called with a "step_start" at the
+// beginning of each LLM call in the loop and a "delta" for each incremental
+// piece of text, including a synthetic fold delta once a tool call's result
+// is known. onEvent may be nil (AskWithHistory does exactly that), and a
+// client that doesn't support streaming still works — its complete response
+// is delivered as one "delta" event instead.
+func (a *Agent) AskWithHistoryStreaming(
+	ctx context.Context,
+	userMessage string,
+	history []HistoryMessage,
+	language string,
+	onEvent func(StepEvent),
+) (string, error) {
 	online := a.isOnline(ctx)
 	toolDefs := a.toolDefinitions(online)
-	prompt := fmt.Sprintf("You are %s (%s). ", a.nameEN, a.nameRU) + systemPrompt
-	switch language {
-	case "ru":
-		prompt += " Respond in Russian."
-	case "en":
-		prompt += " Respond in English."
-	}
-	if a.stylePrompt != "" {
-		prompt += " Response style: " + a.stylePrompt
-	}
-	if !online {
-		prompt += ` Offline: do not claim live internet access.`
-	}
-	messages := make([]llm.Message, 0, len(history)+2)
-	messages = append(messages, llm.Message{Role: "system", Content: prompt})
-	for _, message := range history {
-		if (message.Role != "user" && message.Role != "assistant") || strings.TrimSpace(message.Content) == "" {
-			continue
+	messages := a.buildMessages(userMessage, history, language, online)
+
+	streamer, canStream := a.client.(llm.StreamingClient)
+	onDelta := func(d llm.StreamDelta) {
+		if onEvent != nil {
+			onEvent(StepEvent{Type: "delta", Delta: d})
 		}
-		messages = append(messages, llm.Message{Role: message.Role, Content: message.Content})
 	}
-	messages = append(messages, llm.Message{Role: "user", Content: userMessage})
 
 	for i := 0; i < maxToolIterations; i++ {
-		resp, err := a.client.Chat(ctx, messages, toolDefs)
+		if onEvent != nil {
+			onEvent(StepEvent{Type: "step_start"})
+		}
+
+		var resp *llm.Response
+		var err error
+		if canStream {
+			resp, err = streamer.ChatStream(ctx, messages, toolDefs, onDelta)
+		} else {
+			resp, err = a.client.Chat(ctx, messages, toolDefs)
+			if err == nil && resp.Content != "" {
+				onDelta(llm.StreamDelta{Kind: "prose", Text: resp.Content})
+			}
+		}
 		if err != nil {
 			// A cancelled or expired context (user hit "stop", or the request
 			// timeout fired) isn't a bug to track — only record genuine
@@ -145,9 +171,11 @@ func (a *Agent) AskWithHistory(
 		})
 
 		for _, call := range resp.ToolCalls {
+			result := a.executeToolAsJSON(ctx, call, a.isOnline(ctx))
+			onDelta(llm.StreamDelta{Kind: "fold", Text: "\n→ " + result})
 			messages = append(messages, llm.Message{
 				Role:       "tool",
-				Content:    a.executeToolAsJSON(ctx, call, a.isOnline(ctx)),
+				Content:    result,
 				Name:       call.Function.Name,
 				ToolCallID: call.ID,
 			})
@@ -155,6 +183,32 @@ func (a *Agent) AskWithHistory(
 	}
 
 	return "", fmt.Errorf("exceeded %d tool-call iterations without a final answer", maxToolIterations)
+}
+
+func (a *Agent) buildMessages(userMessage string, history []HistoryMessage, language string, online bool) []llm.Message {
+	prompt := fmt.Sprintf("You are %s (%s). ", a.nameEN, a.nameRU) + systemPrompt
+	switch language {
+	case "ru":
+		prompt += " Respond in Russian."
+	case "en":
+		prompt += " Respond in English."
+	}
+	if a.stylePrompt != "" {
+		prompt += " Response style: " + a.stylePrompt
+	}
+	if !online {
+		prompt += ` Offline: do not claim live internet access.`
+	}
+	messages := make([]llm.Message, 0, len(history)+2)
+	messages = append(messages, llm.Message{Role: "system", Content: prompt})
+	for _, message := range history {
+		if (message.Role != "user" && message.Role != "assistant") || strings.TrimSpace(message.Content) == "" {
+			continue
+		}
+		messages = append(messages, llm.Message{Role: message.Role, Content: message.Content})
+	}
+	messages = append(messages, llm.Message{Role: "user", Content: userMessage})
+	return messages
 }
 
 // executeToolAsJSON runs a tool call and returns its result (or error)

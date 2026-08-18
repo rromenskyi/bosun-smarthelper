@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -215,6 +216,190 @@ func (c *LocalClient) Chat(ctx context.Context, messages []Message, tools []Tool
 	}
 
 	return response, nil
+}
+
+// ChatStream streams the answer. The prompted-JSON tool fallback
+// (supports_tools: false) is intentionally excluded — it needs the
+// complete response to recognize its tool-call JSON blob, so it falls back
+// to the non-streaming path via chatWithPromptedTools.
+func (c *LocalClient) ChatStream(ctx context.Context, messages []Message, tools []ToolDefinition, onDelta func(StreamDelta)) (*Response, error) {
+	if c.apiFormat == APIFormatOpenAI {
+		if !c.supportsTools && len(tools) > 0 {
+			client := &RemoteClient{
+				baseURL:     c.baseURL,
+				model:       c.model,
+				apiKey:      c.apiKey,
+				temperature: c.temperature,
+				client:      c.client,
+			}
+			return chatWithPromptedTools(ctx, client, messages, tools)
+		}
+		return c.chatStreamOpenAI(ctx, messages, tools, onDelta)
+	}
+	return c.chatStreamOllama(ctx, messages, tools, onDelta)
+}
+
+func (c *LocalClient) chatStreamOpenAI(ctx context.Context, messages []Message, tools []ToolDefinition, onDelta func(StreamDelta)) (*Response, error) {
+	var openAITools []openAIToolDef
+	for _, t := range tools {
+		openAITools = append(openAITools, openAIToolDef{
+			Type:     "function",
+			Function: t,
+		})
+	}
+
+	reqBody := openAIRequest{
+		Model:       c.model,
+		Messages:    messages,
+		Tools:       openAITools,
+		Temperature: c.temperature,
+		Stream:      true,
+	}
+	if len(tools) > 0 {
+		reqBody.ToolChoice = "auto"
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, &httpStatusError{
+			provider:   "openai",
+			statusCode: resp.StatusCode,
+			body:       string(body),
+		}
+	}
+
+	// detectFold: true — this is the raw --skip-chat-parsing passthrough
+	// path, so content may contain a leaked reasoning-marker prefix and/or
+	// an embedded <tool_call> block that must never reach the user as-is.
+	response, err := parseOpenAISSEStream(resp.Body, onDelta, true)
+	if err != nil {
+		return nil, err
+	}
+	stripLeakedReasoningMarker(response)
+	parseLlamaToolCalls(response)
+	return response, nil
+}
+
+func (c *LocalClient) chatStreamOllama(ctx context.Context, messages []Message, tools []ToolDefinition, onDelta func(StreamDelta)) (*Response, error) {
+	ollamaMessages, err := toOllamaMessages(messages)
+	if err != nil {
+		return nil, err
+	}
+
+	var ollamaTools []ollamaToolDef
+	for _, t := range tools {
+		ollamaTools = append(ollamaTools, ollamaToolDef{
+			Type:     "function",
+			Function: t,
+		})
+	}
+
+	reqBody := ollamaRequest{
+		Model:    c.model,
+		Messages: ollamaMessages,
+		Tools:    ollamaTools,
+		Stream:   true,
+		Options:  map[string]any{"temperature": c.temperature},
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/chat", bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ollama error %d: %s", resp.StatusCode, string(body))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var content strings.Builder
+	var model string
+	var promptTokens, completionTokens int
+	var toolCalls []ToolCall
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var chunk ollamaResponse
+		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+			continue // skip a malformed line rather than fail the whole stream
+		}
+		if chunk.Model != "" {
+			model = chunk.Model
+		}
+		if chunk.Message.Content != "" {
+			content.WriteString(chunk.Message.Content)
+			if onDelta != nil {
+				// Ollama's own tool_calls field is separate and structured
+				// (never mixed into content), so no fold detection needed.
+				onDelta(StreamDelta{Kind: "prose", Text: chunk.Message.Content})
+			}
+		}
+		if len(chunk.Message.ToolCalls) > 0 {
+			toolCalls = make([]ToolCall, len(chunk.Message.ToolCalls))
+			for i, tc := range chunk.Message.ToolCalls {
+				toolCalls[i] = ToolCall{ID: fmt.Sprintf("call_%d", i), Type: "function"}
+				toolCalls[i].Function.Name = tc.Function.Name
+				toolCalls[i].Function.Arguments = string(tc.Function.Arguments)
+			}
+		}
+		if chunk.Done {
+			promptTokens = chunk.PromptEvalCount
+			completionTokens = chunk.EvalCount
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read stream: %w", err)
+	}
+
+	return &Response{
+		Content:   content.String(),
+		ToolCalls: toolCalls,
+		Model:     model,
+		Usage: Usage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      promptTokens + completionTokens,
+		},
+	}, nil
 }
 
 var (

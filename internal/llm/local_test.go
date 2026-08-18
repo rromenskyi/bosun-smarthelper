@@ -310,3 +310,96 @@ func TestStripLeakedReasoningMarker_OnlyStripsAtStart(t *testing.T) {
 		t.Errorf("content = %q, a mid-sentence occurrence must not be stripped", response.Content)
 	}
 }
+
+func TestLocalClientChatStreamOllama(t *testing.T) {
+	var requests []ollamaRequest
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var request ollamaRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		requests = append(requests, request)
+
+		body := `{"model":"test-model","message":{"role":"assistant","content":"Сейчас "},"done":false}` + "\n" +
+			`{"model":"test-model","message":{"role":"assistant","content":"22.5°C."},"done":false}` + "\n" +
+			`{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"eval_count":4,"prompt_eval_count":10}` + "\n"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})
+
+	client := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second)
+	client.client.Transport = transport
+
+	var deltas []StreamDelta
+	response, err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "weather?"}}, nil,
+		func(d StreamDelta) { deltas = append(deltas, d) })
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v", err)
+	}
+	if !requests[0].Stream {
+		t.Error("request did not ask for streaming")
+	}
+	if response.Content != "Сейчас 22.5°C." {
+		t.Errorf("content = %q", response.Content)
+	}
+	if response.Usage.TotalTokens != 14 {
+		t.Errorf("total tokens = %d, want 14", response.Usage.TotalTokens)
+	}
+	for _, d := range deltas {
+		if d.Kind != "prose" {
+			t.Errorf("unexpected delta kind %q — Ollama tool_calls are structured, never fold", d.Kind)
+		}
+	}
+}
+
+func TestLocalClientChatStreamOpenAI_FoldsToolCallXML(t *testing.T) {
+	// Same shape as the real llama-server --skip-chat-parsing output this
+	// host actually runs: narration, then a tool call embedded in content.
+	sse := `data: {"model":"default","choices":[{"delta":{"content":"I will check.\n<tool_call>\n<function=get_weather>\n<parameter=location>\nDenver\n</parameter>\n</function>\n</tool_call>"}}]}` + "\n" +
+		"data: [DONE]\n"
+
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+
+	var prose, fold strings.Builder
+	response, err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "weather?"}}, []ToolDefinition{{
+		Name:       "get_weather",
+		Parameters: map[string]any{"type": "object"},
+	}}, func(d StreamDelta) {
+		switch d.Kind {
+		case "prose":
+			prose.WriteString(d.Text)
+		case "fold":
+			fold.WriteString(d.Text)
+		}
+	})
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v", err)
+	}
+	if prose.String() != "I will check.\n" {
+		t.Errorf("prose = %q", prose.String())
+	}
+	if !strings.Contains(fold.String(), "<tool_call>") {
+		t.Errorf("fold = %q, want the raw tool-call XML", fold.String())
+	}
+	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != "get_weather" {
+		t.Fatalf("unexpected tool calls: %+v", response.ToolCalls)
+	}
+	if response.Content != "I will check." {
+		t.Errorf("content = %q, want the tool-call XML stripped same as the non-streaming path", response.Content)
+	}
+}

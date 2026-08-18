@@ -107,6 +107,15 @@
     .assistant .bubble { border-bottom-left-radius: 6px; }
     .error .bubble { color: var(--danger); }
     .thinking .bubble { color: var(--muted); animation: pulse 1.2s ease-in-out infinite alternate; }
+    .bubble details {
+      margin-top: 8px; padding: 6px 10px; border: 1px solid var(--line);
+      border-radius: 10px; background: rgba(8, 18, 14, .4); font-size: 12px;
+    }
+    .bubble summary { cursor: pointer; color: var(--muted); }
+    .bubble details pre {
+      margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere;
+      color: var(--muted); font-family: ui-monospace, monospace; font-size: 11px;
+    }
     form {
       padding: 12px 0 max(16px, env(safe-area-inset-bottom));
       background: var(--bg);
@@ -253,10 +262,66 @@
       addMessage('user', value.trim());
       input.value = '';
       resizeInput();
-      const waiting = addMessage('assistant', text[language.value][`${currentProvider}Waiting`], 'thinking');
-      waitingBubble = waiting.querySelector('.bubble');
       const controller = new AbortController();
       activeAbortController = controller;
+
+      // Streaming state for the bubble currently filling in. A user turn can
+      // produce several steps (a tool-decision step, then the real answer) —
+      // each step_start finalizes the previous live bubble and starts a new
+      // one.
+      let liveBubble = null;
+      let liveProse = '';
+      let liveFoldBody = null;
+
+      function finalizeLiveBubble() {
+        if (!liveBubble) return;
+        liveBubble.classList.remove('thinking');
+        const fold = liveFoldBody ? liveFoldBody.closest('details') : null;
+        liveBubble.innerHTML = renderMessageHTML(liveProse);
+        if (fold) liveBubble.appendChild(fold);
+        liveBubble = null;
+        liveProse = '';
+        liveFoldBody = null;
+        waitingBubble = null;
+      }
+
+      function startStep() {
+        finalizeLiveBubble();
+        const row = addMessage('assistant', text[language.value][`${currentProvider}Waiting`], 'thinking live');
+        liveBubble = row.querySelector('.bubble');
+        waitingBubble = liveBubble;
+      }
+
+      function appendDelta(kind, deltaText) {
+        if (!liveBubble) startStep();
+        if (liveBubble.classList.contains('thinking')) {
+          liveBubble.classList.remove('thinking');
+          liveBubble.textContent = '';
+          waitingBubble = null;
+        }
+        if (kind === 'fold') {
+          if (!liveFoldBody) {
+            const details = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = language.value === 'ru' ? '🔧 детали инструмента' : '🔧 tool call details';
+            liveFoldBody = document.createElement('pre');
+            details.appendChild(summary);
+            details.appendChild(liveFoldBody);
+            liveBubble.appendChild(details);
+          }
+          liveFoldBody.textContent += deltaText;
+        } else {
+          liveProse += deltaText;
+          let textNode = liveBubble.firstChild;
+          if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+            textNode = document.createTextNode('');
+            liveBubble.insertBefore(textNode, liveBubble.firstChild);
+          }
+          textNode.textContent = liveProse;
+        }
+        scrollToBottom();
+      }
+
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -264,18 +329,52 @@
           body: JSON.stringify({ message: value.trim(), language: language.value, session_id: sessionId }),
           signal: controller.signal
         });
-        const data = await response.json();
-        waiting.remove();
-        waitingBubble = null;
-        if (!response.ok) throw new Error(data.error || 'request failed');
-        if (data.session_id) {
-          sessionId = data.session_id;
-          localStorage.setItem(sessionStorageKey, sessionId);
+
+        if ((response.headers.get('Content-Type') || '').includes('application/x-ndjson')) {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let sawDone = false;
+          for (;;) {
+            const { value: chunk, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(chunk, { stream: true });
+            let newlineIndex;
+            while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+              const line = buffer.slice(0, newlineIndex);
+              buffer = buffer.slice(newlineIndex + 1);
+              if (!line.trim()) continue;
+              const event = JSON.parse(line);
+              if (event.type === 'step_start') {
+                startStep();
+              } else if (event.type === 'delta') {
+                appendDelta(event.kind, event.text);
+              } else if (event.type === 'done') {
+                sawDone = true;
+                if (event.session_id) {
+                  sessionId = event.session_id;
+                  localStorage.setItem(sessionStorageKey, sessionId);
+                }
+              } else if (event.type === 'error') {
+                throw new Error(event.message || 'request failed');
+              }
+            }
+          }
+          finalizeLiveBubble();
+          if (!sawDone) throw new Error('stream ended unexpectedly');
+        } else {
+          // Backward-compatible single-JSON response, used when the asker
+          // doesn't support streaming.
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'request failed');
+          if (data.session_id) {
+            sessionId = data.session_id;
+            localStorage.setItem(sessionStorageKey, sessionId);
+          }
+          addMessage('assistant', data.answer);
         }
-        addMessage('assistant', data.answer);
       } catch (error) {
-        waiting.remove();
-        waitingBubble = null;
+        finalizeLiveBubble();
         addMessage('assistant', text[language.value][error.name === 'AbortError' ? 'cancelled' : 'error'], 'error');
       } finally {
         busy = false;

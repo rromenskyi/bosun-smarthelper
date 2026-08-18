@@ -53,6 +53,32 @@ type conversationAsker interface {
 	AskWithHistory(ctx context.Context, message string, history []agent.HistoryMessage, language string) (string, error)
 }
 
+// streamingConversationAsker is checked separately from conversationAsker
+// (not embedded) so a test double implementing only AskWithHistory keeps
+// getting today's single-JSON-response behavior unchanged — see
+// handleChat.
+type streamingConversationAsker interface {
+	AskWithHistoryStreaming(
+		ctx context.Context,
+		message string,
+		history []agent.HistoryMessage,
+		language string,
+		onEvent func(agent.StepEvent),
+	) (string, error)
+}
+
+// streamEvent is one line of the newline-delimited JSON stream POST
+// /api/chat writes when the asker supports streaming. Type is one of
+// "step_start", "delta", "done", or "error"; Kind ("prose" or "fold") and
+// Text are only set on "delta".
+type streamEvent struct {
+	Type      string `json:"type"`
+	Kind      string `json:"kind,omitempty"`
+	Text      string `json:"text,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
 // Status describes the provider that would currently serve a request.
 type Status struct {
 	Online         bool     `json:"online"`
@@ -331,6 +357,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		// later online turn isn't missing context it never actually lost.
 		history = trimHistory(history, s.sessionOptions.Local.Turns, s.sessionOptions.Local.MaxChars)
 	}
+	if streamer, ok := s.asker.(streamingConversationAsker); ok {
+		s.handleChatStreaming(w, ctx, streamer, sessionID, request.Message, history, language)
+		return
+	}
+
 	var answer string
 	var err error
 	if conversational, ok := s.asker.(conversationAsker); ok {
@@ -356,6 +387,54 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.saveTurn(sessionID, request.Message, answer)
 	writeJSON(w, http.StatusOK, chatResponse{Answer: answer, SessionID: sessionID})
+}
+
+// handleChatStreaming writes one JSON object per line as the answer is
+// generated. Once the first line is flushed the HTTP status is locked in as
+// 200 by Go's ResponseWriter — success/failure is communicated by the
+// event's "type" ("done" vs "error"), not the HTTP status, since there's no
+// way to change the status after streaming has started.
+func (s *Server) handleChatStreaming(
+	w http.ResponseWriter,
+	ctx context.Context,
+	asker streamingConversationAsker,
+	sessionID, message string,
+	history []agent.HistoryMessage,
+	language string,
+) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	flusher, _ := w.(http.Flusher)
+	encoder := json.NewEncoder(w)
+	write := func(event streamEvent) {
+		_ = encoder.Encode(event)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	answer, err := asker.AskWithHistoryStreaming(ctx, message, history, language, func(e agent.StepEvent) {
+		switch e.Type {
+		case "step_start":
+			write(streamEvent{Type: "step_start"})
+		case "delta":
+			write(streamEvent{Type: "delta", Kind: e.Delta.Kind, Text: e.Delta.Text})
+		}
+	})
+	if err != nil {
+		switch {
+		case errors.Is(ctx.Err(), context.Canceled):
+			s.logger.Info("web chat cancelled by client")
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			s.logger.Warn("web chat timed out", "error", err)
+		default:
+			s.logger.Error("web chat failed", "error", err)
+		}
+		write(streamEvent{Type: "error", Message: "assistant request failed"})
+		return
+	}
+
+	s.saveTurn(sessionID, message, answer)
+	write(streamEvent{Type: "done", SessionID: sessionID})
 }
 
 type clearSessionRequest struct {

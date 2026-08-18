@@ -71,6 +71,7 @@ type openAIRequest struct {
 	Tools       []openAIToolDef `json:"tools,omitempty"`
 	ToolChoice  string          `json:"tool_choice,omitempty"`
 	Temperature float64         `json:"temperature,omitempty"`
+	Stream      bool            `json:"stream,omitempty"`
 }
 
 type openAIToolDef struct {
@@ -171,4 +172,64 @@ func (c *RemoteClient) Chat(ctx context.Context, messages []Message, tools []Too
 	}
 
 	return response, nil
+}
+
+// ChatStream streams the answer via OpenAI-compatible SSE. Tool calls
+// always arrive as a structured field in this wire format, never mixed
+// into content, so no fold detection is needed here — see the
+// OpenAI-compatible LocalClient for the case that does need it.
+func (c *RemoteClient) ChatStream(ctx context.Context, messages []Message, tools []ToolDefinition, onDelta func(StreamDelta)) (*Response, error) {
+	var openAITools []openAIToolDef
+	for _, t := range tools {
+		openAITools = append(openAITools, openAIToolDef{
+			Type:     "function",
+			Function: t,
+		})
+	}
+
+	reqBody := openAIRequest{
+		Model:       c.model,
+		Messages:    messages,
+		Tools:       openAITools,
+		Temperature: c.temperature,
+		Stream:      true,
+	}
+	if len(tools) > 0 {
+		reqBody.ToolChoice = "auto"
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	if c.organization != "" {
+		req.Header.Set("OpenAI-Organization", c.organization)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, &httpStatusError{
+			provider:   "openai",
+			statusCode: resp.StatusCode,
+			body:       string(body),
+		}
+	}
+
+	return parseOpenAISSEStream(resp.Body, onDelta, false)
 }

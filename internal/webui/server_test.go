@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/roman220/ai-local-smarthelper/internal/agent"
+	"github.com/roman220/ai-local-smarthelper/internal/llm"
 )
 
 type fakeAsker struct {
@@ -68,6 +69,131 @@ func (f *conversationFakeAsker) AskWithHistory(_ context.Context, message string
 	f.languages = append(f.languages, language)
 	answer := f.answers[len(f.histories)-1]
 	return answer, nil
+}
+
+// streamingFakeAsker implements streamingConversationAsker, replaying a
+// scripted sequence of agent.StepEvent for each call.
+type streamingFakeAsker struct {
+	steps  [][]agent.StepEvent
+	answer string
+	calls  int
+}
+
+func (f *streamingFakeAsker) Ask(_ context.Context, _ string) (string, error) {
+	return f.answer, nil
+}
+
+func (f *streamingFakeAsker) AskWithHistoryStreaming(
+	_ context.Context,
+	_ string,
+	_ []agent.HistoryMessage,
+	_ string,
+	onEvent func(agent.StepEvent),
+) (string, error) {
+	for _, event := range f.steps[f.calls] {
+		onEvent(event)
+	}
+	f.calls++
+	return f.answer, nil
+}
+
+func TestServerChatStreamingWritesNDJSONEvents(t *testing.T) {
+	asker := &streamingFakeAsker{
+		answer: "Сейчас 22.5°C.",
+		steps: [][]agent.StepEvent{{
+			{Type: "step_start"},
+			{Type: "delta", Delta: llm.StreamDelta{Kind: "fold", Text: "→ {\"temperature_c\":22.5}"}},
+			{Type: "step_start"},
+			{Type: "delta", Delta: llm.StreamDelta{Kind: "prose", Text: "Сейчас "}},
+			{Type: "delta", Delta: llm.StreamDelta{Kind: "prose", Text: "22.5°C."}},
+		}},
+	}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"погода?","session_id":"stream-test-1"}`))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if ct := response.Header().Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+
+	decoder := json.NewDecoder(response.Body)
+	var events []streamEvent
+	for {
+		var event streamEvent
+		if err := decoder.Decode(&event); err != nil {
+			break
+		}
+		events = append(events, event)
+	}
+
+	wantTypes := []string{"step_start", "delta", "step_start", "delta", "delta", "done"}
+	if len(events) != len(wantTypes) {
+		t.Fatalf("events = %#v, want %d events of types %v", events, len(wantTypes), wantTypes)
+	}
+	for i, want := range wantTypes {
+		if events[i].Type != want {
+			t.Errorf("event %d type = %q, want %q", i, events[i].Type, want)
+		}
+	}
+	if events[1].Kind != "fold" {
+		t.Errorf("event 1 kind = %q, want fold", events[1].Kind)
+	}
+	if events[5].SessionID != "stream-test-1" {
+		t.Errorf("done event session_id = %q", events[5].SessionID)
+	}
+
+	// The session store must hold the real final answer regardless of how
+	// it was streamed in pieces.
+	history := server.loadHistory("stream-test-1")
+	if len(history) != 2 || history[1].Content != "Сейчас 22.5°C." {
+		t.Errorf("saved history = %#v", history)
+	}
+}
+
+func TestServerChatStreamingErrorEvent(t *testing.T) {
+	asker := &streamingErrorAsker{}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"hi"}`))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — the stream already started", response.Code)
+	}
+
+	decoder := json.NewDecoder(response.Body)
+	var last streamEvent
+	for {
+		var event streamEvent
+		if err := decoder.Decode(&event); err != nil {
+			break
+		}
+		last = event
+	}
+	if last.Type != "error" {
+		t.Errorf("last event type = %q, want error", last.Type)
+	}
+}
+
+type streamingErrorAsker struct{}
+
+func (streamingErrorAsker) Ask(_ context.Context, _ string) (string, error) {
+	return "", errors.New("boom")
+}
+
+func (streamingErrorAsker) AskWithHistoryStreaming(
+	_ context.Context,
+	_ string,
+	_ []agent.HistoryMessage,
+	_ string,
+	onEvent func(agent.StepEvent),
+) (string, error) {
+	onEvent(agent.StepEvent{Type: "step_start"})
+	return "", errors.New("boom")
 }
 
 func TestServerChatSessionHistoryAndClear(t *testing.T) {

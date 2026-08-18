@@ -3,7 +3,9 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,5 +59,48 @@ func TestRemoteClientChat(t *testing.T) {
 	}
 	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != "get_weather" {
 		t.Fatalf("unexpected tool calls: %+v", response.ToolCalls)
+	}
+}
+
+func TestRemoteClientChatStream(t *testing.T) {
+	const keyEnv = "SMARTHELPER_TEST_REMOTE_STREAM_KEY"
+	t.Setenv(keyEnv, "remote-secret")
+
+	sse := `data: {"model":"text","choices":[{"delta":{"content":"Сейчас "}}]}` + "\n" +
+		`data: {"model":"text","choices":[{"delta":{"content":"22.5°C."}}]}` + "\n" +
+		"data: [DONE]\n"
+
+	var requestBody openAIRequest
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	client, err := NewRemoteClient("https://remote.test/v1", "text", keyEnv, "", 0.8, time.Second)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+
+	var deltas []StreamDelta
+	response, err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "weather?"}}, nil,
+		func(d StreamDelta) { deltas = append(deltas, d) })
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v", err)
+	}
+	if !requestBody.Stream {
+		t.Error("request did not ask for streaming")
+	}
+	if response.Content != "Сейчас 22.5°C." {
+		t.Errorf("content = %q", response.Content)
+	}
+	if len(deltas) != 2 {
+		t.Fatalf("deltas = %d, want 2", len(deltas))
 	}
 }

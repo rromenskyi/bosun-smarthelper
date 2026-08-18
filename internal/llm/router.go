@@ -263,6 +263,99 @@ func (r *Router) chatRemoteWithRetry(
 	return nil, lastErr
 }
 
+// ChatStream routes a streaming chat request the same way Chat does, with
+// one difference: retry and remote→local fallback only apply before any
+// delta has reached the caller. Once the user has started seeing text,
+// silently retrying or swapping providers mid-stream would be worse than
+// just surfacing the error — there's no good way to "un-show" a partial
+// answer.
+func (r *Router) ChatStream(ctx context.Context, messages []Message, tools []ToolDefinition, onDelta func(StreamDelta)) (*Response, error) {
+	client, err := r.GetClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get client: %w", err)
+	}
+
+	r.setActiveProvider(client.Provider())
+	defer r.clearActiveProvider()
+
+	streamer, ok := client.(StreamingClient)
+	if !ok {
+		// Neither concrete client type should ever hit this — both
+		// implement StreamingClient — but degrade gracefully rather than
+		// erroring if a future client type doesn't.
+		return chatNonStreamingFallback(ctx, client, messages, tools, onDelta)
+	}
+
+	started := false
+	wrappedOnDelta := func(d StreamDelta) {
+		started = true
+		if onDelta != nil {
+			onDelta(d)
+		}
+	}
+
+	var resp *Response
+	if client.Provider() == "remote" {
+		resp, err = r.chatStreamRemoteWithRetry(ctx, streamer, messages, tools, &started, wrappedOnDelta)
+	} else {
+		resp, err = streamer.ChatStream(ctx, messages, tools, wrappedOnDelta)
+	}
+	if err != nil {
+		if client.Provider() == "remote" && r.localClient != nil && !started {
+			if isNetworkConnectivityError(err) {
+				r.setConnectivity(false)
+			}
+			r.setActiveProvider("local")
+			return r.localClient.ChatStream(ctx, messages, tools, onDelta)
+		}
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+func chatNonStreamingFallback(ctx context.Context, client Client, messages []Message, tools []ToolDefinition, onDelta func(StreamDelta)) (*Response, error) {
+	resp, err := client.Chat(ctx, messages, tools)
+	if err != nil {
+		return nil, err
+	}
+	if onDelta != nil && resp.Content != "" {
+		onDelta(StreamDelta{Kind: "prose", Text: resp.Content})
+	}
+	return resp, nil
+}
+
+func (r *Router) chatStreamRemoteWithRetry(
+	ctx context.Context,
+	streamer StreamingClient,
+	messages []Message,
+	tools []ToolDefinition,
+	started *bool,
+	onDelta func(StreamDelta),
+) (*Response, error) {
+	var lastErr error
+	for attempt := 0; attempt <= r.remoteMaxRetries; attempt++ {
+		response, err := streamer.ChatStream(ctx, messages, tools, onDelta)
+		if err == nil {
+			return response, nil
+		}
+		lastErr = err
+		if *started || attempt == r.remoteMaxRetries || !isRetryableRemoteError(err) {
+			break
+		}
+
+		delay := r.remoteRetryBackoff * time.Duration(1<<attempt)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil, lastErr
+}
+
 func isRetryableRemoteError(err error) bool {
 	var statusErr *httpStatusError
 	if errors.As(err, &statusErr) {

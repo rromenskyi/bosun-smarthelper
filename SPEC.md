@@ -152,6 +152,10 @@ models without native tool calling, conservative default history limits).
 - [x] Persistent dated memo tool with list/archive/delete lifecycle
 - [x] DuckDuckGo and Wikipedia tools with offline filtering
 - [x] Centralized tool/LLM failure log (`internal/errlog`) reviewable via `smarthelper errors`
+- [x] `get_directions` tool: Google/Apple Maps links, asks for clarification instead of guessing an ambiguous destination
+- [x] Configurable per-provider LLM temperature (remote higher, local lower — see `internal/config`)
+- [x] Streamed web answers with a stop button; tool-call encodings folded, never shown raw — see `docs/streaming.md`
+- [x] Docker + Compose deployment (`docs/docker.md`) — this host's live service runs from it
 - [x] `make check` (fmt + vet + test + build) passing
 - [ ] Real sensor backends (1-Wire temp probes, MQTT, serial GPS/OBD2)
 - [ ] Integration tests against a real Ollama instance

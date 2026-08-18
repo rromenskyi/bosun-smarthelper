@@ -45,6 +45,26 @@ type Client interface {
 	Provider() string // "local" or "remote"
 }
 
+// StreamDelta is one incremental piece of a streamed response. Kind
+// distinguishes ordinary answer text ("prose") from text that is (or may
+// be part of) a tool-call encoding a client shouldn't display directly
+// ("fold") — see the OpenAI-compatible local client, which has to detect
+// this from raw content since llama.cpp's --skip-chat-parsing mode emits
+// tool calls as XML mixed into normal text rather than a structured field.
+type StreamDelta struct {
+	Kind string // "prose" or "fold"
+	Text string
+}
+
+// StreamingClient is an optional capability: a Client may additionally
+// support streaming, checked via a type assertion (same pattern as
+// NetworkDependentTool in internal/tools). It still returns the complete
+// assembled Response at the end, so callers that only care about the final
+// result don't need special-casing.
+type StreamingClient interface {
+	ChatStream(ctx context.Context, messages []Message, tools []ToolDefinition, onDelta func(StreamDelta)) (*Response, error)
+}
+
 // ToolDefinition describes a tool/function for the LLM
 type ToolDefinition struct {
 	Name        string `json:"name"`
