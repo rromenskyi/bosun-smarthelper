@@ -41,7 +41,7 @@ Exposed over stdio as an MCP server (`smarthelper mcp`):
 | `get_fridge_temp` | Fridge/freezer temperature | `{"fridge_c": 4.0, "freezer_c": -18.0}` |
 | `get_gps` | Coordinates, speed, altitude | `{"latitude": 40.7608, "longitude": -111.891, "speed_kmh": 0}` |
 | `get_system_info` | CPU, RAM, disk, uptime | `{"cpu_percent": [...], "memory": {...}}` |
-| `memo` | Dated persistent local notes | `{"key":"shopping","updated_at":"...","age_days":2}` |
+| `memo` | Dated persistent local notes; `search` finds memos/documents by meaning | `{"key":"shopping","updated_at":"...","age_days":2}` |
 | `web_search` | DuckDuckGo results | `{"query":"...","results":[...]}` |
 | `wikipedia` | Encyclopedia summary | `{"title":"...","extract":"...","url":"..."}` |
 
@@ -155,7 +155,8 @@ models without native tool calling, conservative default history limits).
 - [x] `get_directions` tool: Google/Apple Maps links, asks for clarification instead of guessing an ambiguous destination
 - [x] Configurable per-provider LLM temperature (remote higher, local lower — see `internal/config`)
 - [x] Streamed web answers with a stop button; tool-call encodings folded, never shown raw — see `docs/streaming.md`
-- [x] Docker + Compose deployment (`docs/docker.md`) — this host's live service runs from it
+- [x] Docker + Compose deployment (`docs/docker.md`) — this host's live service runs from it, including two `llama-server` instances (chat + embeddings)
+- [x] Semantic memo/document search (`docs/memo-search.md`) — reuses the `memo` tool's `search` action, so the LLM tool contract doesn't grow; document upload is web-UI-only
 - [x] `make check` (fmt + vet + test + build) passing
 - [ ] Real sensor backends (1-Wire temp probes, MQTT, serial GPS/OBD2)
 - [ ] Integration tests against a real Ollama instance

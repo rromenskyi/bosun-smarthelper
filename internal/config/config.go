@@ -15,6 +15,7 @@ type Config struct {
 	MCP       MCPConfig       `mapstructure:"mcp"`
 	Web       WebConfig       `mapstructure:"web"`
 	Memo      MemoConfig      `mapstructure:"memo"`
+	Documents DocumentsConfig `mapstructure:"documents"`
 	ErrorLog  ErrorLogConfig  `mapstructure:"error_log"`
 	Online    OnlineConfig    `mapstructure:"online_tools"`
 	Maps      MapsConfig      `mapstructure:"maps"`
@@ -31,6 +32,13 @@ type AssistantConfig struct {
 
 // MemoConfig holds persistent local memo settings.
 type MemoConfig struct {
+	Path string `mapstructure:"path"`
+}
+
+// DocumentsConfig holds settings for uploaded reference documents (see
+// internal/documents and docs/memo-search.md). Empty Path resolves to
+// ~/.local/share/bosun/documents.json.
+type DocumentsConfig struct {
 	Path string `mapstructure:"path"`
 }
 
@@ -57,9 +65,21 @@ type MapsConfig struct {
 
 // LLMConfig holds LLM-related configuration
 type LLMConfig struct {
-	Remote RemoteLLMConfig `mapstructure:"remote"`
-	Local  LocalLLMConfig  `mapstructure:"local"`
-	Router RouterConfig    `mapstructure:"router"`
+	Remote     RemoteLLMConfig  `mapstructure:"remote"`
+	Local      LocalLLMConfig   `mapstructure:"local"`
+	Router     RouterConfig     `mapstructure:"router"`
+	Embeddings EmbeddingsConfig `mapstructure:"embeddings"`
+}
+
+// EmbeddingsConfig holds an OpenAI-compatible /embeddings endpoint used for
+// memo semantic search (see internal/tools/memo.go). An empty BaseURL
+// disables the feature: memos still save normally, just without a vector
+// to rank against, and "search" degrades to plain substring matching.
+type EmbeddingsConfig struct {
+	BaseURL   string `mapstructure:"base_url"`
+	Model     string `mapstructure:"model"`
+	APIKeyEnv string `mapstructure:"api_key_env"`
+	Timeout   string `mapstructure:"timeout"`
 }
 
 // RemoteLLMConfig holds remote LLM (OpenAI-compatible) settings
@@ -254,6 +274,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.router.check_timeout", "5s")
 	v.SetDefault("llm.router.check_target", "https://api.openai.com")
 	v.SetDefault("llm.router.prefer_remote", true)
+	v.SetDefault("llm.embeddings.base_url", "")
+	v.SetDefault("llm.embeddings.timeout", "10s")
 
 	// MCP defaults
 	v.SetDefault("mcp.server_name", "bosun")

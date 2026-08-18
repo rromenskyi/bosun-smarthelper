@@ -142,6 +142,30 @@
     .clear { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
     @keyframes appear { from { opacity: 0; transform: translateY(5px); } }
     @keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
+    dialog#docs-dialog {
+      border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
+      color: var(--text); width: min(90vw, 420px); padding: 18px;
+    }
+    dialog#docs-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+    dialog#docs-dialog h2 { margin: 0 0 6px; font-size: 16px; }
+    .docs-hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+    #docs-upload-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    #docs-upload-form input[type="text"] {
+      padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
+      background: rgba(8, 18, 14, .5); color: var(--text);
+    }
+    #docs-upload-form button {
+      padding: 8px 10px; border-radius: 10px; border: 0;
+      background: var(--accent); color: #10251c; font-weight: 700; cursor: pointer;
+    }
+    #docs-upload-form button:disabled { opacity: .5; cursor: wait; }
+    .docs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
+    .docs-list li {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px;
+    }
+    .docs-list li span { overflow-wrap: anywhere; }
+    .docs-list button { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-size: 14px; flex: 0 0 auto; }
     @media (max-width: 560px) {
       .app { padding-left: 12px; padding-right: 12px; }
       header { padding-top: 15px; }
@@ -159,10 +183,23 @@
         <div><h1 id="brand">Старпом</h1><div class="subtitle" id="subtitle">Локальный помощник</div></div>
       </div>
       <div class="header-actions">
+        <button class="bell" id="docs-toggle" type="button" aria-label="Документы" title="Документы">📄</button>
         <button class="bell" id="bell" type="button" aria-label="Позвать старпома" title="Позвать старпома">🔔</button>
         <div class="status" id="status"><span class="dot"></span><span>Подключение…</span></div>
       </div>
     </header>
+
+    <dialog id="docs-dialog">
+      <h2 id="docs-title">Документы</h2>
+      <p class="docs-hint" id="docs-hint">Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.</p>
+      <form id="docs-upload-form">
+        <input type="text" id="doc-title" placeholder="Название (необязательно)">
+        <input type="file" id="doc-file" accept=".txt,text/plain" required>
+        <button type="submit" id="docs-upload-button">Загрузить</button>
+      </form>
+      <ul class="docs-list" id="docs-list"></ul>
+      <button type="button" class="clear" id="docs-close">Закрыть</button>
+    </dialog>
 
     <nav class="quick" aria-label="Быстрые запросы">
       <button class="chip" data-tool="get_weather" data-ru="Какая сейчас погода?" data-en="What is the weather now?" data-label-ru="Погода" data-label-en="Weather">Погода</button>
@@ -202,6 +239,10 @@
     const language = document.querySelector('#language');
     const bell = document.querySelector('#bell');
     const bellAudio = new Audio(BELL_SOUND);
+    const docsToggle = document.querySelector('#docs-toggle');
+    const docsDialog = document.querySelector('#docs-dialog');
+    const docsList = document.querySelector('#docs-list');
+    const docsUploadForm = document.querySelector('#docs-upload-form');
     let busy = false;
     let currentProvider = 'local';
     let waitingBubble = null;
@@ -210,8 +251,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete' }
     };
 
     function escapeHTML(value) {
@@ -416,6 +457,13 @@
       document.querySelector('#status span:last-child').textContent = text[locale][currentProvider];
       if (waitingBubble) waitingBubble.textContent = text[locale][`${currentProvider}Waiting`];
       document.querySelectorAll('.chip').forEach(button => { button.textContent = button.dataset[`label${locale === 'ru' ? 'Ru' : 'En'}`]; });
+      docsToggle.title = text[locale].docsToggleTitle;
+      docsToggle.setAttribute('aria-label', text[locale].docsToggleTitle);
+      document.querySelector('#docs-title').textContent = text[locale].docsTitle;
+      document.querySelector('#docs-hint').textContent = text[locale].docsHint;
+      document.querySelector('#doc-title').placeholder = text[locale].docsTitlePlaceholder;
+      document.querySelector('#docs-upload-button').textContent = text[locale].docsUpload;
+      document.querySelector('#docs-close').textContent = text[locale].docsClose;
     }
 
     form.addEventListener('submit', event => { event.preventDefault(); ask(input.value); });
@@ -434,6 +482,70 @@
       const replies = text[language.value].bellReplies;
       addMessage('assistant', replies[Math.floor(Math.random() * replies.length)]);
     });
+
+    async function loadDocuments() {
+      let data;
+      try {
+        const response = await fetch('/api/documents');
+        data = await response.json();
+      } catch {
+        return;
+      }
+      if (!data.enabled) {
+        docsToggle.hidden = true;
+        return;
+      }
+      docsList.innerHTML = '';
+      if (!data.documents.length) {
+        const empty = document.createElement('li');
+        empty.textContent = text[language.value].docsEmpty;
+        docsList.appendChild(empty);
+        return;
+      }
+      for (const doc of data.documents) {
+        const item = document.createElement('li');
+        const label = document.createElement('span');
+        label.textContent = `${doc.title} (${doc.chunk_count})`;
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.textContent = '✕';
+        deleteButton.title = text[language.value].docsDeleteTitle;
+        deleteButton.addEventListener('click', async () => {
+          deleteButton.disabled = true;
+          await fetch(`/api/documents/${doc.id}`, { method: 'DELETE' }).catch(() => {});
+          loadDocuments();
+        });
+        item.appendChild(label);
+        item.appendChild(deleteButton);
+        docsList.appendChild(item);
+      }
+    }
+    docsToggle.addEventListener('click', () => { loadDocuments(); docsDialog.showModal(); });
+    document.querySelector('#docs-close').addEventListener('click', () => docsDialog.close());
+    docsUploadForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const fileInput = document.querySelector('#doc-file');
+      const titleInput = document.querySelector('#doc-title');
+      if (!fileInput.files.length) return;
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      if (titleInput.value.trim()) formData.append('title', titleInput.value.trim());
+      const uploadButton = document.querySelector('#docs-upload-button');
+      uploadButton.disabled = true;
+      try {
+        const response = await fetch('/api/documents', { method: 'POST', body: formData });
+        if (response.ok) {
+          fileInput.value = '';
+          titleInput.value = '';
+          loadDocuments();
+        }
+      } catch {
+        // Best-effort: connectivity issues already surface via the status pill.
+      } finally {
+        uploadButton.disabled = false;
+      }
+    });
+
     document.querySelector('#clear').addEventListener('click', () => {
       const previousSessionId = sessionId;
       sessionId = createSessionId();
@@ -475,6 +587,7 @@
 
     hydrateHistory();
     refreshStatus();
+    loadDocuments();
     setInterval(refreshStatus, 3000);
   </script>
 </body>

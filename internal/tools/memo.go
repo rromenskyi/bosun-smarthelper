@@ -12,29 +12,35 @@ import (
 	"time"
 
 	"github.com/roman220/ai-local-smarthelper/internal/config"
+	"github.com/roman220/ai-local-smarthelper/internal/documents"
+	"github.com/roman220/ai-local-smarthelper/internal/embeddings"
 )
 
 // MemoTool stores and retrieves dated notes in a local JSON file.
 type MemoTool struct {
-	path string
-	mu   sync.Mutex
+	path  string
+	embed *embeddings.Client
+	docs  *documents.Store
+	mu    sync.Mutex
 }
 
 type memoRecord struct {
-	Key        string `json:"key"`
-	Content    string `json:"content"`
-	Status     string `json:"status"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
-	ArchivedAt string `json:"archived_at,omitempty"`
+	Key        string    `json:"key"`
+	Content    string    `json:"content"`
+	Status     string    `json:"status"`
+	CreatedAt  string    `json:"created_at"`
+	UpdatedAt  string    `json:"updated_at"`
+	ArchivedAt string    `json:"archived_at,omitempty"`
+	Embedding  []float32 `json:"embedding,omitempty"`
 }
 
 type memoFile struct {
 	Memos map[string]memoRecord `json:"memos"`
 }
 
-// NewMemoTool creates a persistent local memo tool.
-func NewMemoTool(cfg *config.MemoConfig) *MemoTool {
+// NewMemoTool creates a persistent local memo tool. embedCfg may be nil —
+// see config.EmbeddingsConfig for what that degrades to.
+func NewMemoTool(cfg *config.MemoConfig, embedCfg *config.EmbeddingsConfig) *MemoTool {
 	path := strings.TrimSpace(cfg.Path)
 	if path == "" {
 		home, err := os.UserHomeDir()
@@ -44,7 +50,14 @@ func NewMemoTool(cfg *config.MemoConfig) *MemoTool {
 			path = "memos.json"
 		}
 	}
-	return &MemoTool{path: path}
+	return &MemoTool{path: path, embed: embeddings.NewClient(embedCfg)}
+}
+
+// SetDocumentStore wires in the document store so "search" also ranks
+// uploaded-document chunks alongside memos. Optional — nil (the default)
+// means search only ever considers memos.
+func (t *MemoTool) SetDocumentStore(store *documents.Store) {
+	t.docs = store
 }
 
 func (t *MemoTool) Name() string {
@@ -52,7 +65,7 @@ func (t *MemoTool) Name() string {
 }
 
 func (t *MemoTool) Description() string {
-	return "Write, read, list, archive, or delete persistent local memos. Listing exposes timestamps, status, and age_days so old notes can be reviewed."
+	return "Write, read, list, search, archive, or delete persistent local memos. Listing exposes timestamps, status, and age_days so old notes can be reviewed. Search finds memos and uploaded reference documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question that a stored document (e.g. a manual) might answer."
 }
 
 func (t *MemoTool) InputSchema() map[string]any {
@@ -61,12 +74,12 @@ func (t *MemoTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"action": map[string]any{
 				"type":        "string",
-				"enum":        []string{"write", "read", "list", "archive", "delete"},
-				"description": "Operation to perform. Use list to inspect memo dates and age before archival or deletion.",
+				"enum":        []string{"write", "read", "list", "search", "archive", "delete"},
+				"description": "Operation to perform. Use list to inspect memo dates and age before archival or deletion; use search to recall a memo by meaning.",
 			},
 			"key": map[string]any{
 				"type":        "string",
-				"description": "Short stable memo identifier; required except for list.",
+				"description": "Short stable memo identifier; required except for list and search.",
 			},
 			"content": map[string]any{
 				"type":        "string",
@@ -76,18 +89,26 @@ func (t *MemoTool) InputSchema() map[string]any {
 				"type":        "boolean",
 				"description": "For list, include archived memos as well as active memos.",
 			},
+			"query": map[string]any{
+				"type":        "string",
+				"description": "For search, the text to find related memos for.",
+			},
+			"limit": map[string]any{
+				"type":        "number",
+				"description": "For search, maximum number of results (default 5).",
+			},
 		},
 		"required":             []string{"action"},
 		"additionalProperties": false,
 	}
 }
 
-func (t *MemoTool) Execute(_ context.Context, args map[string]any) (any, error) {
+func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error) {
 	action, _ := args["action"].(string)
 	key, _ := args["key"].(string)
 	action = strings.TrimSpace(action)
 	key = strings.TrimSpace(key)
-	if action != "list" && (key == "" || len([]rune(key)) > 128) {
+	if action != "list" && action != "search" && (key == "" || len([]rune(key)) > 128) {
 		return nil, fmt.Errorf("memo key must contain 1 to 128 characters")
 	}
 
@@ -141,11 +162,23 @@ func (t *MemoTool) Execute(_ context.Context, args map[string]any) (any, error) 
 		record.Status = "active"
 		record.UpdatedAt = now
 		record.ArchivedAt = ""
+		if t.embed != nil {
+			// Best-effort: a slow or unreachable embeddings server must
+			// never block saving the memo itself. A missing vector just
+			// means "search" won't be able to rank this one.
+			if vector, err := t.embed.Embed(ctx, content); err == nil {
+				record.Embedding = vector
+			} else {
+				record.Embedding = nil
+			}
+		}
 		data.Memos[key] = record
 		if err := t.save(data); err != nil {
 			return nil, err
 		}
 		return memoView(record, time.Now()), nil
+	case "search":
+		return t.search(ctx, data, args)
 	case "archive":
 		record, ok := data.Memos[key]
 		if !ok {
@@ -173,6 +206,82 @@ func (t *MemoTool) Execute(_ context.Context, args map[string]any) (any, error) 
 	default:
 		return nil, fmt.Errorf("unsupported memo action %q", action)
 	}
+}
+
+type scoredMemo struct {
+	record memoRecord
+	score  float64
+}
+
+// search ranks active memos, and uploaded-document chunks when a document
+// store is wired in, by meaning against query using cosine similarity over
+// stored embeddings. Each side falls back to a plain substring match —
+// never an error — when embeddings are disabled, the embeddings server is
+// unreachable, or nothing has a vector yet (e.g. written before embeddings
+// were configured). See docs/memo-search.md.
+func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]any) (any, error) {
+	query, _ := args["query"].(string)
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("memo search query is required")
+	}
+	limit := 5
+	if raw, ok := args["limit"].(float64); ok && raw > 0 {
+		limit = int(raw)
+	}
+
+	var candidates []scoredMemo
+	if t.embed != nil {
+		if queryVector, err := t.embed.Embed(ctx, query); err == nil {
+			for _, record := range data.Memos {
+				if record.Status == "archived" || len(record.Embedding) == 0 {
+					continue
+				}
+				candidates = append(candidates, scoredMemo{record, embeddings.CosineSimilarity(queryVector, record.Embedding)})
+			}
+		}
+	}
+	if candidates == nil {
+		lowerQuery := strings.ToLower(query)
+		for _, record := range data.Memos {
+			if record.Status == "archived" {
+				continue
+			}
+			if strings.Contains(strings.ToLower(record.Content), lowerQuery) || strings.Contains(strings.ToLower(record.Key), lowerQuery) {
+				candidates = append(candidates, scoredMemo{record, 1})
+			}
+		}
+	}
+
+	results := make([]map[string]any, 0, len(candidates))
+	for _, c := range candidates {
+		view := memoView(c.record, time.Now())
+		view["source"] = "memo"
+		view["relevance"] = c.score
+		results = append(results, view)
+	}
+
+	if t.docs != nil {
+		if chunks, err := t.docs.Search(ctx, query, limit); err == nil {
+			for _, chunk := range chunks {
+				results = append(results, map[string]any{
+					"source":         "document",
+					"document_id":    chunk.DocumentID,
+					"document_title": chunk.DocumentTitle,
+					"text":           chunk.Text,
+					"relevance":      chunk.Score,
+				})
+			}
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i]["relevance"].(float64) > results[j]["relevance"].(float64)
+	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return map[string]any{"results": results, "count": len(results)}, nil
 }
 
 func memoView(record memoRecord, now time.Time) map[string]any {

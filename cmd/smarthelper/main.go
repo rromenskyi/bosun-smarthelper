@@ -16,6 +16,8 @@ import (
 
 	"github.com/roman220/ai-local-smarthelper/internal/agent"
 	"github.com/roman220/ai-local-smarthelper/internal/config"
+	"github.com/roman220/ai-local-smarthelper/internal/documents"
+	"github.com/roman220/ai-local-smarthelper/internal/embeddings"
 	"github.com/roman220/ai-local-smarthelper/internal/errlog"
 	"github.com/roman220/ai-local-smarthelper/internal/llm"
 	"github.com/roman220/ai-local-smarthelper/internal/mcp"
@@ -62,7 +64,7 @@ func mcpCmd() *cobra.Command {
 			}
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			registry := buildRegistry(cfg)
+			registry, _ := buildRegistry(cfg)
 
 			server := mcp.NewServer(cfg.MCP.ServerName, version, registry, logger)
 			server.SetErrorLog(openErrorLog(cfg, logger))
@@ -114,7 +116,7 @@ func serveCmd() *cobra.Command {
 			router.CheckConnectivity(cmd.Context())
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			registry := buildRegistry(cfg)
+			registry, docStore := buildRegistry(cfg)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(cfg.Assistant.NameRU, cfg.Assistant.NameEN, cfg.Assistant.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
@@ -137,6 +139,7 @@ func serveCmd() *cobra.Command {
 				MaxSessions: cfg.Web.MaxSessions,
 				StorePath:   storePath,
 			})
+			server.SetDocumentStore(docStore)
 
 			logger.Info("starting web interface", "address", cfg.Web.Bind)
 			return server.Serve(cmd.Context(), cfg.Web.Bind)
@@ -164,7 +167,8 @@ func chatCmd() *cobra.Command {
 			router.CheckConnectivity(cmd.Context())
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			ag := agent.New(router, buildRegistry(cfg), router.NetworkAvailable)
+			registry, _ := buildRegistry(cfg)
+			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(cfg.Assistant.NameRU, cfg.Assistant.NameEN, cfg.Assistant.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
 
@@ -213,9 +217,17 @@ func errorsCmd() *cobra.Command {
 	return cmd
 }
 
-func buildRegistry(cfg *config.Config) *tools.Registry {
+// buildRegistry also returns the document store (see internal/documents)
+// so serveCmd can wire it into the web UI's upload endpoints — document
+// ingestion is a human-only, web-UI-only path, never an LLM tool action,
+// to keep the tool contract small for weak local models.
+func buildRegistry(cfg *config.Config) (*tools.Registry, *documents.Store) {
+	docStore := documents.NewStore(cfg.Documents.Path, embeddings.NewClient(&cfg.LLM.Embeddings))
+	memoTool := tools.NewMemoTool(&cfg.Memo, &cfg.LLM.Embeddings)
+	memoTool.SetDocumentStore(docStore)
+
 	registry := tools.NewRegistry()
-	registry.Register(tools.NewMemoTool(&cfg.Memo))
+	registry.Register(memoTool)
 	registry.Register(tools.NewWebSearchTool(&cfg.Online))
 	registry.Register(tools.NewWikipediaTool(&cfg.Online))
 	registry.Register(tools.NewDirectionsTool(&cfg.Maps, &cfg.Sensors.GPS))
@@ -223,5 +235,5 @@ func buildRegistry(cfg *config.Config) *tools.Registry {
 	registry.Register(tools.NewFridgeTool(&cfg.Sensors.Fridge))
 	registry.Register(tools.NewGPSTool(&cfg.Sensors.GPS))
 	registry.Register(tools.NewSystemTool(&cfg.Sensors.System))
-	return registry
+	return registry, docStore
 }

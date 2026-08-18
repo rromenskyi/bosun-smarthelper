@@ -44,6 +44,15 @@ llm:
     check_target: "https://api.openai.com"  # Target for online check
     prefer_remote: true                     # Use remote when online
 
+  # OpenAI-compatible /embeddings endpoint for memo/document semantic
+  # search (see docs/memo-search.md). Empty base_url (the default) disables
+  # the feature: memos and documents still save fine, search just falls
+  # back to plain substring matching.
+  # embeddings:
+  #   base_url: "http://localhost:1235/v1"  # e.g. a llama-server started with --embeddings
+  #   model: "embed"
+  #   timeout: 10s
+
 # MCP Server Configuration
 mcp:
   server_name: "bosun"                      # Server identifier
@@ -76,6 +85,12 @@ web:
 
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:
+  path: ""
+
+# Uploaded reference documents (manuals, how-tos) for semantic search —
+# uploaded only via the web UI, never an LLM-callable action. Empty path
+# uses ~/.local/share/bosun/documents.json. See docs/memo-search.md.
+documents:
   path: ""
 
 # Failure log for tool/LLM errors, reviewed later to drive fixes — not a

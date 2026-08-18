@@ -21,9 +21,15 @@ import (
 	"unicode/utf8"
 
 	"github.com/roman220/ai-local-smarthelper/internal/agent"
+	"github.com/roman220/ai-local-smarthelper/internal/documents"
 )
 
 const maxRequestBody = 16 * 1024
+
+// maxDocumentUploadBytes bounds a reference-document upload (e.g. a car
+// manual as plain text) — generous compared to maxRequestBody's normal chat
+// message cap, but still bounded.
+const maxDocumentUploadBytes = 2 << 20
 
 //go:embed index.html
 var indexHTML []byte
@@ -97,6 +103,15 @@ type Server struct {
 	sessionsMu      sync.Mutex
 	sessions        map[string]chatSession
 	sessionOptions  SessionOptions
+	documents       *documents.Store
+}
+
+// SetDocumentStore wires in reference-document upload/search — see
+// docs/memo-search.md. Optional: nil (the default) means the
+// /api/documents endpoints report the feature as disabled rather than
+// erroring, and the memo tool's "search" only ever considers memos.
+func (s *Server) SetDocumentStore(store *documents.Store) {
+	s.documents = store
 }
 
 type chatSession struct {
@@ -212,6 +227,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/session/clear", s.handleSessionClear)
+	mux.HandleFunc("GET /api/documents", s.handleDocumentsList)
+	mux.HandleFunc("POST /api/documents", s.handleDocumentUpload)
+	mux.HandleFunc("DELETE /api/documents/{id}", s.handleDocumentDelete)
 	return securityHeaders(mux)
 }
 
@@ -455,6 +473,76 @@ func (s *Server) handleSessionClear(w http.ResponseWriter, r *http.Request) {
 	s.persistLocked()
 	s.sessionsMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"cleared": true})
+}
+
+// handleDocumentsList reports "enabled": false rather than an error when no
+// document store is configured — the UI uses that to hide the upload form
+// instead of showing a broken feature.
+func (s *Server) handleDocumentsList(w http.ResponseWriter, r *http.Request) {
+	if s.documents == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "documents": []any{}})
+		return
+	}
+	list, err := s.documents.List()
+	if err != nil {
+		s.logger.Error("list documents", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not list documents"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "documents": list})
+}
+
+// handleDocumentUpload accepts a plain-text file (PDFs must be converted to
+// text first — see docs/memo-search.md) via a multipart form with "title"
+// and "file" fields. This is a human-only path: the agent's tool contract
+// never exposes document ingestion, only search, to keep the tool schema
+// small for weak local models.
+func (s *Server) handleDocumentUpload(w http.ResponseWriter, r *http.Request) {
+	if s.documents == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "document search is not configured"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxDocumentUploadBytes)
+	if err := r.ParseMultipartForm(maxDocumentUploadBytes); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid upload"})
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
+		return
+	}
+	defer file.Close()
+	title := strings.TrimSpace(r.FormValue("title"))
+	if title == "" {
+		title = header.Filename
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read file"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+	defer cancel()
+	summary, err := s.documents.Add(ctx, title, string(content))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *Server) handleDocumentDelete(w http.ResponseWriter, r *http.Request) {
+	if s.documents == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "document search is not configured"})
+		return
+	}
+	if err := s.documents.Delete(r.PathValue("id")); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
 func newSessionID() (string, error) {

@@ -31,6 +31,11 @@ Early foundation. Working today:
   disk so they survive both a page reload and a service restart.
 - **Persistent local memos** — dated notes can be written, read, listed,
   archived, and deleted through the `memo` tool.
+- **Semantic memo/document search** — `memo`'s `search` action finds memos
+  and uploaded reference documents (manuals, how-tos) by meaning, not just
+  exact words. Documents are uploaded through the web UI only, never an
+  LLM-callable action, to keep the tool contract small — see
+  `docs/memo-search.md`.
 - **Online knowledge tools** — DuckDuckGo web search and Wikipedia summaries,
   automatically hidden while offline.
 - **Failure log** — tool and LLM-call errors are recorded to one file
@@ -131,7 +136,7 @@ are rejected. No authentication is provided, so keep it on a trusted LAN.
 | `get_fridge_temp` | Refrigerator/freezer temperature | `zone?` (`fridge`\|`freezer`) |
 | `get_gps` | Coordinates, speed, altitude | — |
 | `get_system_info` | CPU, RAM, disk, uptime | `include?` (`cpu`,`memory`,`disk`,`host`) |
-| `memo` | Persistent dated notes | `action`, `key?`, `content?`, `include_archived?` |
+| `memo` | Persistent dated notes; `search` finds memos and uploaded documents by meaning | `action`, `key?`, `content?`, `include_archived?`, `query?`, `limit?` |
 | `web_search` | DuckDuckGo web results | `query`, `limit?` |
 | `wikipedia` | Wikipedia summary and source URL | `title`, `lang?` |
 | `get_directions` | Google/Apple Maps links for a destination (route from the current GPS location when available) | `destination` |
