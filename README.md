@@ -243,6 +243,14 @@ available.
 Read `AGENTS.md` first — it covers code style, testing expectations, and how
 to add a new sensor tool.
 
+## Credits
+
+- Ship's bell chime (web UI): "Ship Bell" by Sojan, CC0 / public domain —
+  https://freesound.org/s/353232/
+- Candidate source for future ambient background audio (ocean wind, ship
+  creaking) — royalty-free per the video's own listing:
+  [Pirate Ship Ambience Sound Effects / Ocean Wind and Ship Creaking Sleeping Sounds](https://www.youtube.com/watch?v=dr9aAyuYjSk&list=PLCnngi2mdPv0TF_7ucFQbhMxKW7wUMvTr)
+
 ## License
 
 MIT — see `LICENSE`.
