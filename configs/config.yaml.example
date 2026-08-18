@@ -46,9 +46,18 @@ web:
   bind: "127.0.0.1:8080"                   # Use an explicit private LAN IP for phone access
   request_timeout: 180s                     # Local inference can be slow on weak hardware
   default_language: "ru"                   # ru or en
-  history_turns: 4                          # Completed user/assistant turns retained per session
-  history_max_chars: 4000                   # ~1000 tokens; kept small since a weak local fallback
-                                             # model may serve any request — see docs/token-budget.md
+  # Which budget applies to a given request is decided at request time from
+  # current connectivity (see docs/token-budget.md), so a chat that switches
+  # between local and remote mid-session doesn't lose history either way —
+  # only the local turn's outgoing request is trimmed down; storage always
+  # keeps up to the (larger) remote budget.
+  history:
+    local:
+      turns: 4                              # Kept small: local is a weak fallback model
+      max_chars: 4000                       # ~1000 tokens
+    remote:
+      turns: 40                             # Remote context is comparatively unlimited
+      max_chars: 60000                      # ~15000 tokens; still bounded so a session can't grow forever
   session_ttl: 24h                          # In-memory session expiration
   max_sessions: 100                         # Evict the oldest session above this limit
 

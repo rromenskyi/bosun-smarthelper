@@ -27,10 +27,10 @@ accidentally reintroduce a model-confusing bloat regression.
    (bad key, quota, outage) — the router falls back to local mid-request, and
    that local call still carries the full 7-tool online contract. This is the
    worst case worth designing for.
-3. **Conversation history** — `web.history_turns` / `web.history_max_chars`
-   (`internal/config/config.go`, `internal/webui/server.go`). This budget is
-   shared by whichever provider serves the request, so it's sized for the
-   weakest one, not the remote one.
+3. **Conversation history** — `web.history.local` / `web.history.remote`
+   (`internal/config/config.go`, `internal/webui/server.go`). Two separate
+   budgets, selected per request from current connectivity, not one shared
+   number — see below.
 
 ## What ships today
 
@@ -43,11 +43,29 @@ accidentally reintroduce a model-confusing bloat regression.
   instead, e.g. `memo(action:write|read|list|archive|delete, key?:string): ...`.
   Measured saving: **~67–69%** smaller than the full JSON Schema form (online:
   ~750 → ~250 tokens; offline: ~380 → ~120 tokens).
-- **Conservative default history budget**: `history_turns: 4`,
-  `history_max_chars: 4000` (~1000 tokens), down from the initial 8/12000
-  (~3000 tokens) default, which alone could exceed a 2k-token context before
-  the tool contract or the user's question are even counted. Override via
-  config for a beefier local model or a remote-only deployment.
+- **Per-provider history budget, not one shared number.** A flat budget has
+  to be sized for the weakest case, which either wastes the remote model's
+  context or risks overflowing the local model's — there's no single number
+  that's right for both. Instead (`internal/config/config.go`,
+  `internal/webui/server.go`):
+  - `web.history.local` (default: 4 turns / 4000 chars, ~1000 tokens) is what
+    actually gets sent to the model on a request served while offline.
+  - `web.history.remote` (default: 40 turns / 60000 chars, ~15000 tokens) is
+    the storage cap — how much a session keeps in memory regardless of
+    provider — and what gets sent on a request served while online.
+  - `handleChat` in `internal/webui/server.go` decides which to *send* per
+    request from `Status.Online`; `saveTurn` always *persists* up to the
+    larger `Remote` budget. A turn served locally therefore only trims what
+    that one request sees — it never deletes history from the session, so
+    the very next turn, if served remotely, sees the full stored history
+    again. Nothing is lost by falling back to local; the small window is a
+    per-request view, not group amnesia. See
+    `TestServerChatHistoryLocalVsRemoteBudget` in
+    `internal/webui/server_test.go`.
+  - Same caveat as the tool contract above: this switches on raw
+    connectivity, not on which provider actually ends up answering, so the
+    "online but remote fails mid-call" case still sends the large Remote
+    slice to a local model that ends up serving it.
 - **Offline tool trimming** (`docs/offline-mode.md`) already drops
   network-dependent tools (`web_search`, `wikipedia`, `open_meteo` weather)
   from the contract when there's no connectivity — fewer tools is also fewer

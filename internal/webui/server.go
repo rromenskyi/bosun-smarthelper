@@ -76,12 +76,23 @@ type chatSession struct {
 	UpdatedAt time.Time
 }
 
-// SessionOptions bounds in-memory web conversation history.
+// HistoryBudget caps how much conversation history is kept for one provider.
+type HistoryBudget struct {
+	Turns    int
+	MaxChars int
+}
+
+// SessionOptions bounds in-memory web conversation history. Local and Remote
+// are separate budgets: a weak local fallback model needs a small window,
+// while a remote model's context is comparatively unlimited. Which one
+// trims a given request is decided at request time from current
+// connectivity (see handleChat) — Remote also acts as the storage cap, so
+// history isn't discarded before an online turn gets a chance to use it.
 type SessionOptions struct {
-	HistoryTurns    int
-	HistoryMaxChars int
-	TTL             time.Duration
-	MaxSessions     int
+	Local       HistoryBudget
+	Remote      HistoryBudget
+	TTL         time.Duration
+	MaxSessions int
 }
 
 // NewServer creates a single-user web server backed by the existing agent.
@@ -105,15 +116,32 @@ func NewServer(
 	if status == nil {
 		status = func() Status { return Status{Provider: "local"} }
 	}
-	options := SessionOptions{HistoryTurns: 4, HistoryMaxChars: 4000, TTL: 24 * time.Hour, MaxSessions: 100}
+	options := SessionOptions{
+		Local:       HistoryBudget{Turns: 4, MaxChars: 4000},
+		Remote:      HistoryBudget{Turns: 40, MaxChars: 60000},
+		TTL:         24 * time.Hour,
+		MaxSessions: 100,
+	}
 	if len(sessionOptions) > 0 {
 		options = sessionOptions[0]
 	}
-	if options.HistoryTurns <= 0 {
-		options.HistoryTurns = 8
+	if options.Local.Turns <= 0 {
+		options.Local.Turns = 4
 	}
-	if options.HistoryMaxChars <= 0 {
-		options.HistoryMaxChars = 12000
+	if options.Local.MaxChars <= 0 {
+		options.Local.MaxChars = 4000
+	}
+	if options.Remote.Turns <= 0 {
+		options.Remote.Turns = 40
+	}
+	if options.Remote.MaxChars <= 0 {
+		options.Remote.MaxChars = 60000
+	}
+	if options.Remote.Turns < options.Local.Turns {
+		options.Remote.Turns = options.Local.Turns
+	}
+	if options.Remote.MaxChars < options.Local.MaxChars {
+		options.Remote.MaxChars = options.Local.MaxChars
 	}
 	if options.TTL <= 0 {
 		options.TTL = 24 * time.Hour
@@ -266,6 +294,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	history := s.loadHistory(sessionID)
+	if !s.status().Online {
+		// The local model is about to serve this request: trim to its small
+		// budget for the outgoing call only. The full history stays in the
+		// session (bounded by the larger Remote budget in saveTurn) so a
+		// later online turn isn't missing context it never actually lost.
+		history = trimHistory(history, s.sessionOptions.Local.Turns, s.sessionOptions.Local.MaxChars)
+	}
 	var answer string
 	var err error
 	if conversational, ok := s.asker.(conversationAsker); ok {
@@ -351,7 +386,7 @@ func (s *Server) saveTurn(sessionID, userMessage, answer string) {
 		agent.HistoryMessage{Role: "user", Content: userMessage},
 		agent.HistoryMessage{Role: "assistant", Content: answer},
 	)
-	session.History = trimHistory(session.History, s.sessionOptions.HistoryTurns, s.sessionOptions.HistoryMaxChars)
+	session.History = trimHistory(session.History, s.sessionOptions.Remote.Turns, s.sessionOptions.Remote.MaxChars)
 	session.UpdatedAt = now
 	s.sessions[sessionID] = session
 }

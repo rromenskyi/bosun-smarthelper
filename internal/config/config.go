@@ -84,13 +84,26 @@ type MCPConfig struct {
 
 // WebConfig holds settings for the LAN-only web interface.
 type WebConfig struct {
-	Bind            string `mapstructure:"bind"`
-	RequestTimeout  string `mapstructure:"request_timeout"`
-	DefaultLanguage string `mapstructure:"default_language"`
-	HistoryTurns    int    `mapstructure:"history_turns"`
-	HistoryMaxChars int    `mapstructure:"history_max_chars"`
-	SessionTTL      string `mapstructure:"session_ttl"`
-	MaxSessions     int    `mapstructure:"max_sessions"`
+	Bind            string        `mapstructure:"bind"`
+	RequestTimeout  string        `mapstructure:"request_timeout"`
+	DefaultLanguage string        `mapstructure:"default_language"`
+	History         HistoryConfig `mapstructure:"history"`
+	SessionTTL      string        `mapstructure:"session_ttl"`
+	MaxSessions     int           `mapstructure:"max_sessions"`
+}
+
+// HistoryConfig holds separate chat-history budgets per provider: a weak
+// local fallback model needs a small window, while a remote model's context
+// is effectively unlimited by comparison. See docs/token-budget.md.
+type HistoryConfig struct {
+	Local  HistoryLimits `mapstructure:"local"`
+	Remote HistoryLimits `mapstructure:"remote"`
+}
+
+// HistoryLimits bounds retained conversation turns for one provider.
+type HistoryLimits struct {
+	Turns    int `mapstructure:"turns"`
+	MaxChars int `mapstructure:"max_chars"`
 }
 
 // SensorsConfig holds all sensor configurations
@@ -218,11 +231,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("web.bind", "127.0.0.1:8080")
 	v.SetDefault("web.request_timeout", "180s")
 	v.SetDefault("web.default_language", "ru")
-	// Conservative by default: this budget is shared by whichever provider
-	// serves a request, including a small local fallback model with a tight
-	// context window. See docs/token-budget.md.
-	v.SetDefault("web.history_turns", 4)
-	v.SetDefault("web.history_max_chars", 4000)
+	// Two budgets: the local fallback model has a tight context window, the
+	// remote model's is effectively unlimited by comparison. Which one is
+	// used to trim a given request is decided at request time from current
+	// connectivity — see internal/webui/server.go. See docs/token-budget.md.
+	v.SetDefault("web.history.local.turns", 4)
+	v.SetDefault("web.history.local.max_chars", 4000)
+	v.SetDefault("web.history.remote.turns", 40)
+	v.SetDefault("web.history.remote.max_chars", 60000)
 	v.SetDefault("web.session_ttl", "24h")
 	v.SetDefault("web.max_sessions", 100)
 

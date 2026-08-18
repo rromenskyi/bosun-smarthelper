@@ -111,10 +111,10 @@ func serveCmd() *cobra.Command {
 					AvailableTools: registry.AvailableList(online),
 				}
 			}, requestTimeout, cfg.Web.DefaultLanguage, logger, webui.SessionOptions{
-				HistoryTurns:    cfg.Web.HistoryTurns,
-				HistoryMaxChars: cfg.Web.HistoryMaxChars,
-				TTL:             sessionTTL,
-				MaxSessions:     cfg.Web.MaxSessions,
+				Local:       webui.HistoryBudget{Turns: cfg.Web.History.Local.Turns, MaxChars: cfg.Web.History.Local.MaxChars},
+				Remote:      webui.HistoryBudget{Turns: cfg.Web.History.Remote.Turns, MaxChars: cfg.Web.History.Remote.MaxChars},
+				TTL:         sessionTTL,
+				MaxSessions: cfg.Web.MaxSessions,
 			})
 
 			logger.Info("starting web interface", "address", cfg.Web.Bind)

@@ -26,6 +26,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Web.DefaultLanguage != "ru" {
 		t.Errorf("web default_language = %q, want ru", cfg.Web.DefaultLanguage)
 	}
+	if cfg.Web.History.Local.Turns != 4 || cfg.Web.History.Local.MaxChars != 4000 {
+		t.Errorf("web.history.local = %+v, want small budget for the weak local model", cfg.Web.History.Local)
+	}
+	if cfg.Web.History.Remote.Turns != 40 || cfg.Web.History.Remote.MaxChars != 60000 {
+		t.Errorf("web.history.remote = %+v, want generous budget for the remote model", cfg.Web.History.Remote)
+	}
 	if cfg.LLM.Remote.MaxRetries != 5 {
 		t.Errorf("remote max_retries = %d, want 5", cfg.LLM.Remote.MaxRetries)
 	}

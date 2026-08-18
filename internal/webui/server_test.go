@@ -92,6 +92,54 @@ func TestServerChatSessionHistoryAndClear(t *testing.T) {
 	}
 }
 
+func TestServerChatHistoryLocalVsRemoteBudget(t *testing.T) {
+	online := false
+	asker := &conversationFakeAsker{answers: []string{"a1", "a2", "a3", "a4"}}
+	status := func() Status { return Status{Online: online, Provider: "local"} }
+	server := NewServer(asker, status, time.Second, "ru", nil, SessionOptions{
+		Local:       HistoryBudget{Turns: 1, MaxChars: 4000},
+		Remote:      HistoryBudget{Turns: 10, MaxChars: 40000},
+		TTL:         time.Hour,
+		MaxSessions: 10,
+	})
+	handler := server.Handler()
+	sessionID := "history-budget-test"
+
+	postChat := func(message string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"message":%q,"session_id":%q}`, message, sessionID)
+		request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	// Three turns while offline (local model serving): the outgoing request
+	// is trimmed to the small Local budget (1 turn = 2 messages) even once
+	// more than that is actually stored.
+	for i, msg := range []string{"turn one", "turn two", "turn three"} {
+		if response := postChat(msg); response.Code != http.StatusOK {
+			t.Fatalf("offline turn %d status = %d: %s", i, response.Code, response.Body.String())
+		}
+	}
+	if got := len(asker.histories[0]); got != 0 {
+		t.Errorf("first turn history len = %d, want 0 (nothing stored yet)", got)
+	}
+	if got := len(asker.histories[2]); got != 2 {
+		t.Errorf("third turn (offline) history len = %d, want 2 (trimmed to Local budget, not the 4 actually stored)", got)
+	}
+
+	// Flip online: the next turn must see the FULL stored history (bounded
+	// by the larger Remote budget), proving the earlier local-only trims
+	// never discarded anything from storage.
+	online = true
+	if response := postChat("turn four"); response.Code != http.StatusOK {
+		t.Fatalf("online turn status = %d: %s", response.Code, response.Body.String())
+	}
+	if got := len(asker.histories[3]); got != 6 {
+		t.Errorf("online turn history len = %d, want 6 (all 3 prior turns preserved)", got)
+	}
+}
+
 func TestServerChat(t *testing.T) {
 	asker := &fakeAsker{answer: "Сейчас 22,5°C."}
 	server := NewServer(asker, nil, time.Second, "ru", nil)
