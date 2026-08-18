@@ -65,7 +65,7 @@ func (t *MemoTool) Name() string {
 }
 
 func (t *MemoTool) Description() string {
-	return "Write, read, list, search, archive, or delete persistent local memos. Listing exposes timestamps, status, and age_days so old notes can be reviewed. Search finds memos and uploaded reference documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question that a stored document (e.g. a manual) might answer."
+	return "Write, read, list, search, archive, or delete persistent local memos. Listing exposes timestamps, status, and age_days so old notes can be reviewed. Search finds memos and uploaded reference documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question that a stored document (e.g. a manual) might answer. A search result may include image_url when the source is a diagram rather than text (e.g. a fuse panel chart) — include it in your answer as a markdown image: ![description](image_url)."
 }
 
 func (t *MemoTool) InputSchema() map[string]any {
@@ -264,13 +264,20 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 	if t.docs != nil {
 		if chunks, err := t.docs.Search(ctx, query, limit); err == nil {
 			for _, chunk := range chunks {
-				results = append(results, map[string]any{
+				result := map[string]any{
 					"source":         "document",
 					"document_id":    chunk.DocumentID,
 					"document_title": chunk.DocumentTitle,
 					"text":           chunk.Text,
 					"relevance":      chunk.Score,
-				})
+				}
+				if chunk.ImageURL != "" {
+					// Present as a normal URL the model can drop into a
+					// markdown image, same as get_directions' map links —
+					// no vision model or OCR needed for the human to see it.
+					result["image_url"] = chunk.ImageURL
+				}
+				results = append(results, result)
 			}
 		}
 	}

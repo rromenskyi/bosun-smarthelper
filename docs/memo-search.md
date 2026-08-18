@@ -15,14 +15,54 @@ faulty compressor even if it never uses the word "fridge."
   paragraph/sentence-bounded chunks (`chunkText` in
   `internal/documents/chunker.go`) and each chunk gets its own embedding.
   Uploaded **only through the web UI** (`POST /api/documents`, plain-text
-  files — convert a PDF to text first) — deliberately **not** an
-  LLM-callable tool action. A weak local model already struggles with a
-  handful of tool definitions (see `docs/token-budget.md`); adding
-  upload/list/delete as tool actions would grow the contract for a
-  capability only a human ever needs (nobody asks the assistant out loud to
-  ingest a file). Search is the only document capability exposed to the
-  model, and it reuses the existing `memo` tool's `search` action rather
-  than registering a second tool — so the contract doesn't grow at all.
+  or PDF) — deliberately **not** an LLM-callable tool action. A weak local
+  model already struggles with a handful of tool definitions (see
+  `docs/token-budget.md`); adding upload/list/delete as tool actions would
+  grow the contract for a capability only a human ever needs (nobody asks
+  the assistant out loud to ingest a file). Search is the only document
+  capability exposed to the model, and it reuses the existing `memo` tool's
+  `search` action rather than registering a second tool — so the contract
+  doesn't grow at all.
+
+## Images: diagrams without OCR
+
+Some reference material — a fuse panel chart, a wiring diagram — is a
+picture, not text. There's no vision model or OCR in this pipeline (see
+"PDF ingestion" below for what that does and doesn't cover), so a
+`Chunk` can instead carry an `ImageURL` alongside little or no text: the
+page's title/caption becomes the (short, low-precision) embeddable text,
+and the image itself is surfaced directly to the human. A `search` result
+with an image includes `image_url`; the memo tool's description tells the
+model to drop it into its answer as a normal markdown image
+(`![description](image_url)`), and the web UI already renders that inline
+— see `renderMessageHTML` in `index.html`. Images are served from
+`internal/documents.Store.ImagesDir()` (a sibling directory to
+`documents.json`) via `GET /document-images/...` in `server.go`.
+
+## PDF ingestion
+
+`POST /api/documents` also accepts a PDF (detected by its `%PDF-` magic
+bytes). `internal/webui/pdf.go` shells out to poppler-utils
+(`pdfinfo`/`pdftotext`/`pdftoppm` — installed in the Docker image, see the
+Dockerfile) page by page: a page with a real text layer becomes a text
+`PageInput`; a page below `minPDFPageTextChars` (a scanned page, or one
+that's mostly a diagram) is instead rendered to a PNG and becomes an
+image-only `PageInput`, same as the manually-curated diagrams above.
+**There is no OCR** — a scanned page's rendered image has no extracted
+text next to it, so it's only findable by its generic "Page N" label, not
+by its actual content. Adding an OCR engine (e.g. `tesseract-ocr`) would
+close that gap for scanned manuals; it isn't installed yet.
+
+`POST /api/documents/pages` is a separate, script-only ingestion path
+(JSON body: `{"title", "pages": [{"text", "image_url"}]}`, no UI button)
+for a bulk import that already has its own pre-segmented pages and image
+files — e.g. an HTML-based manual site's pages, where the importer script
+copies image files directly into `ImagesDir()` and references them by the
+resulting `/document-images/...` path. This is how the CHARM Ford E-350
+service manual (see chat history around 2026-08-18) was loaded: 22
+documents (one per manual chapter), text pages chunked normally, diagram
+pages (e.g. the fuse panel charts under Power and Ground Distribution)
+added with their original image and a short caption as text.
 
 ## Chunking
 

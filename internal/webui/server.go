@@ -2,6 +2,7 @@
 package webui
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	_ "embed"
@@ -94,16 +95,17 @@ type Status struct {
 
 // Server serves the embedded UI and chat API.
 type Server struct {
-	asker           Asker
-	status          func() Status
-	logger          *slog.Logger
-	requestTimeout  time.Duration
-	defaultLanguage string
-	chatSlot        chan struct{}
-	sessionsMu      sync.Mutex
-	sessions        map[string]chatSession
-	sessionOptions  SessionOptions
-	documents       *documents.Store
+	asker             Asker
+	status            func() Status
+	logger            *slog.Logger
+	requestTimeout    time.Duration
+	defaultLanguage   string
+	chatSlot          chan struct{}
+	sessionsMu        sync.Mutex
+	sessions          map[string]chatSession
+	sessionOptions    SessionOptions
+	documents         *documents.Store
+	documentImagesDir string
 }
 
 // SetDocumentStore wires in reference-document upload/search — see
@@ -112,6 +114,9 @@ type Server struct {
 // erroring, and the memo tool's "search" only ever considers memos.
 func (s *Server) SetDocumentStore(store *documents.Store) {
 	s.documents = store
+	if store != nil {
+		s.documentImagesDir = store.ImagesDir()
+	}
 }
 
 type chatSession struct {
@@ -229,7 +234,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/session/clear", s.handleSessionClear)
 	mux.HandleFunc("GET /api/documents", s.handleDocumentsList)
 	mux.HandleFunc("POST /api/documents", s.handleDocumentUpload)
+	mux.HandleFunc("POST /api/documents/pages", s.handleDocumentAddPages)
 	mux.HandleFunc("DELETE /api/documents/{id}", s.handleDocumentDelete)
+	if s.documentImagesDir != "" {
+		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
+	}
 	return securityHeaders(mux)
 }
 
@@ -492,11 +501,17 @@ func (s *Server) handleDocumentsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "documents": list})
 }
 
-// handleDocumentUpload accepts a plain-text file (PDFs must be converted to
-// text first — see docs/memo-search.md) via a multipart form with "title"
-// and "file" fields. This is a human-only path: the agent's tool contract
-// never exposes document ingestion, only search, to keep the tool schema
-// small for weak local models.
+// pdfMagic is the standard PDF file signature.
+var pdfMagic = []byte("%PDF-")
+
+// handleDocumentUpload accepts a plain-text or PDF file via a multipart
+// form with "title" and "file" fields. A PDF is split page by page
+// (poppler-utils): pages with an extractable text layer become text
+// chunks, pages without one (diagrams, scans) become a rendered image —
+// see pdf.go and docs/memo-search.md for what that does and doesn't cover
+// (no OCR). This is a human-only path: the agent's tool contract never
+// exposes document ingestion, only search, to keep the tool schema small
+// for weak local models.
 func (s *Server) handleDocumentUpload(w http.ResponseWriter, r *http.Request) {
 	if s.documents == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "document search is not configured"})
@@ -522,17 +537,79 @@ func (s *Server) handleDocumentUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read file"})
 		return
 	}
-	// Only plain text is supported (see docs/memo-search.md) — a PDF or
-	// other binary file silently "uploads" as garbage otherwise, since
-	// there's no format-specific parsing here at all.
-	if !utf8.Valid(content) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file must be plain UTF-8 text — convert a PDF to text first"})
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+	defer cancel()
+
+	if bytes.HasPrefix(content, pdfMagic) {
+		pages, err := extractPDFPages(ctx, content, s.documentImagesDir, "/document-images/")
+		if err != nil {
+			s.logger.Error("extract pdf", "error", err)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not process PDF"})
+			return
+		}
+		summary, err := s.documents.AddPages(ctx, title, pages)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, summary)
 		return
+	}
+	// Only plain text and PDF are supported — any other binary file would
+	// otherwise silently "upload" as garbage, since there's no
+	// format-specific parsing for it.
+	if !utf8.Valid(content) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file must be plain UTF-8 text or a PDF"})
+		return
+	}
+
+	summary, err := s.documents.Add(ctx, title, string(content))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+type addPagesRequest struct {
+	Title string `json:"title"`
+	Pages []struct {
+		Text     string `json:"text"`
+		ImageURL string `json:"image_url"`
+	} `json:"pages"`
+}
+
+// handleDocumentAddPages is a scripted/advanced ingestion path (no UI
+// button) for callers that already have pre-segmented pages with their own
+// image references — e.g. a bulk import script that extracted a source
+// site's HTML pages and copied its diagram images into documentImagesDir
+// itself. Ordinary uploads go through handleDocumentUpload instead.
+func (s *Server) handleDocumentAddPages(w http.ResponseWriter, r *http.Request) {
+	if s.documents == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "document search is not configured"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxDocumentUploadBytes)
+	var request addPagesRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if len(request.Pages) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "pages is required"})
+		return
+	}
+	pages := make([]documents.PageInput, len(request.Pages))
+	for i, p := range request.Pages {
+		pages[i] = documents.PageInput{Text: p.Text, ImageURL: p.ImageURL}
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
 	defer cancel()
-	summary, err := s.documents.Add(ctx, title, string(content))
+	summary, err := s.documents.AddPages(ctx, request.Title, pages)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

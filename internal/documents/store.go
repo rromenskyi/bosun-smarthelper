@@ -20,10 +20,22 @@ import (
 	"github.com/roman220/ai-local-smarthelper/internal/embeddings"
 )
 
-// Chunk is one embedded piece of a document.
+// Chunk is one embedded piece of a document. ImageURL is optional — set
+// when the source page's real content is a diagram/photo rather than text
+// (e.g. a fuse panel chart), so search can still surface it via its title
+// text even though there's little to embed.
 type Chunk struct {
 	Text      string    `json:"text"`
+	ImageURL  string    `json:"image_url,omitempty"`
 	Embedding []float32 `json:"embedding,omitempty"`
+}
+
+// PageInput is one pre-segmented page for AddPages — unlike Add, the
+// caller controls chunk boundaries directly (one Chunk per PageInput)
+// instead of relying on chunkText's paragraph/sentence splitting.
+type PageInput struct {
+	Text     string
+	ImageURL string
 }
 
 // Record is one uploaded document.
@@ -47,6 +59,7 @@ type ScoredChunk struct {
 	DocumentID    string  `json:"document_id"`
 	DocumentTitle string  `json:"document_title"`
 	Text          string  `json:"text"`
+	ImageURL      string  `json:"image_url,omitempty"`
 	Score         float64 `json:"relevance"`
 }
 
@@ -60,6 +73,14 @@ type Store struct {
 	path  string
 	embed *embeddings.Client
 	mu    sync.Mutex
+}
+
+// ImagesDir is where diagram/photo files referenced by a Chunk's ImageURL
+// live on disk — a sibling directory to the JSON store file. Callers that
+// place image files there (see AddPages) are expected to construct
+// ImageURL values the web server can actually serve from this directory.
+func (s *Store) ImagesDir() string {
+	return filepath.Join(filepath.Dir(s.path), "document-images")
 }
 
 // NewStore creates a document store. embed may be nil — see
@@ -78,13 +99,28 @@ func NewStore(path string, embed *embeddings.Client) *Store {
 
 // Add chunks and embeds text, then stores it under title.
 func (s *Store) Add(ctx context.Context, title, text string) (Summary, error) {
+	pieces := chunkText(text)
+	if len(pieces) == 0 {
+		return Summary{}, fmt.Errorf("document text is empty")
+	}
+	pages := make([]PageInput, len(pieces))
+	for i, piece := range pieces {
+		pages[i] = PageInput{Text: piece}
+	}
+	return s.AddPages(ctx, title, pages)
+}
+
+// AddPages stores one Chunk per PageInput, each embedded independently —
+// unlike Add, chunk boundaries are the caller's, not chunkText's. Used for
+// ingesting pre-segmented sources (e.g. one manual page per PageInput) that
+// may carry an image with little or no text of their own.
+func (s *Store) AddPages(ctx context.Context, title string, pages []PageInput) (Summary, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return Summary{}, fmt.Errorf("document title is required")
 	}
-	pieces := chunkText(text)
-	if len(pieces) == 0 {
-		return Summary{}, fmt.Errorf("document text is empty")
+	if len(pages) == 0 {
+		return Summary{}, fmt.Errorf("document has no pages")
 	}
 
 	id, err := newID()
@@ -92,10 +128,10 @@ func (s *Store) Add(ctx context.Context, title, text string) (Summary, error) {
 		return Summary{}, fmt.Errorf("generate document id: %w", err)
 	}
 	record := Record{ID: id, Title: title, CreatedAt: time.Now().Format(time.RFC3339)}
-	for _, piece := range pieces {
-		chunk := Chunk{Text: piece}
-		if s.embed != nil {
-			if vector, err := s.embed.Embed(ctx, piece); err == nil {
+	for _, page := range pages {
+		chunk := Chunk{Text: page.Text, ImageURL: page.ImageURL}
+		if s.embed != nil && strings.TrimSpace(page.Text) != "" {
+			if vector, err := s.embed.Embed(ctx, page.Text); err == nil {
 				chunk.Embedding = vector
 			}
 		}
@@ -170,7 +206,7 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]ScoredCh
 						continue
 					}
 					score := embeddings.CosineSimilarity(queryVector, chunk.Embedding)
-					results = append(results, ScoredChunk{record.ID, record.Title, chunk.Text, score})
+					results = append(results, ScoredChunk{record.ID, record.Title, chunk.Text, chunk.ImageURL, score})
 				}
 			}
 		}
@@ -180,7 +216,7 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]ScoredCh
 		for _, record := range data.Documents {
 			for _, chunk := range record.Chunks {
 				if strings.Contains(strings.ToLower(chunk.Text), lowerQuery) {
-					results = append(results, ScoredChunk{record.ID, record.Title, chunk.Text, 1})
+					results = append(results, ScoredChunk{record.ID, record.Title, chunk.Text, chunk.ImageURL, 1})
 				}
 			}
 		}

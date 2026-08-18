@@ -6,7 +6,9 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,5 +156,75 @@ func TestServerDocumentUploadRejectsBinaryContent(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Errorf("documents = %#v, want none stored after a rejected upload", list)
+	}
+}
+
+func TestServerDocumentUploadAcceptsPDF(t *testing.T) {
+	requirePoppler(t)
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("title", "Test manual"); err != nil {
+		t.Fatalf("write title field: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "manual.pdf")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte(onePageTextPDF)); err != nil {
+		t.Fatalf("write file content: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/documents", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var summary documents.Summary
+	if err := json.NewDecoder(response.Body).Decode(&summary); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if summary.Title != "Test manual" || summary.ChunkCount != 1 {
+		t.Errorf("summary = %#v", summary)
+	}
+}
+
+func TestServerDocumentAddPagesAndServeImage(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	dataDir := t.TempDir()
+	server.SetDocumentStore(documents.NewStore(filepath.Join(dataDir, "documents.json"), nil))
+
+	imagesDir := server.documents.ImagesDir()
+	if err := os.MkdirAll(imagesDir, 0o755); err != nil {
+		t.Fatalf("create images dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(imagesDir, "fuse-panel.png"), []byte("fake-png-bytes"), 0o644); err != nil {
+		t.Fatalf("write fake image: %v", err)
+	}
+
+	payload := `{"title":"Fuse diagrams","pages":[{"text":"Fuse panel diagram","image_url":"/document-images/fuse-panel.png"}]}`
+	request := httptest.NewRequest(http.MethodPost, "/api/documents/pages", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("add pages status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	imageRequest := httptest.NewRequest(http.MethodGet, "/document-images/fuse-panel.png", nil)
+	imageResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(imageResponse, imageRequest)
+	if imageResponse.Code != http.StatusOK {
+		t.Fatalf("image status = %d", imageResponse.Code)
+	}
+	if imageResponse.Body.String() != "fake-png-bytes" {
+		t.Errorf("image body = %q", imageResponse.Body.String())
 	}
 }

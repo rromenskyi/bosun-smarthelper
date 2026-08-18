@@ -33,9 +33,13 @@ Early foundation. Working today:
   archived, and deleted through the `memo` tool.
 - **Semantic memo/document search** — `memo`'s `search` action finds memos
   and uploaded reference documents (manuals, how-tos) by meaning, not just
-  exact words. Documents are uploaded through the web UI only, never an
-  LLM-callable action, to keep the tool contract small — see
-  `docs/memo-search.md`.
+  exact words. Documents (plain text or PDF) are uploaded through the web
+  UI only, never an LLM-callable action, to keep the tool contract small.
+  A diagram-only page (e.g. a fuse panel chart) can carry an image instead
+  of text; search surfaces it and the model drops it straight into its
+  answer as a markdown image. PDF pages are split with poppler-utils —
+  there's no OCR, so a scanned page's image has no extracted text next to
+  it — see `docs/memo-search.md`.
 - **Online knowledge tools** — DuckDuckGo web search and Wikipedia summaries,
   automatically hidden while offline.
 - **Failure log** — tool and LLM-call errors are recorded to one file

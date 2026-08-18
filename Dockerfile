@@ -11,7 +11,11 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/smarthelper ./cmd/smarthelper
 FROM alpine:3.20
 # ca-certificates: outbound HTTPS (remote LLM, weather/search/wikipedia/maps
 # geocoding all use it) needs a trust store even in a minimal image.
-RUN apk add --no-cache ca-certificates && \
+# poppler-utils: pdfinfo/pdftotext/pdftoppm — PDF document uploads are split
+# page by page and rendered to images for pages with no text layer (see
+# internal/webui/pdf.go, docs/memo-search.md). No OCR engine is installed,
+# so a scanned page's rendered image has no extracted text alongside it.
+RUN apk add --no-cache ca-certificates poppler-utils && \
     addgroup -S bosun && adduser -S -G bosun -h /home/bosun -s /sbin/nologin bosun && \
     mkdir -p /home/bosun/.local/share/bosun && \
     chown -R bosun:bosun /home/bosun

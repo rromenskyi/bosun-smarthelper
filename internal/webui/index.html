@@ -112,6 +112,7 @@
       border-radius: 10px; background: rgba(8, 18, 14, .4); font-size: 12px;
     }
     .bubble summary { cursor: pointer; color: var(--muted); }
+    .chat-image { display: block; max-width: 100%; margin-top: 8px; border-radius: 10px; border: 1px solid var(--line); }
     .bubble details pre {
       margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere;
       color: var(--muted); font-family: ui-monospace, monospace; font-size: 11px;
@@ -266,6 +267,10 @@
     // link can't break out of the href attribute.
     function renderMessageHTML(value) {
       let html = escapeHTML(value);
+      // Images first: a same-origin path (e.g. a document search result's
+      // /document-images/... diagram) or an absolute URL. Must run before
+      // the link regex below, since ![alt](url) also contains [alt](url).
+      html = html.replace(/!\[([^\]]*)\]\((\/[^\s")']+|https?:\/\/[^\s")']+)\)/g, '<img src="$2" alt="$1" class="chat-image" loading="lazy">');
       html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s")']+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
       html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
       return html;

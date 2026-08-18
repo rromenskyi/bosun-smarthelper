@@ -126,3 +126,42 @@ func TestStoreSearchRanksBySemanticSimilarity(t *testing.T) {
 		t.Fatalf("top result = %#v, want Car manual", results)
 	}
 }
+
+func TestStoreAddPagesWithImage(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	ctx := context.Background()
+
+	summary, err := store.AddPages(ctx, "Fuse diagrams", []PageInput{
+		{Text: "Fuse panel: Locations", ImageURL: "/document-images/fuse-panel.png"},
+		{Text: "Fuse panel: Application and ID"},
+	})
+	if err != nil {
+		t.Fatalf("add pages: %v", err)
+	}
+	if summary.ChunkCount != 2 {
+		t.Fatalf("chunk count = %d, want 2", summary.ChunkCount)
+	}
+
+	results, err := store.Search(ctx, "Locations", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	var found bool
+	for _, r := range results {
+		if r.ImageURL == "/document-images/fuse-panel.png" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("results = %#v, want one with the fuse panel image_url", results)
+	}
+}
+
+func TestStoreImagesDirIsSiblingOfStoreFile(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(filepath.Join(dir, "documents.json"), nil)
+	want := filepath.Join(dir, "document-images")
+	if got := store.ImagesDir(); got != want {
+		t.Errorf("ImagesDir() = %q, want %q", got, want)
+	}
+}
