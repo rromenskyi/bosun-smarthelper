@@ -37,8 +37,16 @@ func TestServerIndex(t *testing.T) {
 	if !strings.Contains(response.Body.String(), "Bosun") {
 		t.Error("embedded UI is missing its title")
 	}
-	if response.Header().Get("Content-Security-Policy") == "" {
+	csp := response.Header().Get("Content-Security-Policy")
+	if csp == "" {
 		t.Error("Content-Security-Policy header is missing")
+	}
+	// The bell chime is an embedded data: URI <audio> source. media-src falls
+	// back to default-src 'self' when unset, which blocks data: — silently,
+	// since playback errors are swallowed client-side. Regression test for
+	// that exact bug.
+	if !strings.Contains(csp, "media-src") || !strings.Contains(csp, "data:") {
+		t.Errorf("CSP = %q, want an explicit media-src allowing data: for the bell chime", csp)
 	}
 }
 
