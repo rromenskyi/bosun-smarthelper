@@ -1,0 +1,15 @@
+# Build artifacts
+/bin/
+/dist/
+
+# Local runtime config and secrets
+/config.yaml
+.env
+
+# Go
+*.test
+*.out
+
+# Editor / OS
+.DS_Store
+*.swp

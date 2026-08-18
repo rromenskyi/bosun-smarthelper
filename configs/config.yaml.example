@@ -1,0 +1,75 @@
+# ai-local-smarthelper configuration example
+# Copy to ~/.config/smarthelper/config.yaml or ./config.yaml
+
+# LLM Configuration
+llm:
+  # Remote LLM (OpenAI-compatible API)
+  remote:
+    base_url: "https://api.openai.com/v1"  # OpenAI or compatible proxy
+    model: "gpt-4o-mini"                    # Model name
+    api_key_env: "OPENAI_API_KEY"           # Env var name for API key
+    # organization: ""                      # Optional: OpenAI organization
+    # timeout: 30s                          # Request timeout
+
+  # Local LLM (Ollama)
+  local:
+    base_url: "http://localhost:11434"      # Ollama API endpoint
+    model: "llama3.1:8b"                    # Model name (must be pulled)
+    # timeout: 60s                          # Request timeout (local can be slower)
+
+  # Router settings
+  router:
+    check_interval: 30s                     # How often to check connectivity
+    check_timeout: 5s                       # Timeout for connectivity check
+    check_target: "https://api.openai.com"  # Target for online check
+    prefer_remote: true                     # Use remote when online
+
+# MCP Server Configuration
+mcp:
+  server_name: "smarthelper"                # Server identifier
+  transport: "stdio"                        # Transport: stdio (only supported)
+  # log_level: "info"                       # debug, info, warn, error
+
+# Sensor Configuration
+sensors:
+  # Outdoor weather sensor
+  weather:
+    type: "mock"                            # mock, mqtt, http, 1wire
+    # For mock type:
+    mock_temp_c: 22.5
+    mock_humidity: 60
+    # For mqtt type:
+    # mqtt_topic: "home/weather/outdoor"
+    # mqtt_broker: "tcp://localhost:1883"
+    # For http type:
+    # http_url: "http://weather-station.local/api"
+
+  # Refrigerator temperature
+  fridge:
+    type: "mock"
+    mock_fridge_c: 4.0
+    mock_freezer_c: -18.0
+    # mqtt_topic: "home/fridge/temp"
+
+  # GPS / Location
+  gps:
+    type: "mock"
+    mock_latitude: 55.7558
+    mock_longitude: 37.6173
+    mock_speed_kmh: 0
+    mock_altitude_m: 150
+    # For serial GPS (NMEA):
+    # serial_port: "/dev/ttyUSB0"
+    # baud_rate: 9600
+
+  # System metrics
+  system:
+    type: "native"                          # native (uses gopsutil)
+    # include: ["cpu", "memory", "disk", "network"]
+
+# Logging
+logging:
+  level: "info"                             # debug, info, warn, error
+  format: "text"                            # text, json
+  output: "stderr"                          # stderr, stdout, file
+  # file_path: "/var/log/smarthelper.log"
