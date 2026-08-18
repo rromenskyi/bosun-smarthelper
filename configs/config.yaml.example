@@ -30,6 +30,10 @@ llm:
     supports_tools: true                     # false enables prompt-based fallback
     temperature: 0.55                      # Lower than remote: a weak local model is already
                                             # shakier on tool-call format; less randomness helps
+    # stream: false                          # Default true. Some llama.cpp builds/models corrupt
+                                              # multi-byte UTF-8 (e.g. Cyrillic) specifically in
+                                              # streaming mode; set false as an escape hatch if a
+                                              # local server exhibits this. See docs/streaming.md.
     # timeout: 300s                         # Weak hardware may need several minutes; at ~6 tok/s
                                              # a single long tool-using answer can take that long
 

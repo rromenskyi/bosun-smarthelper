@@ -58,6 +58,36 @@ support at all) stays fully buffered — it needs the complete response to
 recognize its `{"tool": "..."}` JSON blob, and that's already the
 weakest-model-fallback-of-a-fallback path, not worth the added complexity.
 
+## Escape hatch: `llm.local.stream: false`
+
+Streaming is a byte-for-byte pass-through of whatever the model server
+sends per chunk. That's fine when the server buffers correctly, but at
+least one local setup on this host (`llama-server --skip-chat-parsing`
+serving `mradermacher/gemma-4-E2B-it-GGUF`) corrupts multi-byte UTF-8 —
+Cyrillic text arrives with literal `�` replacement characters —
+specifically in streaming mode. The identical prompt sent with
+`stream:false` to the same server produces correct output, so this is an
+upstream llama.cpp/tokenizer limitation for that model, not something a
+smarter client-side chunk boundary (`foldDetector`'s lookback window
+already handles markers split across well-formed UTF-8 chunks) can recover
+from — the bytes are already lossy by the time they reach the client.
+
+Setting `llm.local.stream: false` (default `true`) makes
+`LocalClient.ChatStream` skip SSE/NDJSON parsing entirely: it calls the
+existing buffered `Chat()` and emits the whole answer as one `prose`
+delta. This keeps the working per-token streaming code intact for
+`RemoteClient` and any local server that doesn't exhibit the bug — it's a
+per-deployment config toggle, not a codebase-wide behavior change.
+
+Separately, Gemma's raw tool-call template (`<|tool_call>call:name{...}`)
+doesn't match the Qwen-style `<tool_call><function=...>` XML this app's
+parser and `foldDetector` marker are built for, so native tool calls
+silently misfire. That's unrelated to streaming and is worked around with
+`llm.local.supports_tools: false`, which routes tool use through the
+model-agnostic prompted-JSON fallback (see the README's "Why the local
+llama.cpp setup uses XML tool calls" section) instead of relying on any
+specific chat-template syntax.
+
 ## Retry and fallback only apply pre-flight
 
 `Router.ChatStream` keeps the same retry-then-fallback-to-local behavior as

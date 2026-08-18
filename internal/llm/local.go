@@ -29,10 +29,11 @@ type LocalClient struct {
 	apiKey        string
 	temperature   float64
 	supportsTools bool
+	streamEnabled bool
 }
 
 // NewLocalClient creates a new Ollama client
-func NewLocalClient(baseURL, model string, temperature float64, timeout time.Duration) *LocalClient {
+func NewLocalClient(baseURL, model string, temperature float64, timeout time.Duration, streamEnabled bool) *LocalClient {
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
 	}
@@ -46,12 +47,13 @@ func NewLocalClient(baseURL, model string, temperature float64, timeout time.Dur
 		apiFormat:     APIFormatOllama,
 		temperature:   temperature,
 		supportsTools: true,
+		streamEnabled: streamEnabled,
 	}
 }
 
 // NewOpenAICompatibleLocalClient creates a local client for servers such as
 // LM Studio that expose an OpenAI-compatible chat completions endpoint.
-func NewOpenAICompatibleLocalClient(baseURL, model, apiKeyEnv string, temperature float64, timeout time.Duration) (*LocalClient, error) {
+func NewOpenAICompatibleLocalClient(baseURL, model, apiKeyEnv string, temperature float64, timeout time.Duration, streamEnabled bool) (*LocalClient, error) {
 	if baseURL == "" {
 		baseURL = "http://localhost:1234/v1"
 	}
@@ -75,6 +77,7 @@ func NewOpenAICompatibleLocalClient(baseURL, model, apiKeyEnv string, temperatur
 		apiKey:        apiKey,
 		temperature:   temperature,
 		supportsTools: true,
+		streamEnabled: streamEnabled,
 	}, nil
 }
 
@@ -223,6 +226,16 @@ func (c *LocalClient) Chat(ctx context.Context, messages []Message, tools []Tool
 // complete response to recognize its tool-call JSON blob, so it falls back
 // to the non-streaming path via chatWithPromptedTools.
 func (c *LocalClient) ChatStream(ctx context.Context, messages []Message, tools []ToolDefinition, onDelta func(StreamDelta)) (*Response, error) {
+	if !c.streamEnabled {
+		resp, err := c.Chat(ctx, messages, tools)
+		if err != nil {
+			return nil, err
+		}
+		if resp.Content != "" {
+			onDelta(StreamDelta{Kind: "prose", Text: resp.Content})
+		}
+		return resp, nil
+	}
 	if c.apiFormat == APIFormatOpenAI {
 		if !c.supportsTools && len(tools) > 0 {
 			client := &RemoteClient{

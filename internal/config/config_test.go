@@ -20,6 +20,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if !cfg.LLM.Local.SupportsTools {
 		t.Error("local supports_tools = false, want true")
 	}
+	if !cfg.LLM.Local.Stream {
+		t.Error("local stream = false, want true")
+	}
 	if cfg.Web.Bind != "127.0.0.1:8080" {
 		t.Errorf("web bind = %q, want loopback default", cfg.Web.Bind)
 	}

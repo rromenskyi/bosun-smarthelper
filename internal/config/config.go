@@ -83,6 +83,12 @@ type LocalLLMConfig struct {
 	SupportsTools bool    `mapstructure:"supports_tools"`
 	Temperature   float64 `mapstructure:"temperature"`
 	Timeout       string  `mapstructure:"timeout"`
+	// Stream defaults to true. Some llama.cpp builds/models corrupt
+	// multi-byte UTF-8 (e.g. Cyrillic) specifically in streaming mode —
+	// observed with Gemma + --skip-chat-parsing, confirmed absent in
+	// buffered (stream:false) mode against the same server. Set false as an
+	// escape hatch if a local server exhibits this; see docs/streaming.md.
+	Stream bool `mapstructure:"stream"`
 }
 
 // RouterConfig holds LLM router settings
@@ -242,6 +248,7 @@ func setDefaults(v *viper.Viper) {
 	// tool-call/format compliance (see stripLeakedReasoningMarker), so less
 	// randomness matters more here than response variety.
 	v.SetDefault("llm.local.temperature", 0.55)
+	v.SetDefault("llm.local.stream", true)
 	v.SetDefault("llm.local.timeout", "60s")
 	v.SetDefault("llm.router.check_interval", "30s")
 	v.SetDefault("llm.router.check_timeout", "5s")

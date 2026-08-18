@@ -13,7 +13,7 @@ import (
 
 func TestRouterLastProvider(t *testing.T) {
 	router := &Router{
-		localClient: NewLocalClient("", "", 0.5, time.Second),
+		localClient: NewLocalClient("", "", 0.5, time.Second, true),
 		config:      &config.LLMConfig{},
 	}
 	if got := router.LastProvider(); got != "local" {
@@ -147,7 +147,7 @@ func TestRouterChatStream_NoRetryOrFallbackAfterDeltaSent(t *testing.T) {
 			}, nil
 		})},
 	}
-	local := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second)
+	local := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second, true)
 	localCalled := false
 	local.client.Transport = roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		localCalled = true

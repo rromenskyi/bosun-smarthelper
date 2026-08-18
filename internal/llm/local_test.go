@@ -53,7 +53,7 @@ func TestLocalClientOllamaToolCallRoundTrip(t *testing.T) {
 		}`), nil
 	})
 
-	client := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second)
+	client := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second, true)
 	client.client.Transport = transport
 	first, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "weather?"}}, []ToolDefinition{{
 		Name:       "get_weather",
@@ -106,7 +106,7 @@ func TestOpenAICompatibleLocalClient(t *testing.T) {
 		}`), nil
 	})
 
-	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1/", "default", keyEnv, 0.5, time.Second)
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1/", "default", keyEnv, 0.5, time.Second, true)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestOpenAICompatibleLocalClientPromptedToolFallback(t *testing.T) {
 		}`), nil
 	})
 
-	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second)
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second, true)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestOpenAICompatibleLocalClientRecognizesToolMention(t *testing.T) {
 		}`), nil
 	})
 
-	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second)
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second, true)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestOpenAICompatibleLocalClientRecognizesToolMention(t *testing.T) {
 func TestOpenAICompatibleLocalClientRequiresConfiguredKey(t *testing.T) {
 	const keyEnv = "SMARTHELPER_TEST_MISSING_LOCAL_KEY"
 	t.Setenv(keyEnv, "")
-	if _, err := NewOpenAICompatibleLocalClient("", "", keyEnv, 0.5, time.Second); err == nil {
+	if _, err := NewOpenAICompatibleLocalClient("", "", keyEnv, 0.5, time.Second, true); err == nil {
 		t.Fatal("expected an error for a missing configured API key")
 	}
 }
@@ -330,7 +330,7 @@ func TestLocalClientChatStreamOllama(t *testing.T) {
 		}, nil
 	})
 
-	client := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second)
+	client := NewLocalClient("http://ollama.test/", "test-model", 0.5, time.Second, true)
 	client.client.Transport = transport
 
 	var deltas []StreamDelta
@@ -369,7 +369,7 @@ func TestLocalClientChatStreamOpenAI_FoldsToolCallXML(t *testing.T) {
 		}, nil
 	})
 
-	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second)
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second, true)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -401,5 +401,39 @@ func TestLocalClientChatStreamOpenAI_FoldsToolCallXML(t *testing.T) {
 	}
 	if response.Content != "I will check." {
 		t.Errorf("content = %q, want the tool-call XML stripped same as the non-streaming path", response.Content)
+	}
+}
+
+func TestLocalClientChatStreamDisabledFallsBackToBuffered(t *testing.T) {
+	// Some llama.cpp builds/models corrupt multi-byte UTF-8 in streaming
+	// mode; stream:false must route ChatStream through the buffered Chat
+	// path and still emit exactly one prose delta with the full answer.
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Query().Get("stream") == "true" {
+			t.Error("streaming request sent despite streamEnabled=false")
+		}
+		return jsonResponse(`{
+			"model":"default",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"Сейчас 22.5°C."},"finish_reason":"stop"}]
+		}`), nil
+	})
+
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second, false)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+
+	var deltas []StreamDelta
+	response, err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "weather?"}}, nil,
+		func(d StreamDelta) { deltas = append(deltas, d) })
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v", err)
+	}
+	if response.Content != "Сейчас 22.5°C." {
+		t.Errorf("content = %q", response.Content)
+	}
+	if len(deltas) != 1 || deltas[0].Kind != "prose" || deltas[0].Text != "Сейчас 22.5°C." {
+		t.Errorf("deltas = %+v, want exactly one prose delta with the full content", deltas)
 	}
 }
