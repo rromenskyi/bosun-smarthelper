@@ -17,14 +17,20 @@ FROM alpine:3.20
 # language data, matching this deployment's chat languages) then reads text
 # off that rendered image, so a scanned page is still searchable by its
 # actual content instead of just a generic page-number label.
+#
+# bosun is uid/gid 1000 specifically to match this host's own user
+# (roman220) — persistent data is bind-mounted from a plain host directory
+# (./data/bosun, see docker-compose.yml), not a Docker-managed named
+# volume, so the whole stack (and its data) survives `docker compose down
+# -v` or even removing Docker entirely. A host-owned uid/gid mismatch
+# would otherwise leave the container unable to write to that directory.
 RUN apk add --no-cache ca-certificates poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-rus && \
-    addgroup -S bosun && adduser -S -G bosun -h /home/bosun -s /sbin/nologin bosun && \
+    addgroup -g 1000 bosun && adduser -S -u 1000 -G bosun -h /home/bosun -s /sbin/nologin bosun && \
     mkdir -p /home/bosun/.local/share/bosun && \
     chown -R bosun:bosun /home/bosun
-# The directory above is created (and owned by bosun) before the volume
-# mount point exists, so a fresh named volume mounted there inherits that
-# ownership instead of defaulting to root — otherwise the non-root
-# container user can't write memos/sessions/error log into it.
+# The directory above is created (and owned by bosun) before the mount
+# point exists, so it's already correctly owned the first time something
+# gets bind-mounted or volume-mounted there.
 
 COPY --from=builder /out/smarthelper /usr/local/bin/smarthelper
 

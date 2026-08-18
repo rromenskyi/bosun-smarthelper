@@ -17,7 +17,11 @@ services:
       - .env
     volumes:
       - ./config.yaml:/etc/smarthelper/config.yaml:ro
-      - bosun-data:/home/bosun/.local/share/bosun
+      # A plain host directory, not a Docker-managed named volume — so
+      # memos/documents/sessions survive `docker compose down -v` or
+      # removing Docker entirely. Requires the container's bosun user to
+      # be uid/gid 1000 (this host's own user) — see Dockerfile.
+      - ./data/bosun:/home/bosun/.local/share/bosun
 
   # See deploy/llama/Dockerfile for why this is built from source (pinned
   # commit, matching this host's already-verified bare-metal CPU-backend
@@ -55,6 +59,3 @@ services:
       --alias embed --host 127.0.0.1 --port 1235
       --embeddings -c 512 -np 1 -t 2
       --sleep-idle-seconds 300
-
-volumes:
-  bosun-data:

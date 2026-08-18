@@ -6,6 +6,10 @@
 /config.yaml
 .env
 
+# Bosun's persistent runtime data (memos, documents, sessions, images) —
+# bind-mounted into the container, see docker-compose.yml
+/data/
+
 # Go
 *.test
 *.out

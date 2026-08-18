@@ -52,13 +52,17 @@ binary already checks) and the existing `.env` file (injected as real
 container environment variables via `env_file:`, not read as a dotenv file
 inside the container).
 
-Persistent data (memos, sessions, the error log) lives in the `bosun-data`
-named volume, mounted at `/home/bosun/.local/share/bosun` — the same default
-path the bare-metal binary uses, just inside the container. The image
-pre-creates and `chown`s that directory before declaring it a volume mount
-point specifically so a fresh named volume inherits the right ownership;
-without that, Docker initializes new volumes as root-owned and the
-non-root container user can't write to them.
+Persistent data (memos, documents, sessions, the error log) lives in
+`./data/bosun` on the host, bind-mounted at
+`/home/bosun/.local/share/bosun` — the same default path the bare-metal
+binary uses, just inside the container. This is a **plain host
+directory**, not a Docker-managed named volume: `docker compose down -v`,
+removing images, or uninstalling Docker entirely can't touch it. That
+only works because the container's `bosun` user is `uid`/`gid` 1000
+(matching this host's own user) — the image pre-creates and `chown`s the
+directory before declaring the mount point so it's correctly owned from
+the first container start, and a host-owned mismatch would otherwise
+leave the container unable to write to it.
 
 ## One-off commands
 
