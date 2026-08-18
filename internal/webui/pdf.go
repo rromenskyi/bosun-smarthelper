@@ -14,9 +14,11 @@ import (
 	"github.com/roman220/ai-local-smarthelper/internal/documents"
 )
 
-// minPDFPageTextChars below this, a page is treated as a diagram/scanned
-// image rather than text — there's no OCR here (see docs/memo-search.md),
-// so such a page is only searchable by its generic "page N" label.
+// minPDFPageTextChars below this, a page's real content is treated as a
+// diagram/scanned image rather than text — it's rendered to PNG and OCR'd
+// (see ocrImage) so it's still searchable by that recognized text, not
+// just a generic "page N" label. OCR quality varies a lot with scan
+// quality and isn't guaranteed to find anything.
 const minPDFPageTextChars = 40
 
 // extractPDFPages shells out to poppler-utils (pdfinfo, pdftotext,
@@ -53,14 +55,15 @@ func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPr
 			pages = append(pages, documents.PageInput{Text: fmt.Sprintf("Page %d\n\n%s", page, strings.TrimSpace(text))})
 			continue
 		}
-		imageURL, err := renderPDFPageImage(ctx, pdfPath, page, imagesDir, imageURLPrefix)
+		imagePath, imageURL, err := renderPDFPageImage(ctx, pdfPath, page, imagesDir, imageURLPrefix)
 		if err != nil {
 			return nil, err
 		}
-		pages = append(pages, documents.PageInput{
-			Text:     fmt.Sprintf("Page %d (diagram or scanned image, no extracted text)", page),
-			ImageURL: imageURL,
-		})
+		pageText := fmt.Sprintf("Page %d (diagram or scanned image, no text recognized)", page)
+		if ocrText, err := ocrImage(ctx, imagePath); err == nil && len(strings.TrimSpace(ocrText)) > 0 {
+			pageText = fmt.Sprintf("Page %d (OCR)\n\n%s", page, strings.TrimSpace(ocrText))
+		}
+		pages = append(pages, documents.PageInput{Text: pageText, ImageURL: imageURL})
 	}
 	return pages, nil
 }
@@ -91,26 +94,40 @@ func pdfPageText(ctx context.Context, pdfPath string, page int) (string, error) 
 	return string(out), nil
 }
 
-func renderPDFPageImage(ctx context.Context, pdfPath string, page int, imagesDir, urlPrefix string) (string, error) {
+// renderPDFPageImage returns both the on-disk path (for ocrImage) and the
+// URL a client should use to fetch it (served by the /document-images/
+// route in server.go).
+func renderPDFPageImage(ctx context.Context, pdfPath string, page int, imagesDir, urlPrefix string) (path string, url string, err error) {
 	if err := os.MkdirAll(imagesDir, 0o700); err != nil {
-		return "", fmt.Errorf("create images dir: %w", err)
+		return "", "", fmt.Errorf("create images dir: %w", err)
 	}
 	id, err := randomHex(8)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	outBase := filepath.Join(imagesDir, id)
 	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", "150",
 		"-f", strconv.Itoa(page), "-l", strconv.Itoa(page), pdfPath, outBase)
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("pdftoppm page %d: %w", page, err)
+		return "", "", fmt.Errorf("pdftoppm page %d: %w", page, err)
 	}
 	// pdftoppm appends a page-number suffix even for a single-page range.
 	matches, err := filepath.Glob(outBase + "*.png")
 	if err != nil || len(matches) == 0 {
-		return "", fmt.Errorf("rendered image for page %d not found", page)
+		return "", "", fmt.Errorf("rendered image for page %d not found", page)
 	}
-	return urlPrefix + filepath.Base(matches[0]), nil
+	return matches[0], urlPrefix + filepath.Base(matches[0]), nil
+}
+
+// ocrImage runs tesseract on an already-rendered image. English and
+// Russian only (this deployment's chat languages) — a manual in another
+// language would need its language data added alongside them.
+func ocrImage(ctx context.Context, imagePath string) (string, error) {
+	out, err := exec.CommandContext(ctx, "tesseract", imagePath, "-", "-l", "eng+rus").Output()
+	if err != nil {
+		return "", fmt.Errorf("tesseract: %w", err)
+	}
+	return string(out), nil
 }
 
 func randomHex(n int) (string, error) {

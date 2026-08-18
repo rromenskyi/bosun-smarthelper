@@ -21,6 +21,13 @@ func requirePoppler(t *testing.T) {
 	}
 }
 
+func requireTesseract(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("tesseract"); err != nil {
+		t.Skip("tesseract not installed; skipping OCR test")
+	}
+}
+
 // onePageTextPDF and onePageBlankPDF are minimal hand-written PDFs (no
 // proper xref table) — poppler recovers from that heuristically, which is
 // enough for these two well-known-content fixtures.
@@ -97,5 +104,28 @@ func TestExtractPDFPagesRejectsGarbage(t *testing.T) {
 	imagesDir := filepath.Join(t.TempDir(), "images")
 	if _, err := extractPDFPages(context.Background(), []byte("not a pdf at all"), imagesDir, "/document-images/"); err == nil {
 		t.Error("expected an error for content that isn't a valid PDF")
+	}
+}
+
+func TestOCRImageRecognizesText(t *testing.T) {
+	requirePoppler(t)
+	requireTesseract(t)
+
+	tempDir := t.TempDir()
+	pdfPath := filepath.Join(tempDir, "input.pdf")
+	if err := os.WriteFile(pdfPath, []byte(onePageTextPDF), 0o600); err != nil {
+		t.Fatalf("write temp pdf: %v", err)
+	}
+	imagePath, _, err := renderPDFPageImage(context.Background(), pdfPath, 1, filepath.Join(tempDir, "images"), "/document-images/")
+	if err != nil {
+		t.Fatalf("render page image: %v", err)
+	}
+
+	text, err := ocrImage(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("ocrImage: %v", err)
+	}
+	if !strings.Contains(text, "Hello World") {
+		t.Errorf("OCR text = %q, want it to contain Hello World", text)
 	}
 }
