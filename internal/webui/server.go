@@ -316,8 +316,10 @@ func (s *Server) Handler() http.Handler {
 	return securityHeaders(mux)
 }
 
-// Serve listens until ctx is cancelled.
-func (s *Server) Serve(ctx context.Context, address string) error {
+// Serve listens until ctx is cancelled. When both certFile and keyFile are
+// non-empty it serves HTTPS (e.g. certs from mkcert — see docs/tls.md);
+// otherwise plain HTTP, matching every deployment before TLS support existed.
+func (s *Server) Serve(ctx context.Context, address, certFile, keyFile string) error {
 	server := &http.Server{
 		Addr:              address,
 		Handler:           s.Handler(),
@@ -329,7 +331,11 @@ func (s *Server) Serve(ctx context.Context, address string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- server.ListenAndServe()
+		if certFile != "" && keyFile != "" {
+			errCh <- server.ListenAndServeTLS(certFile, keyFile)
+		} else {
+			errCh <- server.ListenAndServe()
+		}
 	}()
 
 	select {

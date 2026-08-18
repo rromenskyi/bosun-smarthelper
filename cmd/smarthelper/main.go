@@ -177,8 +177,12 @@ func serveCmd() *cobra.Command {
 				}
 			}
 
-			logger.Info("starting web interface", "address", cfg.Web.Bind)
-			return server.Serve(cmd.Context(), cfg.Web.Bind)
+			scheme := "http"
+			if cfg.Web.TLSCertFile != "" && cfg.Web.TLSKeyFile != "" {
+				scheme = "https"
+			}
+			logger.Info("starting web interface", "address", cfg.Web.Bind, "scheme", scheme)
+			return server.Serve(cmd.Context(), cfg.Web.Bind, cfg.Web.TLSCertFile, cfg.Web.TLSKeyFile)
 		},
 	}
 }

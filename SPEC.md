@@ -158,6 +158,7 @@ models without native tool calling, conservative default history limits).
 - [x] Docker + Compose deployment (`docs/docker.md`) — this host's live service runs from it, including two `llama-server` instances (chat + embeddings)
 - [x] Semantic memo/document search (`docs/memo-search.md`) — reuses the `memo` tool's `search` action, so the LLM tool contract doesn't grow; document upload (text or PDF, web-UI-only) can attach a diagram image to a search result when a page has little or no text
 - [x] Web UI settings page (`docs/settings.md`) — persona/prompt, default language, LLM temperatures, and memo canonical tags editable live from a JSON overlay store, no restart needed
+- [x] Optional HTTPS via mkcert (`docs/tls.md`) — trusted-with-no-warning TLS for a private LAN IP that has no public CA
 - [ ] OCR for scanned PDF pages (no engine installed yet — a scanned page's rendered image currently has no extracted text alongside it)
 - [x] `make check` (fmt + vet + test + build) passing
 - [ ] Real sensor backends (1-Wire temp probes, MQTT, serial GPS/OBD2)

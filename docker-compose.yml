@@ -22,6 +22,10 @@ services:
       # removing Docker entirely. Requires the container's bosun user to
       # be uid/gid 1000 (this host's own user) — see Dockerfile.
       - ./data/bosun:/home/bosun/.local/share/bosun
+      # mkcert-issued cert/key for HTTPS (see docs/tls.md) — regenerate with
+      # `mkcert -cert-file data/certs/cert.pem -key-file data/certs/key.pem
+      # <lan-ip> <hostname> localhost 127.0.0.1 ::1` if the LAN IP changes.
+      - ./data/certs:/home/bosun/certs:ro
 
   # See deploy/llama/Dockerfile for why this is built from source (pinned
   # commit, matching this host's already-verified bare-metal CPU-backend

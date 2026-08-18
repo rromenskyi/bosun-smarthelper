@@ -156,6 +156,12 @@ type WebConfig struct {
 	// source of truth for those fields — config.yaml's own values only
 	// seed it the first time.
 	SettingsStorePath string `mapstructure:"settings_store_path"`
+	// TLSCertFile and TLSKeyFile enable HTTPS when both are set (e.g.
+	// certs from mkcert — see docs/tls.md). Empty (the default) serves
+	// plain HTTP, matching every LAN-only deployment before this option
+	// existed.
+	TLSCertFile string `mapstructure:"tls_cert_file"`
+	TLSKeyFile  string `mapstructure:"tls_key_file"`
 }
 
 // HistoryConfig holds separate chat-history budgets per provider: a weak

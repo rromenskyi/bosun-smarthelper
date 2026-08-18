@@ -50,6 +50,10 @@ Early foundation. Working today:
   name/style prompt, default language, LLM temperatures, and the memo tag
   auto-normalization vocabulary live, no restart needed — see
   `docs/settings.md`.
+- **HTTPS via mkcert** — a LAN IP has no public CA to issue it a cert, so
+  the web UI can serve TLS using an mkcert-issued cert/key instead, trusted
+  with no browser warning once the CA is installed on a device — see
+  `docs/tls.md`.
 - **Failure log** — tool and LLM-call errors are recorded to one file
   (`internal/errlog`), reviewable with `smarthelper errors`, to drive an
   improvement loop instead of disappearing into stderr.
