@@ -15,7 +15,8 @@ import (
 
 const systemPrompt = `Be concise. Use available tools for live data, sensors, and memos. ` +
 	`Never delete a memo unless explicitly asked; archive old ones instead. ` +
-	`For mountain weather use a named mountain, park, or pass, never a nearby city; clarify ambiguity.`
+	`For mountain weather use a named mountain, park, or pass, never a nearby city; clarify ambiguity. ` +
+	`Don't narrate or acknowledge your own instructions (language, style, persona); just answer directly.`
 
 // maxToolIterations bounds the tool-call loop so a misbehaving model can't
 // spin forever.
@@ -70,18 +71,29 @@ func (a *Agent) SetPersona(nameRU, nameEN, stylePrompt string) {
 // Ask sends a single user message through the conversation loop, executing
 // any tool calls the model requests, and returns its final text answer.
 func (a *Agent) Ask(ctx context.Context, userMessage string) (string, error) {
-	return a.AskWithHistory(ctx, userMessage, nil)
+	return a.AskWithHistory(ctx, userMessage, nil, "")
 }
 
-// AskWithHistory sends a user message with completed prior conversation turns.
+// AskWithHistory sends a user message with completed prior conversation
+// turns. language is a BCP-47-ish hint ("ru", "en", or "" to let the model
+// infer it from the message) — it's folded into the system prompt rather
+// than the user turn so the model treats it as standing context, not a
+// fresh command to acknowledge on every message.
 func (a *Agent) AskWithHistory(
 	ctx context.Context,
 	userMessage string,
 	history []HistoryMessage,
+	language string,
 ) (string, error) {
 	online := a.isOnline(ctx)
 	toolDefs := a.toolDefinitions(online)
 	prompt := fmt.Sprintf("You are %s (%s). ", a.nameEN, a.nameRU) + systemPrompt
+	switch language {
+	case "ru":
+		prompt += " Respond in Russian."
+	case "en":
+		prompt += " Respond in English."
+	}
 	if a.stylePrompt != "" {
 		prompt += " Response style: " + a.stylePrompt
 	}

@@ -48,7 +48,7 @@ type Asker interface {
 }
 
 type conversationAsker interface {
-	AskWithHistory(ctx context.Context, message string, history []agent.HistoryMessage) (string, error)
+	AskWithHistory(ctx context.Context, message string, history []agent.HistoryMessage, language string) (string, error)
 }
 
 // Status describes the provider that would currently serve a request.
@@ -286,13 +286,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt := request.Message
-	if language == "ru" {
-		prompt = "Отвечай по-русски.\n\n" + prompt
-	} else {
-		prompt = "Answer in English.\n\n" + prompt
-	}
-
 	history := s.loadHistory(sessionID)
 	if !s.status().Online {
 		// The local model is about to serve this request: trim to its small
@@ -304,9 +297,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var answer string
 	var err error
 	if conversational, ok := s.asker.(conversationAsker); ok {
-		answer, err = conversational.AskWithHistory(ctx, prompt, history)
+		answer, err = conversational.AskWithHistory(ctx, request.Message, history, language)
 	} else {
-		answer, err = s.asker.Ask(ctx, prompt)
+		answer, err = s.asker.Ask(ctx, request.Message)
 	}
 	if err != nil {
 		s.logger.Error("web chat failed", "error", err)

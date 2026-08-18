@@ -45,14 +45,18 @@ func TestServerIndex(t *testing.T) {
 type conversationFakeAsker struct {
 	answers   []string
 	histories [][]agent.HistoryMessage
+	messages  []string
+	languages []string
 }
 
 func (f *conversationFakeAsker) Ask(_ context.Context, _ string) (string, error) {
 	return f.answers[0], nil
 }
 
-func (f *conversationFakeAsker) AskWithHistory(_ context.Context, _ string, history []agent.HistoryMessage) (string, error) {
+func (f *conversationFakeAsker) AskWithHistory(_ context.Context, message string, history []agent.HistoryMessage, language string) (string, error) {
 	f.histories = append(f.histories, append([]agent.HistoryMessage(nil), history...))
+	f.messages = append(f.messages, message)
+	f.languages = append(f.languages, language)
 	answer := f.answers[len(f.histories)-1]
 	return answer, nil
 }
@@ -140,6 +144,32 @@ func TestServerChatHistoryLocalVsRemoteBudget(t *testing.T) {
 	}
 }
 
+func TestServerChatLanguagePassedSeparatelyFromMessage(t *testing.T) {
+	asker := &conversationFakeAsker{answers: []string{"Сейчас 22,5°C.", "Now 72°F."}}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	handler := server.Handler()
+
+	post := func(message, language string) {
+		body := fmt.Sprintf(`{"message":%q,"language":%q}`, message, language)
+		request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+
+	post("Какая погода?", "ru")
+	post("What's the weather?", "en")
+
+	if asker.messages[0] != "Какая погода?" || asker.languages[0] != "ru" {
+		t.Errorf("call 0: message=%q language=%q, want unmodified message and language=ru", asker.messages[0], asker.languages[0])
+	}
+	if asker.messages[1] != "What's the weather?" || asker.languages[1] != "en" {
+		t.Errorf("call 1: message=%q language=%q, want unmodified message and language=en", asker.messages[1], asker.languages[1])
+	}
+}
+
 func TestServerChat(t *testing.T) {
 	asker := &fakeAsker{answer: "Сейчас 22,5°C."}
 	server := NewServer(asker, nil, time.Second, "ru", nil)
@@ -151,8 +181,8 @@ func TestServerChat(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if !strings.HasPrefix(asker.seen, "Отвечай по-русски.") {
-		t.Errorf("agent prompt = %q", asker.seen)
+	if asker.seen != "Какая погода?" {
+		t.Errorf("agent message = %q, want the raw user message with no injected language prefix", asker.seen)
 	}
 	var payload chatResponse
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {

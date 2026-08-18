@@ -74,12 +74,15 @@ func TestAgent_AskWithHistory(t *testing.T) {
 		{Role: "assistant", Content: "Nice to meet you."},
 		{Role: "tool", Content: "must be ignored"},
 	}
-	if _, err := ag.AskWithHistory(context.Background(), "What is my name?", history); err != nil {
+	if _, err := ag.AskWithHistory(context.Background(), "What is my name?", history, "ru"); err != nil {
 		t.Fatalf("AskWithHistory returned error: %v", err)
 	}
 	messages := client.seen[0]
 	if len(messages) != 4 {
 		t.Fatalf("message count = %d, want 4: %#v", len(messages), messages)
+	}
+	if !strings.Contains(messages[0].Content, "Respond in Russian.") {
+		t.Errorf("system prompt = %q, want the language directive folded in, not injected into the user turn", messages[0].Content)
 	}
 	if messages[1].Role != "user" || messages[1].Content != "My name is Roman." || messages[3].Content != "What is my name?" {
 		t.Errorf("unexpected history messages: %#v", messages)
