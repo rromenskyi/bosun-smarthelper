@@ -218,8 +218,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("web.bind", "127.0.0.1:8080")
 	v.SetDefault("web.request_timeout", "180s")
 	v.SetDefault("web.default_language", "ru")
-	v.SetDefault("web.history_turns", 8)
-	v.SetDefault("web.history_max_chars", 12000)
+	// Conservative by default: this budget is shared by whichever provider
+	// serves a request, including a small local fallback model with a tight
+	// context window. See docs/token-budget.md.
+	v.SetDefault("web.history_turns", 4)
+	v.SetDefault("web.history_max_chars", 4000)
 	v.SetDefault("web.session_ttl", "24h")
 	v.SetDefault("web.max_sessions", 100)
 

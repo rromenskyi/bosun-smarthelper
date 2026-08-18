@@ -130,6 +130,11 @@ backend implements `tools.NetworkDependentTool` and returns `true` is omitted
 while offline. The web UI applies the same available-tool list to its quick
 actions. See `docs/offline-mode.md`.
 
+The tool contract, system prompt, and chat history budget are all sized with
+the weak local fallback model in mind — see `docs/token-budget.md` for
+measured costs and the mitigations in place (compact tool rendering for
+models without native tool calling, conservative default history limits).
+
 ### 7. MVP Scope (v0.1) — Status
 
 - [x] Language decided: Go

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -264,12 +265,12 @@ func chatWithPromptedTools(
 	messages []Message,
 	tools []ToolDefinition,
 ) (*Response, error) {
-	definitions, err := json.Marshal(tools)
-	if err != nil {
-		return nil, fmt.Errorf("marshal prompted tool definitions: %w", err)
-	}
-
-	systemContent := promptedToolsInstruction + "\nTool definitions: " + string(definitions)
+	// Models needing this fallback are the smallest/weakest ones, so the tool
+	// contract is rendered in a compact one-line-per-tool form instead of full
+	// JSON Schema — the schema boilerplate ("type":"object", "properties",
+	// "additionalProperties") costs tokens without adding information a tiny
+	// model uses. See docs/token-budget.md.
+	systemContent := promptedToolsInstruction + "\nTools: " + compactToolDefinitions(tools)
 	promptedMessages := make([]Message, 0, len(messages)+1)
 	hasToolResult := false
 	for _, message := range messages {
@@ -322,6 +323,58 @@ func chatWithPromptedTools(
 	}
 
 	return response, nil
+}
+
+// compactToolDefinitions renders tool definitions as one line per tool
+// instead of full JSON Schema, e.g.:
+//
+//	memo(action:write|read|list|archive|delete, key?:string, content?:string): Write, read, ...
+//
+// This drops the JSON Schema envelope (type/properties/additionalProperties)
+// that a tiny model doesn't need but still pays prompt-token cost for.
+func compactToolDefinitions(tools []ToolDefinition) string {
+	lines := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		lines = append(lines, fmt.Sprintf("%s(%s): %s", tool.Name, compactParameters(tool.Parameters), tool.Description))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func compactParameters(parameters any) string {
+	schema, ok := parameters.(map[string]any)
+	if !ok {
+		return ""
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	if len(properties) == 0 {
+		return ""
+	}
+	requiredNames, _ := schema["required"].([]string)
+	required := make(map[string]bool, len(requiredNames))
+	for _, name := range requiredNames {
+		required[name] = true
+	}
+
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		prop, _ := properties[name].(map[string]any)
+		label, _ := prop["type"].(string)
+		if enum, ok := prop["enum"].([]string); ok && len(enum) > 0 {
+			label = strings.Join(enum, "|")
+		}
+		suffix := "?"
+		if required[name] {
+			suffix = ""
+		}
+		parts = append(parts, fmt.Sprintf("%s%s:%s", name, suffix, label))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // toolMention is a compatibility fallback for very small models that correctly

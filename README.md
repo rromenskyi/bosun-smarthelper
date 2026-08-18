@@ -131,7 +131,9 @@ Open-Meteo. This backend is automatically hidden from the model while
 offline. The mock GPS defaults to Salt Lake City (`40.7608, -111.8910`).
 
 See [`docs/offline-mode.md`](docs/offline-mode.md) for connectivity behavior
-and the contract required by future online tools.
+and the contract required by future online tools, and
+[`docs/token-budget.md`](docs/token-budget.md) for how the tool contract,
+system prompt, and chat history are kept small enough for a weak local model.
 
 ## Chat sessions and memos
 

@@ -105,7 +105,7 @@ func NewServer(
 	if status == nil {
 		status = func() Status { return Status{Provider: "local"} }
 	}
-	options := SessionOptions{HistoryTurns: 8, HistoryMaxChars: 12000, TTL: 24 * time.Hour, MaxSessions: 100}
+	options := SessionOptions{HistoryTurns: 4, HistoryMaxChars: 4000, TTL: 24 * time.Hour, MaxSessions: 100}
 	if len(sessionOptions) > 0 {
 		options = sessionOptions[0]
 	}

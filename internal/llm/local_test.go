@@ -207,6 +207,57 @@ func TestOpenAICompatibleLocalClientRequiresConfiguredKey(t *testing.T) {
 	}
 }
 
+func TestCompactToolDefinitions(t *testing.T) {
+	tools := []ToolDefinition{
+		{
+			Name:        "memo",
+			Description: "Write, read, list, archive, or delete persistent local memos.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"action":  map[string]any{"type": "string", "enum": []string{"write", "read", "list"}},
+					"key":     map[string]any{"type": "string"},
+					"content": map[string]any{"type": "string"},
+				},
+				"required": []string{"action"},
+			},
+		},
+		{
+			Name:        "get_gps",
+			Description: "Get current GPS coordinates.",
+			Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+	}
+
+	rendered := compactToolDefinitions(tools)
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), rendered)
+	}
+
+	memoLine := lines[0]
+	if !strings.HasPrefix(memoLine, "memo(action:write|read|list, content?:string, key?:string): ") {
+		t.Errorf("memo line = %q", memoLine)
+	}
+	if !strings.Contains(memoLine, "Write, read, list, archive, or delete persistent local memos.") {
+		t.Errorf("memo line missing description: %q", memoLine)
+	}
+
+	gpsLine := lines[1]
+	if gpsLine != "get_gps(): Get current GPS coordinates." {
+		t.Errorf("gps line = %q", gpsLine)
+	}
+
+	// Full JSON Schema form should always cost more tokens than the compact one.
+	full, err := json.Marshal(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rendered) >= len(full) {
+		t.Errorf("compact form (%d bytes) is not smaller than full JSON Schema (%d bytes)", len(rendered), len(full))
+	}
+}
+
 func TestParseLlamaToolCalls(t *testing.T) {
 	response := &Response{Content: `I will check.
 <tool_call>

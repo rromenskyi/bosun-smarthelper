@@ -11,6 +11,11 @@ Instructions for any AI agent (or human) working in this repository.
 - **Local-first** — every user-facing feature must have a working offline path
   (local LLM + mock/local sensor backends). Remote/online is an enhancement,
   never a hard dependency.
+- **Mind the local model's token budget** — the local fallback targets weak
+  hardware (a 0.8B–2B model, small context window). New tools, prompt text,
+  or history defaults should account for that cost, not just the remote
+  model's effectively unlimited context. See `docs/token-budget.md` before
+  adding a verbose tool description or growing a shared config default.
 - **MCP-first** — new sensor/actuator capabilities are added as MCP tools
   (`internal/tools/`), not hardcoded into the LLM prompt or router logic.
 - **Config over code** — endpoints, model names, timeouts, sensor backends are
