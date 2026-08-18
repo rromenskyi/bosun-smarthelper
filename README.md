@@ -180,13 +180,13 @@ removes it.
 ## Docker
 
 ```bash
-docker compose build
-docker compose up -d
+make docker-up
 ```
 
-Runs just the Bosun app in a container (the local LLM server stays on the
-host — see `docs/docker.md` for why, plus networking, volumes, and one-off
-command usage).
+Runs the Bosun app plus two `llama-server` containers (`llama-chat` for the
+local model, `llama-embed` for memo semantic search) — see `docs/docker.md`
+for why they're built from source, plus networking, volumes, and one-off
+command usage.
 
 ## Development
 

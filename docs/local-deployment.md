@@ -1,40 +1,25 @@
-# Local deployment
+# Local deployment (historical — superseded by Docker)
 
-This machine runs the local Qwen model through a systemd-managed llama.cpp
-server.
+**Retired.** Both `llama-server.service` and `smarthelper-web.service` are
+now stopped and disabled; everything (`bosun`, `llama-chat`, `llama-embed`)
+runs via `docker compose` — see `docs/docker.md` for current operation. This
+page is kept for the still-relevant reasoning below (`--skip-chat-parsing`,
+CPU-backend tuning), which `deploy/llama/Dockerfile` now implements instead
+of `~/server-llm-2b.sh`.
 
-## Service
-
-- Unit: `llama-server.service`
-- Unit file: `/etc/systemd/system/llama-server.service`
-- Launch script: `/home/roman220/server-llm-2b.sh`
-- API: `http://localhost:1234/v1`
-- Model alias: `default`
-
-Common operations:
-
-```bash
-sudo systemctl status llama-server.service
-sudo systemctl restart llama-server.service
-sudo journalctl -u llama-server.service -f
-```
-
-The service is enabled at boot and uses `Restart=on-failure`. The launch
-script reads `LOCAL_LLM_API_KEY` from the repository's gitignored `.env` file;
-the key must never be written into the script, unit, or committed config.
-
-The server binds to `127.0.0.1`. The LAN web interface calls it through the
-Bosun backend; the raw LLM API is not exposed to the network.
-
-The current launch script uses one inference slot and an 8192-token context to
-keep memory use reasonable on this host. The Bosun local-client timeout
-is 120 seconds because the first uncached tool-enabled prompt can take roughly
-one minute on this CPU.
+The original bare-metal setup: `llama-server` on `http://localhost:1234/v1`,
+model alias `default`, one inference slot, 8192-token context to keep memory
+use reasonable on this host. The Bosun local-client timeout is 120 seconds
+because the first uncached tool-enabled prompt can take roughly one minute
+on this CPU (an old Mac Mini — see `deploy/llama/Dockerfile` for why its
+CPU-backend flags matter here specifically).
 
 ### Why `--skip-chat-parsing` is required
 
-The installed Qwen GGUF includes a chat template that emits tool calls in a
-template-specific XML form:
+Originally installed for a Qwen GGUF (since replaced by Gemma — see
+`docs/streaming.md` for what changed and why `llm.local.supports_tools:
+false` is now set instead of relying on this adapter). Qwen's chat template
+emitted tool calls in a template-specific XML form:
 
 ```xml
 <tool_call>
@@ -65,19 +50,8 @@ llama.cpp can reuse its prompt/KV cache and reducing latency on this CPU.
 
 ## Web interface
 
-- Unit: `smarthelper-web.service`
-- Unit file: `/etc/systemd/system/smarthelper-web.service`
-- Browser URL: `http://10.0.0.111:8080`
-- Configured bind: `10.0.0.111:8080`
-
-Common operations:
-
-```bash
-sudo systemctl status smarthelper-web.service
-sudo systemctl restart smarthelper-web.service
-sudo journalctl -u smarthelper-web.service -f
-```
-
-The web unit starts after `llama-server.service` and automatically restarts on
-failure. The UI has no authentication and must remain on the trusted private
-LAN. The bind validator rejects wildcard and public addresses.
+Browser URL: `http://10.0.0.111:8080` (unchanged from the bare-metal setup —
+`web.bind` in `config.yaml`). See `docs/docker.md` for the current
+`docker compose` operations. The UI has no authentication and must remain on
+the trusted private LAN; the bind validator rejects wildcard and public
+addresses.

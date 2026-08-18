@@ -6,15 +6,49 @@ services:
     restart: unless-stopped
     # Host networking: Bosun is a LAN-only, no-auth personal appliance that
     # binds to an explicit private IP (see docs/local-deployment.md) and
-    # needs to reach the existing bare-metal llama-server at localhost:1234.
-    # Bridge networking would need both a port-mapping and a host-gateway
-    # alias for zero benefit on a single-host LAN box like this one.
+    # needs to reach llama-chat/llama-embed at localhost:1234/1235. Bridge
+    # networking would need port-mapping plus a host-gateway alias for zero
+    # benefit on a single-host LAN box like this one.
     network_mode: host
+    depends_on:
+      - llama-chat
+      - llama-embed
     env_file:
       - .env
     volumes:
       - ./config.yaml:/etc/smarthelper/config.yaml:ro
       - bosun-data:/home/bosun/.local/share/bosun
+
+  # See deploy/llama/Dockerfile for why this is built from source (pinned
+  # commit, matching this host's already-verified bare-metal CPU-backend
+  # flags) instead of the official ghcr.io/ggml-org/llama.cpp image.
+  llama-chat:
+    build: ./deploy/llama
+    image: bosun-llama-cpp:local
+    container_name: llama-chat
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - LLAMA_API_KEY=${LOCAL_LLM_API_KEY}
+    volumes:
+      - ${LLAMA_HF_CACHE}:/home/ubuntu/.cache/huggingface
+    command: >-
+      -hf mradermacher/gemma-4-E2B-it-GGUF:Q4_K_M
+      --alias default --host 127.0.0.1 --port 1234
+      -c 8192 -np 1 -t 4 --jinja --skip-chat-parsing --reasoning off
+
+  llama-embed:
+    build: ./deploy/llama
+    image: bosun-llama-cpp:local
+    container_name: llama-embed
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ${LLAMA_HF_CACHE}:/home/ubuntu/.cache/huggingface
+    command: >-
+      -hf nomic-ai/nomic-embed-text-v2-moe-GGUF:Q8_0
+      --alias embed --host 127.0.0.1 --port 1235
+      --embeddings -c 512 -np 1 -t 2
 
 volumes:
   bosun-data:

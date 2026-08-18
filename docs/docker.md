@@ -5,13 +5,23 @@ An alternative to the bare-metal systemd deployment in
 (e.g. a future STT/TTS voice service) without installing anything extra on
 the host.
 
-## What's containerized (and what isn't)
+## What's containerized
 
-Only the Bosun Go app (`smarthelper`) is containerized. The local LLM server
-(llama.cpp/LM Studio) stays on the host as its own systemd service — it's
-already tuned for this specific hardware (context size, thread count,
-`--skip-chat-parsing`; see `docs/local-deployment.md`), and moving it into
-Docker would add real risk for no benefit here.
+Three services, all in `docker-compose.yml`: the Bosun Go app (`bosun`), and
+two `llama-server` instances (`llama-chat` for the chat model, `llama-embed`
+for the semantic-search embedding model — see `docs/memo-search.md`).
+
+`llama-chat`/`llama-embed` are built from `deploy/llama/Dockerfile`, which
+compiles llama.cpp from source at a pinned commit instead of pulling the
+official `ghcr.io/ggml-org/llama.cpp` image. This host's CPU (an old Mac
+Mini) needs the portable, runtime-dispatching CPU backend
+(`GGML_CPU_ALL_VARIANTS`, `GGML_NATIVE=OFF`) to avoid an illegal-instruction
+crash on newer, assumed-available instruction sets — see the Dockerfile's
+own comments and `~/rebuild-llama.cpp.sh` on this host for the exact flags
+this mirrors. Both services run the same image with different `command:`
+overrides. Model files are downloaded via `-hf` into the host's
+`~/.cache/huggingface` (bind-mounted via `${LLAMA_HF_CACHE}` in `.env`, not
+committed) so they aren't re-fetched on every container recreate.
 
 ## Networking
 
@@ -26,10 +36,15 @@ reuse blindly in a multi-host or internet-facing setup.
 ## Build and run
 
 ```bash
-docker compose build
-docker compose up -d
+make docker-up      # = docker compose build && docker compose up -d
 docker compose logs -f
 ```
+
+`.env` must set `LLAMA_HF_CACHE` (host path to the Hugging Face cache used
+by `-hf` downloads, e.g. `~/.cache/huggingface`) — see `.env.example`. The
+first `llama-chat`/`llama-embed` build compiles llama.cpp from source and
+takes a while; later builds hit Docker's layer cache and are fast unless
+`deploy/llama/Dockerfile` or the pinned commit changes.
 
 This reuses the existing `config.yaml` (mounted read-only at
 `/etc/smarthelper/config.yaml`, the same third search path the bare-metal
@@ -58,10 +73,10 @@ subcommand can override it directly.
 
 ## Verified
 
-Built and run against this host's real `config.yaml` and `.env` (on a
-throwaway port/volume so it didn't collide with the live systemd service):
-image builds, container starts and binds correctly, reaches both the local
-llama-server and the remote endpoint over the host network, `/api/status`
-and `/api/chat` work, and `smarthelper chat` inside the container correctly
-reports it's running under Alpine. Data volume permissions were wrong on
-the first attempt (root-owned fresh volume) — fixed as described above.
+Built and run against this host's real `config.yaml` and `.env`: `bosun`
+reaches both `llama-chat` and the remote endpoint over the host network,
+`/api/status` and a streaming `/api/chat` turn (including a tool call) work
+end to end against the dockerized local model, and `llama-embed` returns
+correct multilingual embeddings. The former bare-metal `llama-server.service`
+systemd unit is stopped and disabled — `llama-chat`/`llama-embed` are now
+the only thing serving ports 1234/1235.
