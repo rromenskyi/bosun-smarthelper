@@ -47,8 +47,10 @@ Exposed over stdio as an MCP server (`smarthelper mcp`):
 
 Status: **implemented**. All four tools have local/mock paths. Weather also has
 an online Open-Meteo backend with Open-Meteo city geocoding, Nominatim landmark
-fallback, and daily forecasts. Real hardware backends (1-Wire, MQTT, serial
-GPS) are not wired up yet. Extensible: implement `tools.Tool` and register it.
+fallback, and daily forecasts. GPS has a real serial/NMEA 0183 backend, tested
+against an actual u-blox 7 USB receiver on this host — see
+`internal/tools/gps_serial.go`. Fridge (1-Wire, MQTT) is not wired up yet.
+Extensible: implement `tools.Tool` and register it.
 
 ### 3. Agent Rules
 
@@ -161,7 +163,8 @@ models without native tool calling, conservative default history limits).
 - [x] Optional HTTPS via mkcert (`docs/tls.md`) — trusted-with-no-warning TLS for a private LAN IP that has no public CA
 - [ ] OCR for scanned PDF pages (no engine installed yet — a scanned page's rendered image currently has no extracted text alongside it)
 - [x] `make check` (fmt + vet + test + build) passing
-- [ ] Real sensor backends (1-Wire temp probes, MQTT, serial GPS/OBD2)
+- [x] Real serial/NMEA GPS backend (`internal/tools/gps_serial.go`) — tested against an actual u-blox 7 USB receiver
+- [ ] Remaining real sensor backends (1-Wire temp probes, MQTT fridge, OBD2)
 - [ ] Integration tests against a real Ollama instance
 - [ ] Local voice interface (`docs/voice.md`) — whisper.cpp STT (design only) + Piper TTS (**implemented**: a 🔊 speak button on every assistant reply), push-to-talk MVP over the existing web UI, no cloud dependencies
 
@@ -199,8 +202,9 @@ not a separate assistant implementation.
 
 ## Roadmap (next after this foundation)
 
-1. Real backends for at least one sensor (e.g. 1-Wire `w1_slave` for
-   outdoor/fridge temperature) to replace `mock`.
+1. ~~Real backends for at least one sensor~~ — **done**: GPS now has a real
+   serial/NMEA backend (`internal/tools/gps_serial.go`), tested against an
+   actual USB receiver. Fridge (1-Wire `w1_slave` or MQTT) still uses `mock`.
 2. Integration test tier (`tests/integration/`) that talks to a configured
    local model server when its endpoint is available, skipped otherwise.
 3. Voice interface: whisper.cpp STT (still to build) + Piper TTS
