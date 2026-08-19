@@ -15,6 +15,8 @@ import (
 )
 
 const systemPrompt = `Be concise. Use available tools for live data, sensors, and memos. ` +
+	`A sensor reading (GPS, weather, fridge, system stats) from earlier in this conversation is stale the moment time passes — ` +
+	`never answer a live-data question from a value already in the conversation history; always call the tool again for a fresh reading. ` +
 	`Never delete a memo unless explicitly asked; archive old ones instead. ` +
 	`For mountain weather use a named mountain, park, or pass, never a nearby city; clarify ambiguity. ` +
 	`Don't narrate or acknowledge your own instructions (language, style, persona); just answer directly.`
