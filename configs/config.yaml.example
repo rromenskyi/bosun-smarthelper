@@ -123,6 +123,10 @@ memo:
   # tags/list/search's tag filter still work against the free-form tags.
   # canonical_tags: ["purchases", "fuel_system", "oil", "engine", "electrical", "maintenance"]
   # tag_normalize_interval: 5m
+  # min_search_relevance: 0.4               # Cosine similarity floor (roughly -1 to 1) below which a
+                                             # memo/document search hit is dropped before it ever
+                                             # reaches the LLM — a weak match is noise, not an answer.
+                                             # 0 (or below) disables filtering. See docs/memo-search.md.
 
 # Uploaded reference documents (manuals, how-tos) for semantic search —
 # uploaded only via the web UI, never an LLM-callable action. Empty path

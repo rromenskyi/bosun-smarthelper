@@ -125,8 +125,29 @@ func (a *Agent) AskWithHistoryStreaming(
 	toolDefs := a.toolDefinitions(online)
 	messages := a.buildMessages(userMessage, history, language, online)
 
+	// A separate cancellable context so a detected repetition loop (below)
+	// can abort the in-flight request instead of just hiding its output —
+	// otherwise a degenerate model keeps burning tokens/time after the user
+	// has already stopped seeing anything new.
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+
 	streamer, canStream := a.client.(llm.StreamingClient)
+	var detector repetitionDetector
+	var forwardedProse strings.Builder
+	var truncated bool
 	onDelta := func(d llm.StreamDelta) {
+		if truncated {
+			return
+		}
+		if d.Kind == "prose" {
+			if detector.feed(d.Text) {
+				truncated = true
+				cancelStream()
+				return
+			}
+			forwardedProse.WriteString(d.Text)
+		}
 		if onEvent != nil {
 			onEvent(StepEvent{Type: "delta", Delta: d})
 		}
@@ -136,16 +157,26 @@ func (a *Agent) AskWithHistoryStreaming(
 		if onEvent != nil {
 			onEvent(StepEvent{Type: "step_start"})
 		}
+		detector = repetitionDetector{}
+		forwardedProse.Reset()
+		truncated = false
 
 		var resp *llm.Response
 		var err error
 		if canStream {
-			resp, err = streamer.ChatStream(ctx, messages, toolDefs, onDelta)
+			resp, err = streamer.ChatStream(streamCtx, messages, toolDefs, onDelta)
 		} else {
-			resp, err = a.client.Chat(ctx, messages, toolDefs)
+			resp, err = a.client.Chat(streamCtx, messages, toolDefs)
 			if err == nil && resp.Content != "" {
 				onDelta(llm.StreamDelta{Kind: "prose", Text: resp.Content})
 			}
+		}
+		if truncated {
+			// Not a real failure — whatever coherent prose was already
+			// forwarded before the model collapsed into repetition is the
+			// answer; there's nothing further worth waiting for from a
+			// response that's already degenerated.
+			return forwardedProse.String(), nil
 		}
 		if err != nil {
 			// A cancelled or expired context (user hit "stop", or the request

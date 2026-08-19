@@ -18,10 +18,11 @@ import (
 
 // MemoTool stores and retrieves dated notes in a local JSON file.
 type MemoTool struct {
-	path  string
-	embed *embeddings.Client
-	docs  *documents.Store
-	mu    sync.Mutex
+	path         string
+	embed        *embeddings.Client
+	docs         *documents.Store
+	minRelevance float64
+	mu           sync.Mutex
 }
 
 type memoRecord struct {
@@ -58,7 +59,7 @@ func NewMemoTool(cfg *config.MemoConfig, embedCfg *config.EmbeddingsConfig) *Mem
 			path = "memos.json"
 		}
 	}
-	return &MemoTool{path: path, embed: embeddings.NewClient(embedCfg)}
+	return &MemoTool{path: path, embed: embeddings.NewClient(embedCfg), minRelevance: cfg.MinSearchRelevance}
 }
 
 // SetDocumentStore wires in the document store so "search" also ranks
@@ -271,6 +272,23 @@ type scoredMemo struct {
 	score  float64
 }
 
+// maxSearchResultChars caps how much raw text (memo content or a document
+// chunk) rides along with a single search result before it's fed back to
+// the LLM. Unbounded text here — up to memo's own 10000-char write limit,
+// or documents' 1500-char chunks, times up to `limit` results — risks
+// overwhelming a weak model's context and has been observed to trigger
+// degenerate output; a search result should point at the answer, not
+// paste the whole source.
+const maxSearchResultChars = 500
+
+func truncateForSearch(text string) string {
+	runes := []rune(text)
+	if len(runes) <= maxSearchResultChars {
+		return text
+	}
+	return string(runes[:maxSearchResultChars]) + "…"
+}
+
 // search ranks active memos, and uploaded-document chunks when a document
 // store is wired in, by meaning against query using cosine similarity over
 // stored embeddings. Each side falls back to a plain substring match —
@@ -321,20 +339,27 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 
 	results := make([]map[string]any, 0, len(candidates))
 	for _, c := range candidates {
+		if c.score < t.minRelevance {
+			continue
+		}
 		view := memoView(c.record, time.Now())
 		view["source"] = "memo"
 		view["relevance"] = c.score
+		view["content"] = truncateForSearch(c.record.Content)
 		results = append(results, view)
 	}
 
 	if t.docs != nil {
 		if chunks, err := t.docs.Search(ctx, query, limit); err == nil {
 			for _, chunk := range chunks {
+				if chunk.Score < t.minRelevance {
+					continue
+				}
 				result := map[string]any{
 					"source":         "document",
 					"document_id":    chunk.DocumentID,
 					"document_title": chunk.DocumentTitle,
-					"text":           chunk.Text,
+					"text":           truncateForSearch(chunk.Text),
 					"relevance":      chunk.Score,
 				}
 				if chunk.ImageURL != "" {

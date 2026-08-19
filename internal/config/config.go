@@ -45,6 +45,11 @@ type MemoConfig struct {
 	// flight (see webui.Server.TryIdle), so a busy assistant never falls
 	// behind — normalization just waits for the next quiet interval.
 	TagNormalizeInterval string `mapstructure:"tag_normalize_interval"`
+	// MinSearchRelevance filters out weak matches (from both memos and
+	// uploaded documents) before they ever reach the LLM — cosine
+	// similarity, roughly [-1, 1]. 0 (or below) disables filtering
+	// entirely. See docs/memo-search.md.
+	MinSearchRelevance float64 `mapstructure:"min_search_relevance"`
 }
 
 // DocumentsConfig holds settings for uploaded reference documents (see
@@ -331,6 +336,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.embeddings.base_url", "")
 	v.SetDefault("llm.embeddings.timeout", "10s")
 	v.SetDefault("memo.tag_normalize_interval", "5m")
+	// Below this cosine similarity, a memo/document search hit is noise,
+	// not a real answer — filtered out before it ever reaches the LLM.
+	// See docs/memo-search.md.
+	v.SetDefault("memo.min_search_relevance", 0.4)
 
 	// MCP defaults
 	v.SetDefault("mcp.server_name", "bosun")

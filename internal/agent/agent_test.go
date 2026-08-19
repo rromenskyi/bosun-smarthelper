@@ -98,6 +98,63 @@ func TestAgent_AskWithHistoryStreaming_EmitsStepAndDeltaEvents(t *testing.T) {
 	}
 }
 
+// chunkedStreamingClient emits Content one caller-supplied piece at a time
+// (unlike fakeStreamingClient's single whole-content delta) so tests can
+// exercise mid-stream behavior — here, the repetition cutoff — the way a
+// real SSE/NDJSON stream actually arrives, a few characters at a time.
+// Stops delivering further chunks once ctx is cancelled, mirroring how a
+// real HTTP stream read aborts.
+type chunkedStreamingClient struct {
+	chunks []string
+	resp   *llm.Response
+}
+
+func (f *chunkedStreamingClient) Chat(ctx context.Context, messages []llm.Message, toolDefs []llm.ToolDefinition) (*llm.Response, error) {
+	return f.resp, nil
+}
+
+func (f *chunkedStreamingClient) ChatStream(ctx context.Context, messages []llm.Message, toolDefs []llm.ToolDefinition, onDelta func(llm.StreamDelta)) (*llm.Response, error) {
+	for _, chunk := range f.chunks {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		onDelta(llm.StreamDelta{Kind: "prose", Text: chunk})
+	}
+	return f.resp, nil
+}
+
+func TestAgent_AskWithHistoryStreaming_TruncatesRunawayRepetition(t *testing.T) {
+	const garbageToken = "<pad>"
+	chunks := []string{"Всё в норме, капитан. "}
+	for i := 0; i < 20; i++ {
+		chunks = append(chunks, garbageToken)
+	}
+	client := &chunkedStreamingClient{chunks: chunks, resp: &llm.Response{Content: strings.Join(chunks, "")}}
+	ag := New(client, tools.NewRegistry())
+
+	var delivered strings.Builder
+	answer, err := ag.AskWithHistoryStreaming(context.Background(), "как дела?", nil, "", func(e StepEvent) {
+		if e.Type == "delta" && e.Delta.Kind == "prose" {
+			delivered.WriteString(e.Delta.Text)
+		}
+	})
+	if err != nil {
+		t.Fatalf("AskWithHistoryStreaming returned error: %v", err)
+	}
+	if !strings.Contains(answer, "Всё в норме") {
+		t.Errorf("answer lost the coherent prefix: %q", answer)
+	}
+	if got := strings.Count(answer, garbageToken); got == 0 || got > repetitionMinRepeats {
+		t.Errorf("answer has %d copies of %q, want a small bounded number (>0, <=%d), not all 20 nor zero: %q",
+			got, garbageToken, repetitionMinRepeats, answer)
+	}
+	if got := strings.Count(delivered.String(), garbageToken); got > repetitionMinRepeats {
+		t.Errorf("streamed events delivered %d copies of %q, want cut off at <=%d", got, garbageToken, repetitionMinRepeats)
+	}
+}
+
 func TestAgent_AskWithHistory_NilEventCallbackStillWorks(t *testing.T) {
 	// AskWithHistory delegates to AskWithHistoryStreaming(onEvent: nil) — a
 	// client that DOES implement StreamingClient must still behave

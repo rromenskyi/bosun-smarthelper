@@ -98,6 +98,28 @@ failure:
 - Embeddings configured but unreachable at *search* time — same substring
   fallback, per store, independently.
 
+Two more guards on what actually reaches the LLM, added after a real
+incident (a weak local model, fed a handful of marginal, OCR-garbled
+document matches, degenerated into repeating a single token hundreds of
+times):
+
+- **`memo.min_search_relevance`** (default `0.4`) drops any hit — memo or
+  document — below that cosine similarity before it's returned at all. A
+  substring-fallback match (embeddings unreachable) always scores `1` and
+  is never filtered, since it's already a real match by definition, not a
+  similarity guess.
+- **Each result's text is capped** at `maxSearchResultChars` (500 runes,
+  `internal/tools/memo.go`) — a search result should point at the answer,
+  not paste the whole source; unbounded text here (up to 5 results × a
+  1500-char document chunk, or memo's own 10000-char write limit) is
+  itself a plausible trigger for a weak model choking on context.
+
+A third, complementary guard lives in `internal/agent` — see
+`repetitionDetector`: even with these two in place, any model can still
+degenerate on its own, so the agent loop watches its own streamed output
+for a runaway repeated substring and cuts the response off rather than
+relaying it indefinitely.
+
 ## Tags: exact recall vs. similarity
 
 Semantic search answers "find something like X," ranked by similarity —
@@ -172,4 +194,5 @@ memo:
   path: ""
   canonical_tags: []  # empty disables background tag normalization
   tag_normalize_interval: 5m
+  min_search_relevance: 0.4  # 0 (or below) disables relevance filtering
 ```

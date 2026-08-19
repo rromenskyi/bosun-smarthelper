@@ -153,6 +153,82 @@ func TestMemoToolSearchRanksBySemanticSimilarity(t *testing.T) {
 	}
 }
 
+func TestMemoToolSearchFiltersLowRelevance(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{
+		Path:               filepath.Join(t.TempDir(), "memos.json"),
+		MinSearchRelevance: 0.5,
+	}, &config.EmbeddingsConfig{
+		BaseURL: "http://embed.test/v1",
+		Model:   "embed",
+	})
+	tool.embed.SetTransport(weatherRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var body struct {
+			Input string `json:"input"`
+		}
+		raw, _ := io.ReadAll(req.Body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("decode embeddings request: %v", err)
+		}
+		var vector []float64
+		switch {
+		case strings.Contains(body.Input, "fridge note"):
+			vector = []float64{1, 0} // orthogonal to the query below — cosine ~0, filtered out
+		case strings.Contains(body.Input, "flight note"):
+			vector = []float64{0.1, 0.99} // near-identical direction to the query — high relevance
+		default: // the search query itself
+			vector = []float64{0, 1}
+		}
+		payload, _ := json.Marshal(map[string]any{"data": []map[string]any{{"embedding": vector}}})
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(string(payload))),
+		}, nil
+	}))
+	ctx := context.Background()
+	if _, err := tool.Execute(ctx, map[string]any{"action": "write", "key": "fridge", "content": "fridge note"}); err != nil {
+		t.Fatalf("write fridge memo: %v", err)
+	}
+	if _, err := tool.Execute(ctx, map[string]any{"action": "write", "key": "flight", "content": "flight note"}); err != nil {
+		t.Fatalf("write flight memo: %v", err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "search", "query": "test query"})
+	if err != nil {
+		t.Fatalf("search memos: %v", err)
+	}
+	view := result.(map[string]any)
+	memos := view["results"].([]map[string]any)
+	if len(memos) != 1 || memos[0]["key"] != "flight" {
+		t.Fatalf("results = %#v, want only the high-relevance flight memo", memos)
+	}
+}
+
+func TestMemoToolSearchTruncatesLongContent(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+	longContent := "garage door code " + strings.Repeat("blah ", 200) // well over maxSearchResultChars
+	if _, err := tool.Execute(ctx, map[string]any{"action": "write", "key": "notes", "content": longContent}); err != nil {
+		t.Fatalf("write memo: %v", err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "search", "query": "garage door code"})
+	if err != nil {
+		t.Fatalf("search memos: %v", err)
+	}
+	memos := result.(map[string]any)["results"].([]map[string]any)
+	if len(memos) != 1 {
+		t.Fatalf("results = %#v, want 1 match", memos)
+	}
+	content := memos[0]["content"].(string)
+	if runeLen := len([]rune(content)); runeLen > maxSearchResultChars+1 {
+		t.Errorf("search result content is %d runes, want <= %d (truncated)", runeLen, maxSearchResultChars+1)
+	}
+	if !strings.HasSuffix(content, "…") {
+		t.Errorf("truncated content = %q, want an ellipsis suffix", content)
+	}
+}
+
 func TestMemoToolSearchMergesDocumentResults(t *testing.T) {
 	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
 	docStore := documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)

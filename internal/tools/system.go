@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"math"
 	"runtime"
+	"time"
 
 	"github.com/roman220/ai-local-smarthelper/internal/config"
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -10,6 +12,20 @@ import (
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
 )
+
+// roundPercent rounds a raw percentage to a whole number — a captain's log
+// doesn't need "5.21%", and the LLM was otherwise inventing its own
+// (inconsistent) rounding from full-precision floats.
+func roundPercent(v float64) float64 {
+	return math.Round(v)
+}
+
+// bytesToGB rounds a raw byte count to one decimal place of GB, so the LLM
+// reports "7.7 GB" consistently instead of computing (and varying) its own
+// "7.69 GB"-style conversion from a raw byte count every time.
+func bytesToGB(v uint64) float64 {
+	return math.Round(float64(v)/1e9*10) / 10
+}
 
 // SystemTool provides system metrics
 type SystemTool struct {
@@ -71,7 +87,9 @@ func (t *SystemTool) Execute(ctx context.Context, args map[string]any) (any, err
 			result["os"] = info.OS
 			result["platform"] = info.Platform
 			result["platform_version"] = info.PlatformVersion
-			result["uptime_seconds"] = info.Uptime
+			// A human-readable duration, not raw seconds — the LLM was
+			// otherwise doing its own (inconsistent) "96512s ~ a day" math.
+			result["uptime"] = (time.Duration(info.Uptime) * time.Second).Round(time.Minute).String()
 			result["boot_time"] = info.BootTime
 		}
 	}
@@ -79,27 +97,31 @@ func (t *SystemTool) Execute(ctx context.Context, args map[string]any) (any, err
 	if include["cpu"] {
 		percent, _ := cpu.PercentWithContext(ctx, 0, false)
 		counts, _ := cpu.CountsWithContext(ctx, true)
-		result["cpu_percent"] = percent
+		rounded := make([]float64, len(percent))
+		for i, p := range percent {
+			rounded[i] = roundPercent(p)
+		}
+		result["cpu_percent"] = rounded
 		result["cpu_cores"] = counts
 	}
 
 	if include["memory"] {
 		vm, _ := mem.VirtualMemoryWithContext(ctx)
 		result["memory"] = map[string]any{
-			"total_bytes":     vm.Total,
-			"available_bytes": vm.Available,
-			"used_bytes":      vm.Used,
-			"used_percent":    vm.UsedPercent,
+			"total_gb":     bytesToGB(vm.Total),
+			"available_gb": bytesToGB(vm.Available),
+			"used_gb":      bytesToGB(vm.Used),
+			"used_percent": roundPercent(vm.UsedPercent),
 		}
 	}
 
 	if include["disk"] {
 		usage, _ := disk.UsageWithContext(ctx, "/")
 		result["disk"] = map[string]any{
-			"total_bytes":  usage.Total,
-			"free_bytes":   usage.Free,
-			"used_bytes":   usage.Used,
-			"used_percent": usage.UsedPercent,
+			"total_gb":     bytesToGB(usage.Total),
+			"free_gb":      bytesToGB(usage.Free),
+			"used_gb":      bytesToGB(usage.Used),
+			"used_percent": roundPercent(usage.UsedPercent),
 		}
 	}
 
