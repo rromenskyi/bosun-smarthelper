@@ -44,6 +44,15 @@ server has no usable native/template tool support, configure
 `llm.local.supports_tools: false`; Bosun will ask for a single strict
 JSON tool-call object through the prompt instead.
 
+That prompted-JSON fallback (`chatWithPromptedTools` in
+`internal/llm/local.go`) tolerates two things a weak model routinely gets
+wrong: narration wrapped around the JSON object ("Sure, I'll check: {...}
+let me know"), and parameters flattened onto the top-level object instead of
+nested under `"arguments"` (`{"tool":"web_search","query":"..."}` instead of
+the documented `{"tool":"web_search","arguments":{"query":"..."}}`). Both
+were observed on the deployed Gemma model and, before the fix, silently
+turned a real tool argument into an empty one instead of erroring loudly.
+
 Stable alphabetical tool ordering is intentional. It keeps the large prefix
 of repeated local prompts byte-for-byte consistent, improving the chance that
 llama.cpp can reuse its prompt/KV cache and reducing latency on this CPU.
