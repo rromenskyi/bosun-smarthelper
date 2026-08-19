@@ -205,15 +205,57 @@ crash**:
    newer onnxruntime the maintained fork ships also runs fine on this
    CPU, not just the 2-year-old archived one.
 
-**Not yet fully verified**: building `libpiper` — this fork's actual
-pure-C/C++ core (`libpiper/`, a CMake project, no Python involved at
-all — see below) — from source hit a build-tooling snag partway through
-(the bundled `espeak-ng`'s phoneme-data compile step failed with ~981
-"bad vowel file" errors, which reads like a data/tool version mismatch,
-not a CPU-instruction problem). Left as an open item to resolve during
-implementation, not a hardware blocker — both verifications above already
-confirm the actual computation (onnxruntime CPU inference) runs fine here
-regardless of which exact build path gets it there.
+**`libpiper` from-source build: also verified, root cause of the earlier
+snag found and fixed.** The ~981 "bad vowel file" errors weren't a
+version mismatch or a hardware problem at all — they were a **path-length
+bug**: `espeak-ng` (built as a sub-step of `libpiper`'s own CMake build)
+hardcodes a 160-byte path buffer on POSIX (`N_PATH_HOME_DEF` in
+`speech.h`), and the first build attempt ran inside this session's
+scratch directory, whose path is a long, UUID-nested one — long enough
+that `snprintf`-ing a data file's full path (base dir + `phsource/vwl_en_us/a`
+etc.) silently truncated mid-string, so `LoadSpectSeq` tried to open a
+cut-off, nonexistent path and failed. **Rebuilding the exact same source
+in a short path (`/opt/piper-build/...`) succeeded cleanly** —
+`espeak-ng`, `libpiper.so`, and (unexpectedly useful) a ready-made
+`piper_exe` CLI binary all built with zero errors. **Practical
+consequence for `deploy/piper/Dockerfile`**: build inside a short path
+(Docker's own build context root, e.g. `/src`, is already short — this
+should never bite in the real Dockerfile, only in unusually deep
+directories like this session's scratch space).
+
+Ran the freshly built `piper_exe` against both downloaded voices —
+clean synthesis, no crash, no `dmesg` entries, confirming the from-source
+build (not just the Python-wheel verification above) also works on this
+CPU:
+
+| | denis | ruslan |
+|---|---|---|
+| total wall time (cold process) | 2.40s | 1.85s |
+
+Slightly slower than the prebuilt archived binary's numbers above (which
+used an older onnxruntime 1.14.1 and a shorter test sentence for one of
+the two) — still comfortably usable, though closer to the "≤1–2s" target
+than the earlier measurement; worth re-measuring once request text length
+and process-reuse strategy are finalized during implementation.
+
+**One real difference to handle**: this build's `piper_exe` outputs
+**IEEE float WAV** (`file` reports "WAVE audio, IEEE Float, mono
+22050 Hz"), not the 16-bit PCM the archived binary produced. Browser
+`<audio>` support for float WAV is less consistent than for 16-bit PCM
+(Safari in particular has had issues) — `handleTTS` should pipe
+`piper_exe`'s output through `ffmpeg -f wav -acodec pcm_s16le -` (ffmpeg
+is already in the plan for STT audio conversion, so this is reusing the
+same subprocess, not adding a new dependency) rather than assuming the
+browser will play it directly.
+
+**Bonus finding: no custom C++ wrapper needed.** `libpiper`'s own
+`src/main/` builds a complete reference CLI (`piper_exe`, source at
+`libpiper/src/main/main.cpp`) with exactly the flags needed
+(`-m`/`--espeak_data`/`-f`/stdin text). The "~40-line `bosun-piper-cli`
+we write" plan below is now simpler than planned — copy the upstream
+`piper_exe` binary (or trivially fork/trim it if its stdin/stdout
+handling needs adjusting) instead of writing one from scratch against
+`piper.h`.
 
 Model loading is fast enough (small ONNX graph, no multi-gigabyte weights)
 that **Piper doesn't need to run as a persistent server at all** — Bosun
@@ -224,38 +266,43 @@ architecture (no sidecar process, no Dockerfile, no port to manage, no
 HTTP client to write) compared to the Silero design:
 
 ```
-bosun-piper-cli --model /opt/bosun/models/tts/<voice>.onnx \
-                --espeak-data /opt/bosun/espeak-ng-data \
-                --output_file - <<< "Капитан! Старпом на связи." > out.wav
+piper_exe -m /opt/bosun/models/tts/<voice>.onnx \
+          --espeak_data /opt/bosun/espeak-ng-data \
+          -f - <<< "Капитан! Старпом на связи." | \
+  ffmpeg -f wav -i - -acodec pcm_s16le -f wav - > out.wav
 ```
 
-`bosun-piper-cli` isn't Piper's own binary — `piper1-gpl` doesn't ship one
-(its CLI is the Python module tested above). It's a **~40-line C++ program
-we write**, directly mirroring `libpiper/README.md`'s example (`piper_create`
-→ `piper_synthesize_start`/`piper_synthesize_next` loop → write a WAV
-header + the accumulated float32 samples), linked against `libpiper` and
-`libonnxruntime`. This keeps the same "build a small thing from an
-upstream C library, pin a commit" shape already used twice in this repo
-(`deploy/llama/Dockerfile`, and the planned `deploy/whisper/Dockerfile`) —
-just a third instance of it, not a new pattern.
+**No custom C++ wrapper needed** — confirmed empirically (see verification
+above): `libpiper`'s own build already produces a complete, working CLI
+(`piper_exe`, built from `libpiper/src/main/` alongside the library
+itself) with exactly the flags this needs. The original plan here was a
+~40-line C++ program written against `piper.h`; that's no longer
+necessary — just build and ship the upstream `piper_exe` as-is. The
+`ffmpeg` stage after it converts the IEEE-float WAV `piper_exe` emits into
+16-bit PCM for consistent browser `<audio>` playback (see verification
+notes above) — reusing the same `ffmpeg` subprocess already needed for
+STT audio conversion, not a new dependency.
 
 Bosun's `internal/webui`/`internal/voice` code runs this via `os/exec`
-with the text piped to stdin and the WAV read from stdout — no temp files
-needed for the common case, matching "don't persist raw audio."
+with the text piped to stdin and the (ffmpeg-converted) WAV read from
+stdout — no temp files needed for the common case, matching "don't
+persist raw audio."
 
 **`deploy/piper/Dockerfile`** (new): clone `OHF-Voice/piper1-gpl` pinned
-at a specific commit/tag (`v1.7.0` or later, once actually verified —
-see Open Questions), build `libpiper/` per its own `CMakeLists.txt`
-(which downloads/builds `espeak-ng` and downloads the `onnxruntime`
-release itself — no apt packages needed for either), compile
-`bosun-piper-cli` against the resulting `install/` directory, and copy
-the binary + `libonnxruntime.so`/`libespeak-ng` shared libs +
-`espeak-ng-data/` into the final image (mirrors `deploy/llama/Dockerfile`'s
-two-stage builder/runtime shape). Voice `.onnx`/`.onnx.json` model files
-stay a bind-mounted `./data/models/tts/` (same "plain host directory,
-survives `docker compose down -v`" reasoning as `./data/bosun`). No new
-Docker *service* — this becomes part of the existing `bosun` image, same
-as `ffmpeg`/`tesseract` are today.
+at a specific commit/tag (`v1.7.0`, verified above — confirm still
+current when this actually gets written), build `libpiper/` per its own
+`CMakeLists.txt` **from a short path** (see the path-length bug above —
+Docker's own build context root is already short, so this is a
+non-issue in practice, just worth remembering if the build ever moves
+into a deeply nested directory) — this downloads/builds `espeak-ng` and
+downloads the `onnxruntime` release itself, no apt packages needed for
+either — then copy `piper_exe` + `libpiper.so`/`libonnxruntime.so` +
+`espeak-ng-data/` into the final image (mirrors
+`deploy/llama/Dockerfile`'s two-stage builder/runtime shape). Voice
+`.onnx`/`.onnx.json` model files stay a bind-mounted `./data/models/tts/`
+(same "plain host directory, survives `docker compose down -v`"
+reasoning as `./data/bosun`). No new Docker *service* — this becomes part
+of the existing `bosun` image, same as `ffmpeg`/`tesseract` are today.
 
 **Bosun's `POST /api/tts`**: accepts `{"text": "..."}`, runs the
 configured Piper voice, returns the WAV, logs latency. **Text passes
@@ -472,28 +519,33 @@ downloaded, no Python anywhere in the path.
    actively maintained fork's current code (onnxruntime 1.22.0, via
    `pip install piper-tts` as a quick check). Both synthesized real
    Russian audio with no crash. See the TTS section above for numbers.
-2. **Fix the `libpiper` from-source build** — hit a build-tooling snag
-   (espeak-ng's bundled phoneme-data compile step, ~981 "bad vowel file"
-   errors) partway through building the actual C/C++ core this project
-   would ship against, as opposed to the Python-wheel path used only to
-   verify hardware compatibility above. Needs resolving (likely an
-   espeak-ng data/tool version mismatch — check upstream issues, or try
-   pinning a different `espeak-ng` commit than `libpiper/CMakeLists.txt`
-   defaults to) before `deploy/piper/Dockerfile` can actually be written.
-3. **Pick and pin the actual Piper voice model** — `denis` and `ruslan`
-   are both downloaded and confirmed to synthesize correctly; still needs
-   an actual listen-test (by ear, not by shell exit code) to pick a
-   default, optionally trying `dmitri` as a third candidate.
-4. **Pin an exact `piper1-gpl` commit/tag** for `deploy/piper/Dockerfile`,
+2. ~~Fix the `libpiper` from-source build~~ — **resolved**: root cause was
+   a path-length bug in `espeak-ng`'s hardcoded 160-byte path buffer,
+   triggered by building inside this session's deeply nested scratch
+   directory, not a version mismatch or hardware issue. Rebuilding in a
+   short path (`/opt/piper-build/...`) succeeded cleanly and produced a
+   working `piper_exe` CLI. See the TTS section above for the fix and the
+   practical note for `deploy/piper/Dockerfile` (build context roots are
+   already short, so this shouldn't recur in practice).
+3. **Pick the actual Piper voice model by ear** — `denis` and `ruslan` are
+   both downloaded and confirmed to synthesize correctly (verified twice:
+   the archived prebuilt binary and the from-source `piper_exe` build);
+   still needs an actual listen-test (by ear, not by shell exit code) to
+   pick a default, optionally trying `dmitri` as a third candidate.
+4. **Confirm the IEEE-float-to-PCM16 `ffmpeg` conversion step actually
+   sounds right** — `piper_exe` emits float WAV, converted to PCM16 for
+   browser compatibility (see TTS section); the conversion itself is
+   trivial but hasn't been listen-tested for artifacts.
+5. **Pin an exact `piper1-gpl` commit/tag** for `deploy/piper/Dockerfile`,
    the same way `LLAMA_CPP_REF` pins `deploy/llama/Dockerfile` — `v1.7.0`
    is what got tested above, but confirm it's still current when the
    Dockerfile actually gets written.
-5. **`whisper-server`'s actual request/response shape** needs verifying
+6. **`whisper-server`'s actual request/response shape** needs verifying
    against the pinned `whisper.cpp` commit before writing `handleSTT` —
    the endpoint path and JSON field names in this doc are from
    whisper.cpp's typical `server` example, not yet confirmed against the
    exact pinned build.
-6. **ffmpeg availability** — `internal/webui`'s Dockerfile already ships
+7. **ffmpeg availability** — `internal/webui`'s Dockerfile already ships
    `poppler-utils`/`tesseract-ocr`; add `ffmpeg` there too once this lands
    (`espeak-ng` no longer needs a separate apt package — `libpiper`'s own
    build downloads/builds it from source, see the TTS section above).
