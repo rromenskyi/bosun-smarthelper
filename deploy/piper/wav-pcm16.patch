@@ -1,0 +1,73 @@
+diff --git a/libpiper/src/main/utils/wav_headers.cpp b/libpiper/src/main/utils/wav_headers.cpp
+index e1d8350..b7a139b 100644
+--- a/libpiper/src/main/utils/wav_headers.cpp
++++ b/libpiper/src/main/utils/wav_headers.cpp
+@@ -23,18 +23,20 @@ void writeWavStreamHeader(std::ostream &stream, int sample_rate) {
+   stream.write("fmt ", 4);
+   // Subchunk1Size = 16 for PCM/IEEE_FLOAT
+   writeNumber<uint32_t>(16, stream); // NOLINT(readability-magic-numbers)
+-  // AudioFormat = 3 (IEEE float)
+-  writeNumber<uint16_t>(3, stream);
++  // AudioFormat = 1 (PCM) — patched from upstream's 3 (IEEE float) so
++  // browsers/players with inconsistent float-WAV support play this
++  // directly, no ffmpeg conversion step needed (see docs/voice.md).
++  writeNumber<uint16_t>(1, stream);
+   // NumChannels = 1 (mono)
+   writeNumber<uint16_t>(1, stream);
+   // SampleRate
+   writeNumber<uint32_t>(sample_rate, stream);
+   // ByteRate = SampleRate * NumChannels * BitsPerSample/8
+-  writeNumber<uint32_t>(sample_rate * 4, stream);
++  writeNumber<uint32_t>(sample_rate * 2, stream);
+   // BlockAlign = NumChannels * BitsPerSample/8
+-  writeNumber<uint16_t>(4, stream);
+-  // BitsPerSample = 32
+-  writeNumber<uint16_t>(32, stream); // NOLINT(readability-magic-numbers)
++  writeNumber<uint16_t>(2, stream);
++  // BitsPerSample = 16 (patched from 32-bit float)
++  writeNumber<uint16_t>(16, stream); // NOLINT(readability-magic-numbers)
+ 
+   // Subchunk2ID
+   stream.write("data", 4);
+diff --git a/libpiper/src/main/utils/wavfile.cpp b/libpiper/src/main/utils/wavfile.cpp
+index 6882555..337360f 100644
+--- a/libpiper/src/main/utils/wavfile.cpp
++++ b/libpiper/src/main/utils/wavfile.cpp
+@@ -1,6 +1,23 @@
+ #include "wavfile.hpp"
+ #include "wav_headers.hpp"
++#include <algorithm>
++#include <cstdint>
+ #include <iostream>
++#include <vector>
++
++namespace {
++// Piper's synthesis output is float32 in [-1, 1]; the header now declares
++// 16-bit PCM (see wav_headers.cpp), so samples must be converted, not
++// written raw.
++std::vector<int16_t> floatToPCM16(const float *samples, std::size_t count) {
++  std::vector<int16_t> pcm(count);
++  for (std::size_t i = 0; i < count; i++) {
++    float clamped = std::clamp(samples[i], -1.0F, 1.0F);
++    pcm[i] = static_cast<int16_t>(clamped * 32767.0F);
++  }
++  return pcm;
++}
++} // namespace
+ 
+ void textToWavFile(piper_synthesizer *piper, piper_synthesize_options *options,
+                    const char *string, std::ostream &stream) {
+@@ -14,9 +31,10 @@ void textToWavFile(piper_synthesizer *piper, piper_synthesize_options *options,
+         writeWavStreamHeader(stream, chunk.sample_rate);
+         isHeaderWritten = true;
+       }
+-      stream.write(reinterpret_cast<const char *>(chunk.samples),
++      std::vector<int16_t> pcm = floatToPCM16(chunk.samples, chunk.num_samples);
++      stream.write(reinterpret_cast<const char *>(pcm.data()),
+                    // NOLINTNEXTLINE(bugprone-narrowing-conversions)
+-                   chunk.num_samples * sizeof(float));
++                   pcm.size() * sizeof(int16_t));
+     }
+   } while (!chunk.is_last);
+ }
+\ No newline at end of file

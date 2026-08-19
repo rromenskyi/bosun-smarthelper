@@ -238,24 +238,42 @@ the two) — still comfortably usable, though closer to the "≤1–2s" target
 than the earlier measurement; worth re-measuring once request text length
 and process-reuse strategy are finalized during implementation.
 
-**One real difference to handle**: this build's `piper_exe` outputs
-**IEEE float WAV** (`file` reports "WAVE audio, IEEE Float, mono
-22050 Hz"), not the 16-bit PCM the archived binary produced. Browser
-`<audio>` support for float WAV is less consistent than for 16-bit PCM
-(Safari in particular has had issues) — `handleTTS` should pipe
-`piper_exe`'s output through `ffmpeg -f wav -acodec pcm_s16le -` (ffmpeg
-is already in the plan for STT audio conversion, so this is reusing the
-same subprocess, not adding a new dependency) rather than assuming the
-browser will play it directly.
+**IEEE-float-WAV issue: patched at the source, not worked around at
+runtime.** `piper_exe` originally output IEEE float WAV (`file` reported
+"WAVE audio, IEEE Float, mono 22050 Hz") — browser `<audio>` support for
+float WAV is inconsistent (Safari in particular has had issues), so this
+needed fixing one way or another. Traced it to two small, upstream files:
+`writeWavStreamHeader` (`libpiper/src/main/utils/wav_headers.cpp`)
+hardcodes `AudioFormat = 3` (float)/`BitsPerSample = 32`, and
+`textToWavFile` (`libpiper/src/main/utils/wavfile.cpp`) writes
+`chunk.samples` (the raw `float*` from `piper_synthesize_next`) straight
+to the stream with no conversion. **Patched both**: the header now
+declares `AudioFormat = 1` (PCM)/`BitsPerSample = 16`
+(`ByteRate`/`BlockAlign` adjusted to match), and the sample-writing loop
+now clamps each float to `[-1, 1]` and scales to `int16_t` before writing.
+Rebuilt just the `piper_exe` target — compiled clean, and re-tested:
+`file` now reports "Microsoft PCM, 16 bit, mono 22050 Hz"; manually
+decoded the output samples (min/max well inside `int16` range, ~88k/89.6k
+samples non-zero, duration matches the unpatched version exactly) to
+confirm this is real converted audio, not silence or garbage from a
+header-only fix. No `ffmpeg` conversion step needed at request time at
+all — one less subprocess per TTS request than originally planned.
+
+This is a **small, tracked patch to two upstream files** — already saved
+at `deploy/piper/wav-pcm16.patch` (the actual verified diff, not just
+described here), meant to be `git apply`'d against the pinned
+`piper1-gpl` checkout in `deploy/piper/Dockerfile` before `cmake --build`
+— not a fork to maintain long-term. Worth re-checking against upstream
+occasionally in case a future `piper1-gpl` release adds a native PCM16
+output flag and makes the patch unnecessary. See `deploy/piper/README.md`.
 
 **Bonus finding: no custom C++ wrapper needed.** `libpiper`'s own
 `src/main/` builds a complete reference CLI (`piper_exe`, source at
 `libpiper/src/main/main.cpp`) with exactly the flags needed
-(`-m`/`--espeak_data`/`-f`/stdin text). The "~40-line `bosun-piper-cli`
-we write" plan below is now simpler than planned — copy the upstream
-`piper_exe` binary (or trivially fork/trim it if its stdin/stdout
-handling needs adjusting) instead of writing one from scratch against
-`piper.h`.
+(`-m`/`--espeak_data`/`-f`/stdin text) — the two-file patch above lives
+in that same `src/main/` tree. The "~40-line `bosun-piper-cli` we write"
+plan below is now simpler than planned — copy the upstream (now patched)
+`piper_exe` binary instead of writing one from scratch against `piper.h`.
 
 Model loading is fast enough (small ONNX graph, no multi-gigabyte weights)
 that **Piper doesn't need to run as a persistent server at all** — Bosun
@@ -268,41 +286,44 @@ HTTP client to write) compared to the Silero design:
 ```
 piper_exe -m /opt/bosun/models/tts/<voice>.onnx \
           --espeak_data /opt/bosun/espeak-ng-data \
-          -f - <<< "Капитан! Старпом на связи." | \
-  ffmpeg -f wav -i - -acodec pcm_s16le -f wav - > out.wav
+          -f - <<< "Капитан! Старпом на связи." > out.wav
 ```
 
 **No custom C++ wrapper needed** — confirmed empirically (see verification
 above): `libpiper`'s own build already produces a complete, working CLI
 (`piper_exe`, built from `libpiper/src/main/` alongside the library
-itself) with exactly the flags this needs. The original plan here was a
-~40-line C++ program written against `piper.h`; that's no longer
-necessary — just build and ship the upstream `piper_exe` as-is. The
-`ffmpeg` stage after it converts the IEEE-float WAV `piper_exe` emits into
-16-bit PCM for consistent browser `<audio>` playback (see verification
-notes above) — reusing the same `ffmpeg` subprocess already needed for
-STT audio conversion, not a new dependency.
+itself) with exactly the flags this needs, and now emits correct 16-bit
+PCM WAV directly (the two-file patch above). The original plan here was
+a ~40-line C++ program written against `piper.h`, plus an `ffmpeg`
+conversion pass on every request; neither is necessary — just build and
+ship the upstream `piper_exe` with the small patch applied, output used
+as-is.
 
 Bosun's `internal/webui`/`internal/voice` code runs this via `os/exec`
-with the text piped to stdin and the (ffmpeg-converted) WAV read from
-stdout — no temp files needed for the common case, matching "don't
-persist raw audio."
+with the text piped to stdin and the WAV read straight from stdout — no
+temp files, no conversion pass, no `ffmpeg` invocation for TTS at all
+(still needed for STT's browser-audio conversion, just not here),
+matching "don't persist raw audio."
 
 **`deploy/piper/Dockerfile`** (new): clone `OHF-Voice/piper1-gpl` pinned
 at a specific commit/tag (`v1.7.0`, verified above — confirm still
-current when this actually gets written), build `libpiper/` per its own
-`CMakeLists.txt` **from a short path** (see the path-length bug above —
-Docker's own build context root is already short, so this is a
-non-issue in practice, just worth remembering if the build ever moves
-into a deeply nested directory) — this downloads/builds `espeak-ng` and
-downloads the `onnxruntime` release itself, no apt packages needed for
-either — then copy `piper_exe` + `libpiper.so`/`libonnxruntime.so` +
-`espeak-ng-data/` into the final image (mirrors
-`deploy/llama/Dockerfile`'s two-stage builder/runtime shape). Voice
-`.onnx`/`.onnx.json` model files stay a bind-mounted `./data/models/tts/`
-(same "plain host directory, survives `docker compose down -v`"
-reasoning as `./data/bosun`). No new Docker *service* — this becomes part
-of the existing `bosun` image, same as `ffmpeg`/`tesseract` are today.
+current when this actually gets written), apply the two-file PCM16 patch
+(`deploy/piper/wav-pcm16.patch`, `git apply` against the checkout — the
+exact diff verified above against `wav_headers.cpp`/`wavfile.cpp`), build
+`libpiper/` per its own `CMakeLists.txt` **from a short path** (see the
+path-length bug above — Docker's own build context root is already
+short, so this is a non-issue in practice, just worth remembering if the
+build ever moves into a deeply nested directory) — this downloads/builds
+`espeak-ng` and downloads the `onnxruntime` release itself, no apt
+packages needed for either — then copy the patched `piper_exe` +
+`libpiper.so`/`libonnxruntime.so` + `espeak-ng-data/` into the final
+image (mirrors `deploy/llama/Dockerfile`'s two-stage builder/runtime
+shape). Voice `.onnx`/`.onnx.json` model files stay a bind-mounted
+`./data/models/tts/` (same "plain host directory, survives
+`docker compose down -v`" reasoning as `./data/bosun`). No new Docker
+*service* — this becomes part of the existing `bosun` image, same as
+`ffmpeg`/`tesseract` are today (`ffmpeg` itself is still needed there,
+just for STT's browser-audio conversion, not TTS anymore).
 
 **Bosun's `POST /api/tts`**: accepts `{"text": "..."}`, runs the
 configured Piper voice, returns the WAV, logs latency. **Text passes
@@ -532,10 +553,15 @@ downloaded, no Python anywhere in the path.
    the archived prebuilt binary and the from-source `piper_exe` build);
    still needs an actual listen-test (by ear, not by shell exit code) to
    pick a default, optionally trying `dmitri` as a third candidate.
-4. **Confirm the IEEE-float-to-PCM16 `ffmpeg` conversion step actually
-   sounds right** — `piper_exe` emits float WAV, converted to PCM16 for
-   browser compatibility (see TTS section); the conversion itself is
-   trivial but hasn't been listen-tested for artifacts.
+4. ~~Confirm the float-to-PCM16 conversion sounds right~~ — **resolved
+   differently than planned**: instead of an `ffmpeg` conversion pass on
+   every request, patched `piper_exe` itself to emit PCM16 directly (two
+   small files, see TTS section) — verified via decoded sample data
+   (amplitude range, non-zero count, exact duration match against the
+   unpatched float version), not just a header check. Still worth an
+   actual listen once real speakers are available — decoded-sample
+   verification confirms the data is real and in-range, not that it's
+   free of subtle clipping artifacts from the `[-1,1]` clamp.
 5. **Pin an exact `piper1-gpl` commit/tag** for `deploy/piper/Dockerfile`,
    the same way `LLAMA_CPP_REF` pins `deploy/llama/Dockerfile` — `v1.7.0`
    is what got tested above, but confirm it's still current when the
