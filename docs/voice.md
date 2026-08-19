@@ -10,9 +10,25 @@ explicitly follow-up work, not part of this pass.
 
 **Correction to the original hardware assumption**: this host has **8 GB**
 RAM (`2× 4 GB`, confirmed via `dmidecode`), not 16 GB. Doesn't block
-anything below (`tiny`/`base` Whisper models and Silero's `.pt` are both
-small), but it does mean model choices should stay conservative — no room
-here to casually size up "for quality" the way you could on a 16 GB box.
+anything below (`tiny`/`base` Whisper models and a Piper voice model are
+all small), but it does mean model choices should stay conservative — no
+room here to casually size up "for quality" the way you could on a 16 GB
+box.
+
+**Revision after discussion: no Python anywhere in the voice stack, not
+just for STT.** The original spec picked Silero for TTS, which is a
+`torch.jit`/`.pt` model with no official C++/ONNX runtime — keeping it
+would mean keeping Python (and a full `torch` CPU wheel) around just for
+TTS. Swapped in **Piper** instead (pure C++ + ONNX Runtime, a
+self-contained binary, real Russian voices already published) — it was
+already in the original spec as the "add later without rewriting the
+API" fallback; this just promotes it to primary, and the fallback slot
+Piper vacates is Silero itself (or RHVoice), if quality ever demands it
+enough to accept Python. Trade-off worth being upfront about: Piper's
+voices are generally a bit more "robotic"/less expressive than Silero's,
+and it's single-speaker-per-model rather than Silero's named multi-speaker
+list — a real listen-test once a voice is downloaded is the way to judge
+whether that trade-off is acceptable, not a documentation guess.
 
 ## Architecture decision: no separate "voice service" process
 
@@ -34,19 +50,20 @@ that already exists.
                          ┌─────────────────────────────────────────┐
  browser ── POST /api/voice ──▶  handleVoice                        │
  (MediaRecorder)         │        1. ffmpeg: webm/opus → 16k mono WAV
-                         │        2. STTEngine.Transcribe(wav)      │
-                         │        3. agent.Agent.Ask(text)  (same   │
-                         │           path as text chat)             │
-                         │        4. TTSEngine.Synthesize(reply)    │
-                         │        5. store WAV in-memory, return    │
-                         │           JSON + /api/audio/{id}         │
-                         └───────────┬──────────────────┬──────────┘
-                                     │ HTTP                │ HTTP
-                                     ▼                      ▼
-                          whisper-server (whisper.cpp)   silero-tts-service
-                          port 1236, loopback only        (Python sidecar)
-                                                           port 1237, loopback only
+                         │        2. STTEngine.Transcribe(wav)  ────┼─ HTTP ─▶ whisper-server
+                         │        3. agent.Agent.Ask(text)  (same   │          (whisper.cpp,
+                         │           path as text chat)             │          port 1236,
+                         │        4. TTSEngine.Synthesize(reply) ───┼─ exec ─▶ loopback only)
+                         │           (runs `piper` as a subprocess, │
+                         │            no network hop, no sidecar)   │        piper binary,
+                         │        5. store WAV in-memory, return    │        no Python, no
+                         │           JSON + /api/audio/{id}         │        separate process
+                         └───────────────────────────────────────────┘
 ```
+
+No Python anywhere in this diagram: whisper.cpp is C++, Piper is C++ +
+ONNX Runtime, orchestration is Go. TTS doesn't even need a network hop —
+see below.
 
 ## STT: whisper.cpp, run as its own server (mirrors `llama-server`)
 
@@ -140,83 +157,81 @@ defaulting to 900ms per the original spec) runs *inside the voice
 service's audio-capture loop*, not as a separate component — there's
 nothing to design further here until that phase starts.
 
-## TTS: Silero, run as a small Python sidecar
+## TTS: Piper, shelled out to directly — no server, no Python
 
-Silero ships as a `torch.jit`-traced `.pt` module — there's no C++/ggml
-equivalent the way there is for STT, so some Python is genuinely necessary
-here (the original spec's own ban on Python/PyTorch was scoped to STT
-specifically, and its own config sample already names a `.pt` file). Keep
-it contained to one small, swappable process — not folded into Bosun's own
-codebase — so the `TTSEngine` interface (below) never has to know it's
-Python underneath, and swapping in Piper/RHVoice later is a sidecar swap,
-not a Bosun code change.
+[Piper](https://github.com/rhasspy/piper) is a self-contained C++ binary
+using ONNX Runtime for the neural vocoder and `espeak-ng` (a C library,
+also no Python) for grapheme-to-phoneme conversion. Its official releases
+ship a prebuilt Linux x86-64 binary with a bundled `onnxruntime` shared
+library. ONNX Runtime's CPU execution provider does runtime CPU-feature
+dispatch (comparable in spirit to `ggml`'s `GGML_CPU_ALL_VARIANTS`), so it
+should run without AVX2 out of the box — **this needs a real 10-minute
+check on this host once a release is downloaded**, not just an assumption
+(see Open Questions).
 
-**`deploy/silero-tts/`** (new): a ~40-line FastAPI app —
-```python
-# server.py
-import torch
-from fastapi import FastAPI, Response
-from pydantic import BaseModel
+Model loading is fast enough (small ONNX graph, no multi-gigabyte weights)
+that **Piper doesn't need to run as a persistent server at all** — Bosun
+can shell out to the binary per request, exactly like it already shells
+out to `ffmpeg`/`tesseract`/`pdftoppm` for document handling
+(`internal/webui/pdf.go`). That removes an entire component from the
+architecture (no sidecar process, no Dockerfile, no port to manage, no
+HTTP client to write) compared to the Silero design:
 
-app = FastAPI()
-model = torch.package.PackageImporter(MODEL_PATH).load_pickle("tts_models", "model")
-model.to("cpu")
-
-class SynthesizeRequest(BaseModel):
-    text: str
-    speaker: str = "aidar"
-
-@app.post("/synthesize")
-def synthesize(req: SynthesizeRequest):
-    audio = model.apply_tts(text=req.text, speaker=req.speaker, sample_rate=SAMPLE_RATE)
-    return Response(content=wav_bytes(audio, SAMPLE_RATE), media_type="audio/wav")
 ```
-(`MODEL_PATH`/`SAMPLE_RATE` from env vars — no hardcoded paths, per the
-spec's own requirement.) Runs via `pip install torch --index-url
-https://download.pytorch.org/whl/cpu` (CPU-only wheel — no CUDA pulled
-in) plus `fastapi`/`uvicorn`. Model loads once at process startup, stays
-resident (matches "CPU-only and fully offline after the initial model
-download").
-
-**`docker-compose.yml`** addition:
-```yaml
-silero-tts:
-  build: ./deploy/silero-tts
-  image: bosun-silero-tts:local
-  container_name: silero-tts
-  restart: unless-stopped
-  network_mode: host
-  environment:
-    - MODEL_PATH=/models/v5_5_ru.pt
-    - SAMPLE_RATE=24000
-  volumes:
-    - ./data/models/tts:/models:ro
-  command: >-
-    uvicorn server:app --host 127.0.0.1 --port 1237
+piper --model /opt/bosun/models/tts/<voice>.onnx \
+      --output_file - <<< "Капитан! Старпом на связи." > out.wav
 ```
 
-**Bosun's `POST /api/tts`**: accepts `{"text": "...", "speaker": "aidar"}`,
-proxies to `http://127.0.0.1:1237/synthesize`, streams the WAV back,
-logs latency. **Text passes through completely unmodified** — no
-punctuation stripping, no case-folding — since intonation cues (`!`,
-`...`, `?`, capitalization) are the LLM's job to produce and Silero's job
-to interpret; Bosun's persona (`agent.SetPersona`, `docs/settings.md`)
-already controls the *style* the text arrives in. An SSML/preprocessing
-hook is worth a single passthrough no-op function now
-(`preprocessForTTS(text string) string { return text }`) so a future
-normalization step has an obvious place to live, without building out
-anything now.
+Bosun's `internal/webui`/`internal/voice` code runs this via `os/exec`
+with the text piped to stdin and the WAV read from stdout — no temp files
+needed for the common case, matching "don't persist raw audio."
 
-Two speakers to validate once the sidecar exists: `aidar`, `eugene` (both
-male, per the spec) — `speaker` is a per-request field, defaulting to
-whatever `config.yaml`'s `voice.tts.speaker` says.
+**Dockerfile change**: add `espeak-ng` (apt package) and the `piper`
+binary + voice `.onnx`/`.onnx.json` model files to the existing
+`Dockerfile` (same section that already installs `poppler-utils`/
+`tesseract-ocr`), plus a bind-mounted `./data/models/tts/` for the model
+files themselves (same "plain host directory, survives `docker compose
+down -v`" reasoning as `./data/bosun`). No new Docker service.
 
-## `STTEngine`/`TTSEngine` adapters (Go interfaces, not Python)
+**Bosun's `POST /api/tts`**: accepts `{"text": "..."}`, runs the
+configured Piper voice, returns the WAV, logs latency. **Text passes
+through completely unmodified** — no punctuation stripping, no
+case-folding — since intonation cues (`!`, `...`, `?`, capitalization) are
+the LLM's job to produce and the TTS engine's job to interpret; Bosun's
+persona (`agent.SetPersona`, `docs/settings.md`) already controls the
+*style* the text arrives in. An SSML/preprocessing hook is worth a single
+passthrough no-op function now (`preprocessForTTS(text string) string {
+return text }`) so a future normalization step has an obvious place to
+live, without building out anything now.
+
+**Voice/speaker naming changes from the original spec**: `aidar`/`eugene`
+were Silero-specific multi-speaker names — Piper voices are one model
+file per voice, not one model with named speakers inside it. Male Russian
+Piper voices exist in the community `rhasspy/piper-voices` collection
+(names like `ru_RU-denis-medium`/`ru_RU-ruslan-medium` from memory), but
+**the exact current list needs verifying against that repo at
+implementation time** rather than trusting a name recalled here — pick
+whichever one or two actually sound best on a real listen-test, matching
+the spirit of the original "test at least two male speakers" requirement
+even though the specific names change. There's no separate `speaker`
+field in config any more — `voice.tts.model_path` (below) *is* the voice
+selection, since each Piper voice is its own model file; switching voices
+is a one-line config edit, no `speaker` parameter needed per request.
+
+**Sample rate is dictated by the voice model, not freely chosen**: unlike
+Silero (where 24 kHz was a real choice), a Piper voice's `.onnx.json`
+sidecar file specifies its own native sample rate (commonly 22.05 kHz for
+existing Piper voices) — `config.yaml`'s `sample_rate` becomes informational
+(what to expect / log), not a knob that forces resampling, unless a
+concrete reason to resample shows up later.
+
+## `STTEngine`/`TTSEngine` adapters (plain Go interfaces)
 
 Since orchestration lives in the Go backend (see architecture decision
-above), the adapter interfaces belong there too — plain Go interfaces
-`internal/voice` would define, with the current whisper-server/Silero
-sidecar clients as the first (and for now, only) implementations:
+above), the adapter interfaces belong there too — `internal/voice` would
+define them, with an HTTP-client implementation for STT and a
+subprocess-exec implementation for TTS as the first (and for now, only)
+implementations:
 
 ```go
 // internal/voice/voice.go
@@ -230,14 +245,19 @@ type STTEngine interface {
 }
 
 type TTSEngine interface {
-    Synthesize(ctx context.Context, text, speaker string) ([]byte, error)
+    Synthesize(ctx context.Context, text string) ([]byte, error)
 }
 ```
 
-`WhisperCppSTT` and `SileroTTS` (both thin HTTP clients against their
-respective sidecars) are the first implementations. A future `PiperTTS` or
-`RHVoiceTTS` implements the same `TTSEngine` interface — `internal/webui`'s
-voice handlers never change.
+`WhisperCppSTT` (an HTTP client against `whisper-server`) and `PiperTTS`
+(an `os/exec` wrapper around the `piper` binary) are the first
+implementations — neither needs to know the other exists, and the
+`TTSEngine` interface doesn't care that one implementation happens to shell
+out instead of making an HTTP call. This is exactly where the interface
+split already pays for itself: if Piper's quality turns out not to be
+good enough, a future `SileroTTS` (HTTP client to a Python sidecar, as
+originally designed) or `RHVoiceTTS` implements the same interface with
+zero changes to `internal/webui`'s voice handlers.
 
 ## `POST /api/voice`: the full pipeline
 
@@ -306,12 +326,13 @@ microphone/speaker loop running directly on the host:
 
 New top-level `voice:` block, `internal/config/config.go` gets a
 `VoiceConfig` struct (`mapstructure:"voice"`) the same way `WebConfig`
-already looks. Model **paths and thread counts belong to the sidecar
-processes** (`docker-compose.yml`'s `command:`/`environment:`, exactly
-like `llama-chat`'s `-t 4` and `LLAMA_API_KEY`), not to Bosun's own
-config — Bosun only needs to know *where* to reach them, mirroring how
-`llm.embeddings.base_url` already points at a separate `llama-server`
-instance rather than Bosun loading an embedding model itself:
+already looks. STT's model path/thread count still belong to the
+`whisper-server` process (`docker-compose.yml`'s `command:`, exactly like
+`llama-chat`'s `-t 4`) — Bosun only needs to know *where* to reach it,
+mirroring how `llm.embeddings.base_url` already points at a separate
+`llama-server` instance. TTS has no separate process to point at anymore,
+so its config is the binary/model paths directly (still never hardcoded
+in Go source, per the spec's own requirement):
 
 ```yaml
 voice:
@@ -320,9 +341,9 @@ voice:
     language: "ru"
     auto_detect_language: false          # true lets whisper.cpp detect instead
   tts:
-    base_url: "http://127.0.0.1:1237"   # silero-tts sidecar
-    speaker: "aidar"
-    sample_rate: 24000
+    binary_path: "/usr/local/bin/piper"
+    model_path: "/opt/bosun/models/tts/ru_RU-<voice>-medium.onnx"
+    sample_rate: 22050                    # informational — set by the voice model, not a resample target
   vad:
     enabled: true          # ignored until conversation mode exists
     silence_ms: 900
@@ -331,23 +352,25 @@ voice:
     sink: "default"
 ```
 
-Empty `voice.stt.base_url`/`voice.tts.base_url` (the default) disables the
-feature entirely — `/api/voice` etc. report `{"enabled": false}`, same
-pattern `docs/settings.md`'s settings store and `docs/memo-search.md`'s
-document store already use for an optional feature with no backing
-service configured.
+Empty `voice.stt.base_url` or empty `voice.tts.model_path` (the default)
+disables that half of the feature — `/api/voice` etc. report
+`{"enabled": false}`, same pattern `docs/settings.md`'s settings store and
+`docs/memo-search.md`'s document store already use for an optional
+feature with no backing service configured.
 
 ## Deployment: Docker, not systemd, for the MVP
 
 The original spec suggested systemd because it assumed a service that
-directly touches audio hardware. Since the MVP's STT/TTS engines are pure
-HTTP inference servers (no audio device access — see above), they fit the
-**existing** Docker Compose stack exactly like `llama-chat`/`llama-embed`
-already do: `whisper-stt` and `silero-tts` services, `network_mode: host`,
-`restart: unless-stopped` — reboot survival is already solved by Docker's
-restart policy, no new systemd units needed at this phase. Systemd only
-becomes the right tool once conversation mode's host-audio-touching
-component exists (see above).
+directly touches audio hardware. Since the MVP's STT engine is a pure
+HTTP inference server (no audio device access — see above) and TTS is now
+just a subprocess call from within Bosun's own container, everything
+fits the **existing** Docker Compose stack: one new `whisper-stt` service
+(mirroring `llama-chat`/`llama-embed`'s `network_mode: host`,
+`restart: unless-stopped`) plus `espeak-ng`/`piper`/voice-model additions
+to the existing `bosun` image — reboot survival is already solved by
+Docker's restart policy, no new systemd units needed at this phase.
+Systemd only becomes the right tool once conversation mode's
+host-audio-touching component exists (see above).
 
 ## Logging
 
@@ -369,19 +392,27 @@ cloud STT/TTS, a native mobile app — none of this now.
 ## MVP acceptance criteria
 
 Press the button → speak → whisper.cpp recognizes → Bosun (same
-`agent.Agent` as text chat) replies → Silero speaks the reply — over the
+`agent.Agent` as text chat) replies → Piper speaks the reply — over the
 existing web UI, phone or desktop, fully offline once models are
-downloaded.
+downloaded, no Python anywhere in the path.
 
 ## Open questions before implementation starts
 
-1. **Model source/licensing check for `v5_5_ru`** — confirm the exact
-   Silero release URL/version to pin (analogous to `LLAMA_CPP_REF`), so
-   the model download step is reproducible, not "whatever's newest."
-2. **`whisper-server`'s actual request/response shape** needs verifying
+1. **Verify ONNX Runtime actually runs on this CPU without AVX2** — the
+   whole Piper recommendation rests on ONNX Runtime's CPU provider having
+   a working non-AVX2 fallback path. Download Piper's official release +
+   one Russian voice and just run it once on this host before writing any
+   integration code — cheap to check, expensive to assume wrong.
+2. **Pick and pin the actual Piper voice model(s)** — check the current
+   `rhasspy/piper-voices` listing for available male Russian voices (names
+   recalled here, like `ru_RU-denis-medium`, are not verified against the
+   live repo), download two candidates, and listen-test before picking a
+   default.
+3. **`whisper-server`'s actual request/response shape** needs verifying
    against the pinned `whisper.cpp` commit before writing `handleSTT` —
    the endpoint path and JSON field names in this doc are from
    whisper.cpp's typical `server` example, not yet confirmed against the
    exact pinned build.
-3. **ffmpeg availability** — `internal/webui`'s Dockerfile already ships
-   `poppler-utils`/`tesseract-ocr`; add `ffmpeg` there too once this lands.
+4. **ffmpeg and espeak-ng availability** — `internal/webui`'s Dockerfile
+   already ships `poppler-utils`/`tesseract-ocr`; add both there too once
+   this lands (`espeak-ng` is Piper's phonemizer dependency).
