@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,8 +33,9 @@ func (f *personaFakeAsker) SetPersona(nameRU, nameEN, stylePrompt string) {
 }
 
 type settingsResponse struct {
-	Enabled  bool          `json:"enabled"`
-	Settings settings.Data `json:"settings"`
+	Enabled         bool          `json:"enabled"`
+	Settings        settings.Data `json:"settings"`
+	CACertAvailable bool          `json:"ca_cert_available"`
 }
 
 func TestServerSettingsDisabledByDefault(t *testing.T) {
@@ -159,6 +161,59 @@ func TestServerSettingsUpdateAppliesTemperatureController(t *testing.T) {
 	}
 	if controller.remote != 0.9 || controller.local != 0.1 {
 		t.Errorf("controller = %#v, want {0.9 0.1}", controller)
+	}
+}
+
+func TestServerCACertNotConfigured(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ca.pem", nil))
+	if response.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", response.Code)
+	}
+
+	getResp := httptest.NewRecorder()
+	server.Handler().ServeHTTP(getResp, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	var body settingsResponse
+	if err := json.NewDecoder(getResp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.CACertAvailable {
+		t.Error("ca_cert_available = true, want false")
+	}
+}
+
+func TestServerCACertDownload(t *testing.T) {
+	const certContent = "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+	certPath := filepath.Join(t.TempDir(), "rootCA.pem")
+	if err := os.WriteFile(certPath, []byte(certContent), 0o644); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetCACertFile(certPath)
+	server.SetSettingsStore(mustLoadSettings(t))
+
+	getResp := httptest.NewRecorder()
+	server.Handler().ServeHTTP(getResp, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	var body settingsResponse
+	if err := json.NewDecoder(getResp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.CACertAvailable {
+		t.Error("ca_cert_available = false, want true")
+	}
+
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ca.pem", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if response.Body.String() != certContent {
+		t.Errorf("body = %q, want %q", response.Body.String(), certContent)
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/x-x509-ca-cert" {
+		t.Errorf("Content-Type = %q", got)
 	}
 }
 

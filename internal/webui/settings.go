@@ -3,6 +3,7 @@ package webui
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/roman220/ai-local-smarthelper/internal/settings"
 )
@@ -35,13 +36,46 @@ func (s *Server) SetTemperatureController(controller temperatureController) {
 	s.temps = controller
 }
 
+// SetCACertFile makes the CA that issued the TLS cert (e.g. mkcert's
+// rootCA.pem) downloadable at GET /ca.pem and linked from the settings
+// page, so a new device can grab and trust it directly instead of a
+// separate file transfer — see docs/tls.md. Empty (the default) hides the
+// link and 404s the route. Never point this at a CA's private key.
+func (s *Server) SetCACertFile(path string) {
+	s.caCertFile = path
+}
+
 func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	if s.settingsStore == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
 	data := s.settingsStore.Get()
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "settings": data})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":           true,
+		"settings":          data,
+		"ca_cert_available": s.caCertFile != "",
+	})
+}
+
+// handleCACert serves the CA certificate set via SetCACertFile so a new
+// device can download and trust it directly from the running service.
+// application/x-x509-ca-cert is the MIME type iOS Safari recognizes to
+// offer installing it as a trusted profile.
+func (s *Server) handleCACert(w http.ResponseWriter, r *http.Request) {
+	if s.caCertFile == "" {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := os.ReadFile(s.caCertFile)
+	if err != nil {
+		s.logger.Error("read CA cert", "error", err)
+		http.Error(w, "CA certificate unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-x509-ca-cert")
+	w.Header().Set("Content-Disposition", `attachment; filename="bosun-ca.pem"`)
+	w.Write(data)
 }
 
 // handleSettingsUpdate persists the new settings, then applies each one

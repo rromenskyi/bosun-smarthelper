@@ -113,6 +113,7 @@ type Server struct {
 	defaultLanguage   string
 	settingsStore     *settings.Store
 	temps             temperatureController
+	caCertFile        string
 }
 
 // SetDefaultLanguage changes the language used when a chat request doesn't
@@ -310,6 +311,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/documents/{id}", s.handleDocumentDelete)
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("POST /api/settings", s.handleSettingsUpdate)
+	mux.HandleFunc("GET /ca.pem", s.handleCACert)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
 	}

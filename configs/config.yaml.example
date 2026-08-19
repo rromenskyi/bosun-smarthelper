@@ -93,6 +93,10 @@ web:
                                              # phone/laptop can be made to trust with no browser warning
                                              # even though this is a private LAN IP, not a public domain.
                                              # See docs/tls.md.
+  # ca_cert_file: ""                        # Optional: path to the CA's public cert (mkcert's
+                                             # rootCA.pem — never its rootCA-key.pem) so a new device
+                                             # can download and trust it at GET /ca.pem, linked from the
+                                             # settings page, instead of a separate file transfer.
 
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:

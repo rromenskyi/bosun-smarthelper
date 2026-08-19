@@ -16,14 +16,15 @@ mkcert -install                 # creates the local CA under ~/.local/share/mkce
 mkdir -p data/certs
 mkcert -cert-file data/certs/cert.pem -key-file data/certs/key.pem \
   10.0.0.111 roman220-macmini5-1.local localhost 127.0.0.1 ::1
+cp "$(mkcert -CAROOT)/rootCA.pem" data/certs/rootCA.pem
 ```
 
 `data/certs/` is bind-mounted read-only into the container at
 `/home/bosun/certs` (`docker-compose.yml`), and `config.yaml`'s
-`web.tls_cert_file`/`web.tls_key_file` point there. `internal/webui.Server.Serve`
-serves HTTPS when both are set, plain HTTP otherwise (`internal/config`'s
-defaults keep both empty, so every deployment predating this feature is
-unaffected).
+`web.tls_cert_file`/`web.tls_key_file`/`web.ca_cert_file` point there.
+`internal/webui.Server.Serve` serves HTTPS when the first two are set,
+plain HTTP otherwise (`internal/config`'s defaults keep all three empty,
+so every deployment predating this feature is unaffected).
 
 Both `config.yaml` and `data/` are gitignored — the cert/key never get
 committed, and each deployment generates its own.
@@ -33,7 +34,24 @@ committed, and each deployment generates its own.
 `mkcert -install` only trusts the CA on the machine mkcert ran on. Every
 *other* device that connects (a phone, a laptop) needs the CA's public
 cert imported and trusted there too — this is a one-time step per device,
-not per site, since one CA can vouch for every cert it issues:
+not per site, since one CA can vouch for every cert it issues.
+
+### Downloading it directly from the running service
+
+Set `web.ca_cert_file` in `config.yaml` to the CA's public cert (this
+host's is `/home/bosun/certs/rootCA.pem` inside the container, copied from
+mkcert's `rootCA.pem` — **never** point this at `rootCA-key.pem`, the
+CA's private key). Once set, the settings page (gear icon) shows a
+"download the HTTPS certificate" link, and it's also reachable directly at
+`https://<host>/ca.pem` — so a new device can grab it with nothing more
+than a browser, no separate file transfer needed. You'll see a
+certificate warning the first time you visit, since the very cert you're
+about to trust is what's serving the page — click through it (Safari:
+"Show Details" → "visit this website"); that's expected and only needed
+this once.
+
+If you'd rather not expose the download route at all, leave
+`ca_cert_file` empty (the default) and transfer the file manually instead:
 
 ```
 mkcert -CAROOT   # prints the directory; the file to copy is rootCA.pem

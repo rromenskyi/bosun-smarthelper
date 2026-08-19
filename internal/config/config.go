@@ -162,6 +162,12 @@ type WebConfig struct {
 	// existed.
 	TLSCertFile string `mapstructure:"tls_cert_file"`
 	TLSKeyFile  string `mapstructure:"tls_key_file"`
+	// CACertFile, when set, is served at GET /ca.pem (and linked from the
+	// settings page) so a new phone/laptop can download and trust the CA
+	// that issued TLSCertFile without a separate file transfer — see
+	// docs/tls.md. Never point this at a CA's private key, only its public
+	// cert (mkcert's rootCA.pem, not rootCA-key.pem).
+	CACertFile string `mapstructure:"ca_cert_file"`
 }
 
 // HistoryConfig holds separate chat-history budgets per provider: a weak

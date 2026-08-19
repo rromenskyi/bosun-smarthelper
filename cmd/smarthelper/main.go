@@ -166,6 +166,7 @@ func serveCmd() *cobra.Command {
 			server.SetDocumentStore(docStore)
 			server.SetSettingsStore(settingsStore)
 			server.SetTemperatureController(router)
+			server.SetCACertFile(cfg.Web.CACertFile)
 
 			if memoTool, ok := registry.Get("memo"); ok {
 				if mt, ok := memoTool.(*tools.MemoTool); ok {
