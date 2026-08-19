@@ -82,6 +82,22 @@ whatever's convenient) and trust it:
   sudo update-ca-certificates`, plus reimport into Firefox/Chrome's own
   NSS store the same way this host's setup did.
 
+## Devices that can never trust the CA (corporate MDM)
+
+A corporate-managed phone's MDM profile often blocks installing custom
+root certs outright — no amount of retrying the steps above will get past
+that, since it's an intentional restriction, not a bug in the steps.
+
+For a device like that, set `web.http_fallback_bind` to a second address
+(e.g. `10.0.0.111:8080`) — once TLS is enabled, `Server.Serve` starts a
+second, plain-HTTP listener there with the exact same handler, alongside
+the TLS one on the primary `web.bind`. That device just uses
+`http://10.0.0.111:8080` with zero certificate friction, exactly as every
+device did before TLS was set up; every other device keeps using the
+trusted `https://` address on the primary port. The fallback is ignored
+entirely unless `web.tls_cert_file`/`tls_key_file` are also set — leaving
+it configured costs nothing on a deployment that never turns TLS on.
+
 ## Using the standard port (443)
 
 `web.bind`'s port is just a config value — nothing stops it being `443`

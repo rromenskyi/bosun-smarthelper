@@ -318,41 +318,69 @@ func (s *Server) Handler() http.Handler {
 	return securityHeaders(mux)
 }
 
+func newHTTPServer(address string, handler http.Handler, requestTimeout time.Duration) *http.Server {
+	return &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      requestTimeout + 15*time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+}
+
 // Serve listens until ctx is cancelled. When both certFile and keyFile are
 // non-empty it serves HTTPS (e.g. certs from mkcert — see docs/tls.md);
 // otherwise plain HTTP, matching every deployment before TLS support existed.
-func (s *Server) Serve(ctx context.Context, address, certFile, keyFile string) error {
-	server := &http.Server{
-		Addr:              address,
-		Handler:           s.Handler(),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      s.requestTimeout + 15*time.Second,
-		IdleTimeout:       60 * time.Second,
+// When TLS is enabled and httpFallbackBind is non-empty, it additionally
+// serves plain HTTP (same handler) on that address — for a device that
+// can't be made to trust the TLS cert at all (e.g. a corporate MDM-managed
+// phone that blocks installing custom root certs).
+func (s *Server) Serve(ctx context.Context, address, certFile, keyFile, httpFallbackBind string) error {
+	handler := s.Handler()
+	useTLS := certFile != "" && keyFile != ""
+
+	primary := newHTTPServer(address, handler, s.requestTimeout)
+	servers := []*http.Server{primary}
+
+	var fallback *http.Server
+	if useTLS && httpFallbackBind != "" {
+		fallback = newHTTPServer(httpFallbackBind, handler, s.requestTimeout)
+		servers = append(servers, fallback)
 	}
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, len(servers))
 	go func() {
-		if certFile != "" && keyFile != "" {
-			errCh <- server.ListenAndServeTLS(certFile, keyFile)
+		if useTLS {
+			errCh <- primary.ListenAndServeTLS(certFile, keyFile)
 		} else {
-			errCh <- server.ListenAndServe()
+			errCh <- primary.ListenAndServe()
 		}
 	}()
+	if fallback != nil {
+		go func() { errCh <- fallback.ListenAndServe() }()
+	}
+
+	// A single chat request can legitimately run for minutes (slow local
+	// hardware) — far longer than a restart should wait. Give it a short
+	// grace period, then abandon in-flight requests rather than treat a
+	// timeout here as a failure; the process is exiting either way.
+	shutdownAll := func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		for _, srv := range servers {
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				s.logger.Warn("graceful shutdown timed out; abandoning in-flight requests", "address", srv.Addr, "error", err)
+			}
+		}
+	}
 
 	select {
 	case <-ctx.Done():
-		// A single chat request can legitimately run for minutes (slow local
-		// hardware) — far longer than a restart should wait. Give it a short
-		// grace period, then abandon in-flight requests rather than treat a
-		// timeout here as a failure; the process is exiting either way.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			s.logger.Warn("graceful shutdown timed out; abandoning in-flight requests", "error", err)
-		}
+		shutdownAll()
 		return nil
 	case err := <-errCh:
+		shutdownAll()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}

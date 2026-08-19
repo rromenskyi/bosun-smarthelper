@@ -100,6 +100,11 @@ func serveCmd() *cobra.Command {
 			if err := webui.ValidateBind(cfg.Web.Bind); err != nil {
 				return err
 			}
+			if cfg.Web.HTTPFallbackBind != "" {
+				if err := webui.ValidateBind(cfg.Web.HTTPFallbackBind); err != nil {
+					return fmt.Errorf("http fallback bind: %w", err)
+				}
+			}
 
 			requestTimeout, err := time.ParseDuration(cfg.Web.RequestTimeout)
 			if err != nil || requestTimeout <= 0 {
@@ -183,7 +188,10 @@ func serveCmd() *cobra.Command {
 				scheme = "https"
 			}
 			logger.Info("starting web interface", "address", cfg.Web.Bind, "scheme", scheme)
-			return server.Serve(cmd.Context(), cfg.Web.Bind, cfg.Web.TLSCertFile, cfg.Web.TLSKeyFile)
+			if scheme == "https" && cfg.Web.HTTPFallbackBind != "" {
+				logger.Info("also serving plain HTTP fallback", "address", cfg.Web.HTTPFallbackBind)
+			}
+			return server.Serve(cmd.Context(), cfg.Web.Bind, cfg.Web.TLSCertFile, cfg.Web.TLSKeyFile, cfg.Web.HTTPFallbackBind)
 		},
 	}
 }

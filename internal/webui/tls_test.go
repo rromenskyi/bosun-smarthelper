@@ -103,7 +103,7 @@ func TestServerServeTLS(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
-	go func() { errCh <- server.Serve(ctx, address, certFile, keyFile) }()
+	go func() { errCh <- server.Serve(ctx, address, certFile, keyFile, "") }()
 
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
 	waitForServer(t, func() error {
@@ -139,7 +139,7 @@ func TestServerServePlainHTTPWhenNoCert(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
-	go func() { errCh <- server.Serve(ctx, address, "", "") }()
+	go func() { errCh <- server.Serve(ctx, address, "", "", "") }()
 
 	waitForServer(t, func() error {
 		response, err := http.Get("http://" + address + "/api/status")
@@ -157,6 +157,98 @@ func TestServerServePlainHTTPWhenNoCert(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", response.StatusCode)
+	}
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return after context cancellation")
+	}
+}
+
+// TestServerServeTLSWithHTTPFallback covers the corporate-MDM-phone case
+// (docs/tls.md): TLS on the primary address, plain HTTP on a second
+// address for a device that can never be made to trust the cert.
+func TestServerServeTLSWithHTTPFallback(t *testing.T) {
+	certFile, keyFile := generateSelfSignedCert(t, t.TempDir())
+	tlsAddress := reserveFreeAddress(t)
+	httpAddress := reserveFreeAddress(t)
+
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Serve(ctx, tlsAddress, certFile, keyFile, httpAddress) }()
+
+	tlsClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	waitForServer(t, func() error {
+		response, err := tlsClient.Get("https://" + tlsAddress + "/api/status")
+		if err != nil {
+			return err
+		}
+		response.Body.Close()
+		return nil
+	})
+	waitForServer(t, func() error {
+		response, err := http.Get("http://" + httpAddress + "/api/status")
+		if err != nil {
+			return err
+		}
+		response.Body.Close()
+		return nil
+	})
+
+	tlsResponse, err := tlsClient.Get("https://" + tlsAddress + "/api/status")
+	if err != nil {
+		t.Fatalf("https request failed: %v", err)
+	}
+	defer tlsResponse.Body.Close()
+	if tlsResponse.StatusCode != http.StatusOK {
+		t.Errorf("https status = %d, want 200", tlsResponse.StatusCode)
+	}
+
+	httpResponse, err := http.Get("http://" + httpAddress + "/api/status")
+	if err != nil {
+		t.Fatalf("http fallback request failed: %v", err)
+	}
+	defer httpResponse.Body.Close()
+	if httpResponse.StatusCode != http.StatusOK {
+		t.Errorf("http fallback status = %d, want 200", httpResponse.StatusCode)
+	}
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return after context cancellation")
+	}
+}
+
+// TestServerServeIgnoresHTTPFallbackWithoutTLS confirms the fallback
+// address is only meaningful when TLS is actually enabled — without a
+// cert, the primary listener is already plain HTTP.
+func TestServerServeIgnoresHTTPFallbackWithoutTLS(t *testing.T) {
+	address := reserveFreeAddress(t)
+	unusedFallback := reserveFreeAddress(t)
+
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Serve(ctx, address, "", "", unusedFallback) }()
+
+	waitForServer(t, func() error {
+		response, err := http.Get("http://" + address + "/api/status")
+		if err != nil {
+			return err
+		}
+		response.Body.Close()
+		return nil
+	})
+
+	if _, err := http.Get("http://" + unusedFallback + "/api/status"); err == nil {
+		t.Error("expected the fallback address to remain unused when TLS is disabled")
 	}
 
 	cancel()

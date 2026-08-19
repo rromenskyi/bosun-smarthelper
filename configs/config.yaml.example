@@ -97,6 +97,11 @@ web:
                                              # rootCA.pem — never its rootCA-key.pem) so a new device
                                              # can download and trust it at GET /ca.pem, linked from the
                                              # settings page, instead of a separate file transfer.
+  # http_fallback_bind: ""                  # Optional, only used when TLS is enabled above: also
+                                             # serve plain HTTP (same handler) on this address, for a
+                                             # device that can't be made to trust the TLS cert at all
+                                             # (e.g. a corporate MDM-managed phone that blocks
+                                             # installing custom root certs). See docs/tls.md.
 
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:

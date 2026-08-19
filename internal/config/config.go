@@ -168,6 +168,13 @@ type WebConfig struct {
 	// docs/tls.md. Never point this at a CA's private key, only its public
 	// cert (mkcert's rootCA.pem, not rootCA-key.pem).
 	CACertFile string `mapstructure:"ca_cert_file"`
+	// HTTPFallbackBind, when TLS is enabled, additionally serves plain HTTP
+	// (same handler) on this address — for a device that can't be made to
+	// trust the TLS cert at all (e.g. a corporate MDM-managed phone that
+	// blocks installing custom root certs). Ignored unless TLSCertFile and
+	// TLSKeyFile are both set. Empty (the default) serves TLS only. See
+	// docs/tls.md.
+	HTTPFallbackBind string `mapstructure:"http_fallback_bind"`
 }
 
 // HistoryConfig holds separate chat-history budgets per provider: a weak
