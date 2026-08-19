@@ -32,12 +32,30 @@ services:
       # voice model is a runtime bind mount, so switching voices is a
       # config edit, not a rebuild.
       - ./data/models/tts:/home/bosun/models/tts:ro
-    devices:
-      # Real u-blox 7 GPS receiver (see internal/tools/gps_serial.go). If
-      # another USB serial device ever gets added, this path may shift —
-      # check `ls -la /dev/serial/by-id/` to find which /dev/ttyACMx it
-      # actually is.
-      - "/dev/ttyACM0:/dev/ttyACM0"
+      # The real u-blox 7 GPS receiver (internal/tools/gps_serial.go) is
+      # plugged/unplugged independently of bosun's own lifecycle, and a
+      # `devices:` entry (the alternative) requires the node to exist at
+      # container *creation* — if the GPS wasn't plugged in yet at boot,
+      # bosun would fail to start at all rather than just lack a GPS fix.
+      # Bind-mounting /dev instead gives the container a live view of the
+      # host's device tree, so a GPS plugged in after bosun is already
+      # running still becomes visible without a restart; readSerialGPS
+      # (gps_serial.go) opens the port fresh on every call, so it just
+      # starts working the next time GPS is asked for. Kernel file
+      # permissions on the individual device nodes are unaffected, so this
+      # doesn't grant access beyond what group_add below already allows.
+      - /dev:/dev
+    device_cgroup_rules:
+      # The bind mount above only makes device *nodes* visible; the cgroup
+      # device controller separately gates actual open()/read()/write(),
+      # and Docker's default non-privileged policy denies everything not
+      # explicitly listed here — a plain /dev bind mount alone still gets
+      # "operation not permitted" on the real syscalls. Major 166 is the
+      # USB-ACM class (`ls -la /dev/ttyACM0` — "166, 0"), covering
+      # /dev/ttyACM0 and any others in that class; unlike `devices:`, a
+      # cgroup rule is just a major:minor pattern with no existence check,
+      # so it applies whether or not the GPS is plugged in yet.
+      - "c 166:* rmw"
     group_add:
       # Matches this host's "dialout" group (GID 20) so the container's
       # non-root bosun user can open /dev/ttyACM0 (owned root:dialout,
