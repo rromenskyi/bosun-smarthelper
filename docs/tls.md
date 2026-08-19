@@ -125,6 +125,26 @@ reboots.
 
 If the host's LAN IP changes (DHCP reassignment, new router), the leaf
 cert (not the CA) needs regenerating with the new IP in its SAN list —
-rerun the `mkcert -cert-file ... -key-file ...` command above with the new
-address, then `docker compose restart bosun`. No device needs to re-trust
-anything; the CA itself didn't change.
+rerun `scripts/regen-cert.sh`, which detects the host's current default-route
+IP and mDNS hostname, regenerates `data/certs/cert.pem`/`key.pem` for them,
+and restarts `bosun`. No device needs to re-trust anything; the CA itself
+didn't change. (Equivalent to rerunning the `mkcert -cert-file ...
+-key-file ...` command from the one-time setup above with the new address.)
+
+## Binding to 0.0.0.0 instead of a fixed IP
+
+`web.bind`/`http_fallback_bind` can be set to `0.0.0.0` instead of a literal
+private IP (`webui.ValidateBind` allows both) — useful on a host without a
+DHCP reservation, where the IP can change on every reboot and hand-editing
+`config.yaml` each time isn't practical. The service still listens on every
+interface's private address only in practice (no public IP is ever assigned
+to this LAN-only host), and it still has no authentication, so this remains
+strictly a trusted-LAN deployment either way.
+
+Binding to `0.0.0.0` does **not** remove the need to rerun
+`scripts/regen-cert.sh` after an IP change — that only fixes what address
+the *socket* listens on. The TLS cert's SAN list is still pinned to whatever
+IP it was generated for, so browsers hitting the new IP directly will see a
+certificate warning until the cert is regenerated. Connecting via the mDNS
+hostname (`https://roman220-macmini5-1.local`, already in the cert's SAN)
+avoids that entirely, since it resolves to whatever the current IP is.

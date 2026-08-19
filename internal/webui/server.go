@@ -37,7 +37,13 @@ const maxDocumentUploadBytes = 2 << 20
 //go:embed index.html
 var indexHTML []byte
 
-// ValidateBind permits only loopback or explicit private LAN addresses.
+// ValidateBind permits loopback, explicit private LAN addresses, and the
+// IPv4/IPv6 wildcard (0.0.0.0, ::) — the wildcard is allowed deliberately so
+// a deployment on a DHCP host without a static/reserved lease keeps working
+// across an IP change, rather than requiring config.yaml to be hand-edited
+// after every reboot. It still rejects public and link-local addresses,
+// since this service has no authentication and is meant only for a trusted
+// LAN.
 func ValidateBind(address string) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
@@ -47,8 +53,8 @@ func ValidateBind(address string) error {
 		return nil
 	}
 	ip := net.ParseIP(host)
-	if ip == nil || (!ip.IsLoopback() && !ip.IsPrivate()) {
-		return fmt.Errorf("web bind host must be localhost or a private IP")
+	if ip == nil || (!ip.IsLoopback() && !ip.IsPrivate() && !ip.IsUnspecified()) {
+		return fmt.Errorf("web bind host must be localhost, a private IP, or 0.0.0.0")
 	}
 	return nil
 }

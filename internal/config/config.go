@@ -357,8 +357,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("mcp.transport", "stdio")
 	v.SetDefault("mcp.log_level", "info")
 
-	// Web defaults bind only to loopback. LAN deployments should use the
-	// machine's explicit private address rather than 0.0.0.0.
+	// Web defaults bind only to loopback. LAN deployments should set an
+	// explicit private address or 0.0.0.0 in config.yaml — see
+	// webui.ValidateBind for what's accepted.
 	v.SetDefault("web.bind", "127.0.0.1:8080")
 	v.SetDefault("web.request_timeout", "600s")
 	v.SetDefault("web.default_language", "ru")

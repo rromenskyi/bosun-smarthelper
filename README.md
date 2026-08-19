@@ -146,8 +146,9 @@ Point an MCP client at `./bin/smarthelper mcp` as a stdio server to get access
 to the tools below.
 
 The web interface defaults to `127.0.0.1:8080`. For phone access, configure an
-explicit private address such as `10.0.0.111:8080`; wildcard and public binds
-are rejected. No authentication is provided, so keep it on a trusted LAN.
+explicit private address such as `10.0.0.111:8080`, or `0.0.0.0:8080` if the
+host's IP isn't fixed (see `docs/tls.md`); public binds are rejected. No
+authentication is provided, so keep it on a trusted LAN.
 
 ## MCP Tools
 

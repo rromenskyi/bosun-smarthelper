@@ -61,7 +61,9 @@ mcp:
 
 # LAN-only web interface
 web:
-  bind: "127.0.0.1:8080"                   # Use an explicit private LAN IP for phone access
+  bind: "127.0.0.1:8080"                   # For phone access, use an explicit private LAN IP,
+                                             # or "0.0.0.0:8080" to survive the host's IP changing
+                                             # (e.g. no DHCP reservation) — see docs/tls.md.
   request_timeout: 600s                     # Bounds the whole chat request (incl. tool calls);
                                              # keep well above llm.local.timeout for headroom
   default_language: "ru"                   # ru or en

@@ -472,12 +472,12 @@ func TestServerStatus(t *testing.T) {
 }
 
 func TestValidateBind(t *testing.T) {
-	for _, address := range []string{"127.0.0.1:8080", "localhost:8080", "10.0.0.111:8080", "[::1]:8080"} {
+	for _, address := range []string{"127.0.0.1:8080", "localhost:8080", "10.0.0.111:8080", "[::1]:8080", "0.0.0.0:8080", "[::]:8080"} {
 		if err := ValidateBind(address); err != nil {
 			t.Errorf("ValidateBind(%q): %v", address, err)
 		}
 	}
-	for _, address := range []string{"0.0.0.0:8080", ":8080", "8.8.8.8:8080", "example.com:8080"} {
+	for _, address := range []string{":8080", "8.8.8.8:8080", "example.com:8080"} {
 		if err := ValidateBind(address); err == nil {
 			t.Errorf("ValidateBind(%q) unexpectedly succeeded", address)
 		}
