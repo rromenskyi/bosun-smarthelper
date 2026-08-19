@@ -523,6 +523,15 @@ func parsePromptedToolCall(raw []byte) (promptedToolCall, error) {
 	if err := json.Unmarshal(raw, &call); err != nil {
 		return call, err
 	}
+	// A weak model echoes the compact tool signature verbatim
+	// ("get_gps(): Get current GPS location.", from compactToolDefinitions)
+	// instead of just the bare name — especially for zero-argument tools,
+	// where the whole "name()" reads as one token. Strip everything from
+	// the first "(" onward so "get_gps()" still matches the registered
+	// tool "get_gps" instead of failing as an unknown tool.
+	if idx := strings.IndexByte(call.Tool, '('); idx >= 0 {
+		call.Tool = strings.TrimSpace(call.Tool[:idx])
+	}
 	if len(call.Arguments) > 0 {
 		return call, nil
 	}

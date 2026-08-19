@@ -319,7 +319,7 @@
     const settingsDialog = document.querySelector('#settings-dialog');
     const settingsForm = document.querySelector('#settings-form');
     let busy = false;
-    let busySpeaking = false;
+    let currentAudio = null;
     let currentProvider = 'local';
     let currentOverride = 'auto';
     let waitingBubble = null;
@@ -365,10 +365,22 @@
         .trim();
     }
 
+    // A new reply always cuts off whatever the previous one is still
+    // saying — without this, two <audio> elements happily play at once
+    // (nothing in the platform stops them), so a voice-loop turn that
+    // comes back while the last reply is still being read out talks right
+    // over it instead of replacing it.
+    function stopCurrentAudio() {
+      if (!currentAudio) return;
+      currentAudio.pause();
+      URL.revokeObjectURL(currentAudio.src);
+      currentAudio = null;
+    }
+
     async function speakText(value, button) {
       value = stripMarkdownForSpeech(value);
-      if (busySpeaking || !value || !value.trim()) return;
-      busySpeaking = true;
+      if (!value || !value.trim()) return;
+      stopCurrentAudio();
       button.disabled = true;
       const original = button.textContent;
       button.textContent = '…';
@@ -380,14 +392,26 @@
         });
         if (!response.ok) throw new Error('tts failed');
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.addEventListener('ended', () => URL.revokeObjectURL(url));
-        await audio.play();
+        const audio = new Audio(URL.createObjectURL(blob));
+        currentAudio = audio;
+        // audio.play() resolves once playback *starts*, not once it ends —
+        // wait for 'ended' (or an interrupting stopCurrentAudio, which
+        // fires 'pause') so the button stays disabled for the reply's
+        // actual spoken duration instead of re-enabling instantly.
+        await new Promise(resolve => {
+          audio.addEventListener('ended', () => {
+            if (currentAudio === audio) {
+              URL.revokeObjectURL(audio.src);
+              currentAudio = null;
+            }
+            resolve();
+          }, { once: true });
+          audio.addEventListener('pause', resolve, { once: true });
+          audio.play().catch(resolve);
+        });
       } catch {
         // Best-effort: connectivity/engine issues already surface via the status pill.
       } finally {
-        busySpeaking = false;
         button.disabled = false;
         button.textContent = original;
       }
@@ -729,6 +753,7 @@
 
     async function startRecording() {
       if (busy || mediaRecorder) return;
+      stopCurrentAudio();
       try {
         micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch {

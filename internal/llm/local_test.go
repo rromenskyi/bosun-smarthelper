@@ -264,6 +264,39 @@ func TestOpenAICompatibleLocalClientPromptedToolFallback_FlattenedArguments(t *t
 	}
 }
 
+// TestOpenAICompatibleLocalClientPromptedToolFallback_StripsSignatureParens
+// is a regression test for a real production bug: after asking about GPS,
+// the local model echoed the compact tool signature verbatim
+// ("get_gps():..." from compactToolDefinitions) as the tool name itself,
+// producing {"tool":"get_gps()"}. Since the registry only knows "get_gps",
+// this surfaced as `{"error":"unknown tool: get_gps()"}` even though the
+// model's intent was perfectly clear.
+func TestOpenAICompatibleLocalClientPromptedToolFallback_StripsSignatureParens(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(`{
+			"model":"default",
+			"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"get_gps()\"}"}}]
+		}`), nil
+	})
+
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second, true)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+	client.supportsTools = false
+
+	response, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "where am I?"}}, []ToolDefinition{
+		{Name: "get_gps", Parameters: map[string]any{"type": "object"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != "get_gps" {
+		t.Fatalf("unexpected tool calls: %+v", response.ToolCalls)
+	}
+}
+
 func TestOpenAICompatibleLocalClientRecognizesToolMention(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return jsonResponse(`{
