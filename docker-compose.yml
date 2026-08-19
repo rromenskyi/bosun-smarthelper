@@ -31,6 +31,17 @@ services:
       # voice model is a runtime bind mount, so switching voices is a
       # config edit, not a rebuild.
       - ./data/models/tts:/home/bosun/models/tts:ro
+    devices:
+      # Real u-blox 7 GPS receiver (see internal/tools/gps_serial.go). If
+      # another USB serial device ever gets added, this path may shift —
+      # check `ls -la /dev/serial/by-id/` to find which /dev/ttyACMx it
+      # actually is.
+      - "/dev/ttyACM0:/dev/ttyACM0"
+    group_add:
+      # Matches this host's "dialout" group (GID 20) so the container's
+      # non-root bosun user can open /dev/ttyACM0 (owned root:dialout,
+      # mode 660) without loosening the device's own permissions.
+      - "20"
 
   # See deploy/llama/Dockerfile for why this is built from source (pinned
   # commit, matching this host's already-verified bare-metal CPU-backend

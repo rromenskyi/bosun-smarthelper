@@ -188,9 +188,16 @@ sensors:
     mock_longitude: -111.8910
     mock_speed_kmh: 0
     mock_altitude_m: 150
-    # For serial GPS (NMEA):
-    # serial_port: "/dev/ttyUSB0"
-    # baud_rate: 9600
+    # For a real GPS receiver over USB/serial (NMEA 0183 — GPRMC + GPGGA,
+    # tested against a u-blox 7 module; see internal/tools/gps_serial.go):
+    # type: "serial"
+    # serial_port: "/dev/ttyACM0"            # or the stable path from
+                                              # `ls /dev/serial/by-id/` if
+                                              # you have more than one USB
+                                              # serial device
+    # baud_rate: 9600                        # u-blox NMEA default
+    # In Docker, also bind-mount the device node and add the host's
+    # "dialout" group's GID — see docker-compose.yml's "bosun" service.
 
   # System metrics
   system:

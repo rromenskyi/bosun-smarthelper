@@ -34,7 +34,8 @@ func (t *GPSTool) InputSchema() map[string]any {
 }
 
 func (t *GPSTool) Execute(ctx context.Context, args map[string]any) (any, error) {
-	if t.config.Type == "mock" {
+	switch t.config.Type {
+	case "mock":
 		return map[string]any{
 			"latitude":   t.config.MockLatitude,
 			"longitude":  t.config.MockLongitude,
@@ -42,8 +43,9 @@ func (t *GPSTool) Execute(ctx context.Context, args map[string]any) (any, error)
 			"altitude_m": t.config.MockAltitudeM,
 			"source":     "mock",
 		}, nil
+	case "serial":
+		return t.readSerialGPS(ctx)
+	default:
+		return nil, fmt.Errorf("gps sensor type %q not implemented", t.config.Type)
 	}
-
-	// TODO: Implement serial/NMEA backend
-	return nil, fmt.Errorf("gps sensor type %q not implemented", t.config.Type)
 }
