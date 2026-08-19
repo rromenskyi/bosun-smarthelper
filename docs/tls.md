@@ -64,6 +64,29 @@ whatever's convenient) and trust it:
   sudo update-ca-certificates`, plus reimport into Firefox/Chrome's own
   NSS store the same way this host's setup did.
 
+## Using the standard port (443)
+
+`web.bind`'s port is just a config value — nothing stops it being `443`
+instead of `8080` so the URL doesn't need `:8080` typed on every device.
+The one catch: ports below 1024 normally require root, and the container
+runs as a non-root user (`bosun`, uid 1000 — see Dockerfile) precisely so a
+compromised process can't do much. Rather than run as root or juggle Linux
+capabilities (which for a non-root process also need `setcap` baked into
+the binary, not just Docker's `cap_add` — tried and confirmed insufficient
+on its own), this host instead lowers the kernel's unprivileged-port
+threshold, which under `network_mode: host` (used here — see
+`docker-compose.yml`) applies directly since the container shares the
+host's network namespace:
+
+```
+echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-bosun-unprivileged-ports.conf
+sudo sysctl --system
+```
+
+This only affects ports 443–1023 (any process can now bind those without
+root); 1–442 still need root as before. One-time, persists across
+reboots.
+
 ## Regenerating after an IP change
 
 If the host's LAN IP changes (DHCP reassignment, new router), the leaf

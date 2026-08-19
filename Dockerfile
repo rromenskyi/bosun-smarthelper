@@ -38,6 +38,6 @@ USER bosun
 ENV HOME=/home/bosun
 WORKDIR /home/bosun
 
-EXPOSE 8080
+EXPOSE 443
 ENTRYPOINT ["/usr/local/bin/smarthelper"]
 CMD ["serve"]
