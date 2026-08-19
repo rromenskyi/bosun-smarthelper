@@ -523,6 +523,32 @@ as multipart body, then on response: render the recognized text and the
 reply text as normal chat bubbles (reusing `addMessage`, exactly like a
 typed turn), and autoplay the returned WAV via a plain `<audio>` element.
 
+### The shipped 🔊 speak button (a different, simpler thing than the above)
+
+Everything above in this section is push-to-talk *input* (mic → STT),
+still design-only. What's actually built and deployed is the reverse
+direction only: a 🔊 button on every assistant reply, wired into
+`addMessage()`/`finalizeLiveBubble()` in `internal/webui/index.html`,
+calling `POST /api/tts` with the message's text and playing the returned
+WAV via a plain `Audio()`/blob URL — no `MediaRecorder`, no voice input
+involved at all.
+
+**Markdown needs stripping client-side before it reaches TTS** — caught
+live: Piper read `**bold**` back as "звезда звезда звезда" (literally
+"star star star"), since chat replies are markdown and `renderMessageHTML`
+only strips/converts it for the *visual* bubble, never for the raw text a
+click sends to `/api/tts`. Added `stripMarkdownForSpeech()` right next to
+`renderMessageHTML()`: drops image markdown entirely (nothing to speak
+for a picture), keeps just the visible text of a link (never reads a raw
+URL aloud), and unwraps `**bold**` to plain text — deliberately narrower
+than `renderMessageHTML`'s stripping, matching only the markdown the LLM
+actually produces today. This runs **before** the request is sent, so
+`internal/voice.PiperTTS`/`handleTTS`'s own "text passes through
+completely unmodified" behavior (see below) is still accurate — that
+passthrough is about not stripping intonation punctuation server-side,
+not about markdown syntax, which was never meant to be spoken in the
+first place.
+
 ## Linux audio device configuration (conversation-mode phase only)
 
 **Not needed for the push-to-talk MVP** — recording and playback both

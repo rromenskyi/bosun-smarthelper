@@ -114,13 +114,16 @@
     }
     .bubble summary { cursor: pointer; color: var(--muted); }
     .chat-image { display: block; max-width: 100%; margin-top: 8px; border-radius: 10px; border: 1px solid var(--line); }
-    .speak-button {
-      display: block; margin-top: 8px; padding: 2px 8px; border-radius: 8px;
+    .message-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .message-actions button {
+      padding: 2px 8px; border-radius: 8px;
       border: 1px solid var(--line); background: transparent; color: var(--muted);
       font-size: 13px; cursor: pointer;
     }
-    .speak-button:hover { border-color: rgba(141, 224, 183, .45); }
-    .speak-button:disabled { opacity: .5; cursor: wait; }
+    .message-actions button:hover { border-color: rgba(141, 224, 183, .45); }
+    .message-actions button:disabled { opacity: .5; cursor: wait; }
+    .message-actions button.feedback-chosen { opacity: .4; cursor: default; }
+    .message-actions button.feedback-chosen:hover { border-color: var(--line); }
     .bubble details pre {
       margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere;
       color: var(--muted); font-family: ui-monospace, monospace; font-size: 11px;
@@ -310,8 +313,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response' }
     };
 
     function escapeHTML(value) {
@@ -334,7 +337,21 @@
       return html;
     }
 
+    // Same markdown renderMessageHTML turns into markup for the screen —
+    // for speech there's no equivalent, so drop images entirely, keep
+    // only the visible text of a link, and unwrap **bold** — the LLM's
+    // formatting isn't something Piper should read out loud literally.
+    function stripMarkdownForSpeech(value) {
+      return value
+        .replace(/!\[([^\]]*)\]\([^)]+\)/g, '')
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s")']+)\)/g, '$1')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/[ \t]+/g, ' ')
+        .trim();
+    }
+
     async function speakText(value, button) {
+      value = stripMarkdownForSpeech(value);
       if (busySpeaking || !value || !value.trim()) return;
       busySpeaking = true;
       button.disabled = true;
@@ -361,27 +378,71 @@
       }
     }
 
-    function addSpeakButton(bubble, value) {
-      if (!value || !value.trim()) return;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'speak-button';
-      button.textContent = '🔊';
-      button.title = text[language.value].speakTitle;
-      button.setAttribute('aria-label', text[language.value].speakTitle);
-      button.addEventListener('click', () => speakText(value, button));
-      bubble.appendChild(button);
+    async function sendFeedback(value, rating, button, sibling) {
+      button.disabled = true;
+      sibling.disabled = true;
+      try {
+        await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: value, rating })
+        });
+      } catch {
+        // Best-effort: this is a satisfaction signal, not something to retry or surface.
+      }
+      button.classList.add('feedback-chosen');
     }
 
-    function addMessage(role, value, extra = '') {
+    function addMessageActions(bubble, value, userText) {
+      if (!value || !value.trim()) return;
+      const actions = document.createElement('div');
+      actions.className = 'message-actions';
+
+      const speakButton = document.createElement('button');
+      speakButton.type = 'button';
+      speakButton.textContent = '🔊';
+      speakButton.title = text[language.value].speakTitle;
+      speakButton.setAttribute('aria-label', text[language.value].speakTitle);
+      speakButton.addEventListener('click', () => speakText(value, speakButton));
+      actions.appendChild(speakButton);
+
+      if (userText && userText.trim()) {
+        const regenerateButton = document.createElement('button');
+        regenerateButton.type = 'button';
+        regenerateButton.textContent = '🔄';
+        regenerateButton.title = text[language.value].regenerateTitle;
+        regenerateButton.setAttribute('aria-label', text[language.value].regenerateTitle);
+        regenerateButton.addEventListener('click', () => { if (!busy) ask(userText); });
+        actions.appendChild(regenerateButton);
+      }
+
+      const upButton = document.createElement('button');
+      upButton.type = 'button';
+      upButton.textContent = '👍';
+      upButton.title = text[language.value].feedbackUpTitle;
+      upButton.setAttribute('aria-label', text[language.value].feedbackUpTitle);
+      const downButton = document.createElement('button');
+      downButton.type = 'button';
+      downButton.textContent = '👎';
+      downButton.title = text[language.value].feedbackDownTitle;
+      downButton.setAttribute('aria-label', text[language.value].feedbackDownTitle);
+      upButton.addEventListener('click', () => sendFeedback(value, 'up', upButton, downButton));
+      downButton.addEventListener('click', () => sendFeedback(value, 'down', downButton, upButton));
+      actions.appendChild(upButton);
+      actions.appendChild(downButton);
+
+      bubble.appendChild(actions);
+    }
+
+    function addMessage(role, value, extra = '', userText = '') {
       empty.hidden = true;
       const row = document.createElement('div');
       row.className = `message ${role} ${extra}`;
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
       bubble.innerHTML = renderMessageHTML(value);
-      if (role === 'assistant' && !extra.includes('thinking')) {
-        addSpeakButton(bubble, value);
+      if (role === 'assistant' && !extra.includes('thinking') && !extra.includes('error')) {
+        addMessageActions(bubble, value, userText);
       }
       row.appendChild(bubble);
       messages.appendChild(row);
@@ -445,7 +506,7 @@
         const finalText = liveProse;
         liveBubble.innerHTML = renderMessageHTML(finalText);
         if (fold) liveBubble.appendChild(fold);
-        addSpeakButton(liveBubble, finalText);
+        addMessageActions(liveBubble, finalText, value.trim());
         liveRow = null;
         liveBubble = null;
         liveProse = '';
@@ -543,7 +604,7 @@
             sessionId = data.session_id;
             localStorage.setItem(sessionStorageKey, sessionId);
           }
-          addMessage('assistant', data.answer);
+          addMessage('assistant', data.answer, '', value.trim());
         }
       } catch (error) {
         clearQueued();
@@ -780,7 +841,15 @@
         const response = await fetch(`/api/history?session_id=${encodeURIComponent(sessionId)}`);
         const data = await response.json();
         if (Array.isArray(data.messages) && data.messages.length) {
-          data.messages.forEach(message => addMessage(message.role === 'user' ? 'user' : 'assistant', message.content));
+          let lastUser = '';
+          data.messages.forEach(message => {
+            if (message.role === 'user') {
+              lastUser = message.content;
+              addMessage('user', message.content);
+            } else {
+              addMessage('assistant', message.content, '', lastUser);
+            }
+          });
         }
       } catch (error) {
         // No stored history yet, or the server is unreachable — start with an empty transcript.
