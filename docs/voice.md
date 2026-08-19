@@ -449,13 +449,12 @@ concrete reason to resample shows up later.
 ## `STTEngine`/`TTSEngine` adapters (plain Go interfaces)
 
 Since orchestration lives in the Go backend (see architecture decision
-above), the adapter interfaces belong there too — `internal/voice` would
-define them, with an HTTP-client implementation for STT and a
-subprocess-exec implementation for TTS as the first (and for now, only)
-implementations:
+above), the adapter interfaces live there too — `internal/voice` defines
+them, with an HTTP-client implementation for STT and a subprocess-exec
+implementation for TTS as the first (and for now, only) implementations:
 
 ```go
-// internal/voice/voice.go
+// internal/voice/stt.go and internal/voice/tts.go
 type Transcript struct {
     Text     string
     Language string
@@ -480,55 +479,54 @@ good enough, a future `SileroTTS` (HTTP client to a Python sidecar, as
 originally designed) or `RHVoiceTTS` implements the same interface with
 zero changes to `internal/webui`'s voice handlers.
 
-## `POST /api/voice`: the full pipeline
+## `POST /api/voice`: superseded — never built, and turned out not needed
 
-```json
-{
-  "recognized_text": "Как наши системы?",
-  "response_text": "Капитан! Все системы в норме.",
-  "audio_url": "/api/audio/8dca31.wav",
-  "timings": {"stt_ms": 1300, "llm_ms": 2100, "tts_ms": 700, "total_ms": 4100}
-}
-```
-`audio_url` points at an **in-memory**, short-TTL (a few minutes) store
-keyed by a random ID — same "don't persist raw audio" rule as recordings;
-a `GET /api/audio/{id}` miss (expired or bogus ID) is a plain 404.
+The original design combined STT → chat → TTS behind one endpoint
+returning `recognized_text`/`response_text`/`audio_url`/`timings`. Once
+`/api/stt` and `/api/tts` existed as their own endpoints, the frontend
+just called `/api/stt` then reused the *existing* `ask()` (which already
+handles the chat turn, streaming, and history) then the *existing* 🔊
+speak path (`autoSpeak` — see below) — three already-built pieces
+composed client-side, not a fourth backend endpoint duplicating what
+`handleChat` already does. No in-memory audio-URL store needed either:
+TTS audio streams straight back as the `/api/tts` response body, played
+directly, never given its own URL/ID at all.
 
-This endpoint reuses whatever session the request carries (same
-`session_id` cookie/param `handleChat` already reads) so a voice turn and
-a typed turn share one conversation history — voice is a second front-end
-to the same loop, not a parallel assistant.
+## Web UI: push-to-talk button — shipped
 
-## Web UI: push-to-talk button
-
-Big button, `#voice-toggle`-style element next to the existing text input
-(same file, `internal/webui/index.html`, same vanilla-JS-no-framework
-approach already used for the settings/documents dialogs). States drive a
-CSS class (`.voice-idle` / `.voice-listening` / `.voice-recognizing` /
-`.voice-thinking` / `.voice-speaking` / `.voice-error`), not new markup per
-state:
+A press-and-hold `#mic` button sits in the composer next to the existing
+text input (`internal/webui/index.html`, same vanilla-JS-no-framework
+approach as the settings/documents dialogs). No `/api/voice` combined
+endpoint — mic input reuses the *existing* text-chat plumbing end to end
+instead of a parallel pipeline:
 
 ```js
-button.addEventListener('touchstart', startRecording);
-button.addEventListener('mousedown', startRecording);
-button.addEventListener('touchend', stopRecordingAndSend);
-button.addEventListener('mouseup', stopRecordingAndSend);
+mic.addEventListener('mousedown', startRecording);
+mic.addEventListener('mouseup', stopRecordingAndSend);
+mic.addEventListener('mouseleave', cancelRecording);
+mic.addEventListener('touchstart', event => { event.preventDefault(); startRecording(); });
+mic.addEventListener('touchend', event => { event.preventDefault(); stopRecordingAndSend(); });
+mic.addEventListener('touchcancel', cancelRecording);
 ```
-`startRecording` opens a `MediaRecorder` on `navigator.mediaDevices.getUserMedia({audio: true})`;
-`stopRecordingAndSend` stops it, `POST /api/voice` with the recorded blob
-as multipart body, then on response: render the recognized text and the
-reply text as normal chat bubbles (reusing `addMessage`, exactly like a
-typed turn), and autoplay the returned WAV via a plain `<audio>` element.
 
-### The shipped 🔊 speak button (a different, simpler thing than the above)
+`startRecording` opens a `MediaRecorder` on `getUserMedia({audio: true})`;
+`stopRecordingAndSend` stops it, `POST`s the recorded blob to `/api/stt`
+as multipart field `audio`, and — this is the simplification that
+mattered — takes whatever text comes back and calls `ask(text, true)`,
+the *exact same function* a typed message calls. That one call already
+gets: the same streaming bubble, the same session/history, the same
+regenerate/👍/👎 actions on the reply. The only new behavior is the
+second argument (`isVoiceTurn`), threaded through to
+`addMessageActions()` as `autoSpeak` — when true, the reply's own 🔊
+button fires itself immediately once the text is known, closing the
+loop (spoke a question, hear the answer) without a typed turn ever
+auto-playing audio unprompted.
 
-Everything above in this section is push-to-talk *input* (mic → STT),
-still design-only. What's actually built and deployed is the reverse
-direction only: a 🔊 button on every assistant reply, wired into
-`addMessage()`/`finalizeLiveBubble()` in `internal/webui/index.html`,
-calling `POST /api/tts` with the message's text and playing the returned
-WAV via a plain `Audio()`/blob URL — no `MediaRecorder`, no voice input
-involved at all.
+Visual states are two CSS classes on the mic button itself
+(`.recording` — red pulse — and `.processing` — dimmed, mid-STT), not a
+whole state machine — `mic.hidden` also tracks a `stt_enabled` flag from
+`GET /api/status`, so the button disappears entirely rather than
+dead-ending if no `voice.stt.base_url` is configured.
 
 **Markdown needs stripping client-side before it reaches TTS** — caught
 live: Piper read `**bold**` back as "звезда звезда звезда" (literally
@@ -571,33 +569,29 @@ microphone/speaker loop running directly on the host:
 
 ## Config: extending `config.yaml`
 
-New top-level `voice:` block, `internal/config/config.go` gets a
-`VoiceConfig` struct (`mapstructure:"voice"`) the same way `WebConfig`
-already looks. STT's model path/thread count still belong to the
-`whisper-server` process (`docker-compose.yml`'s `command:`, exactly like
-`llama-chat`'s `-t 4`) — Bosun only needs to know *where* to reach it,
-mirroring how `llm.embeddings.base_url` already points at a separate
-`llama-server` instance. TTS has no separate process to point at anymore,
-so its config is the binary/model paths directly (still never hardcoded
-in Go source, per the spec's own requirement):
+`internal/config/config.go`'s `VoiceConfig` (`mapstructure:"voice"`), the
+same way `WebConfig` already looks. STT's model path/thread count/
+`--audio-ctx` belong to the `whisper-server` process
+(`docker-compose.yml`'s `command:`, exactly like `llama-chat`'s `-t 4`) —
+Bosun only needs to know *where* to reach it, mirroring how
+`llm.embeddings.base_url` already points at a separate `llama-server`
+instance. TTS has no separate process at all, so its config is the
+binary/model paths directly (never hardcoded in Go source):
 
 ```yaml
 voice:
   stt:
     base_url: "http://127.0.0.1:1236"   # whisper-server
     language: "ru"
-    auto_detect_language: false          # true lets whisper.cpp detect instead
   tts:
-    binary_path: "/usr/local/bin/piper"
-    model_path: "/opt/bosun/models/tts/ru_RU-<voice>-medium.onnx"
-    sample_rate: 22050                    # informational — set by the voice model, not a resample target
-  vad:
-    enabled: true          # ignored until conversation mode exists
-    silence_ms: 900
-  audio:
-    source: "default"      # ignored until conversation mode exists
-    sink: "default"
+    binary_path: "/usr/local/bin/piper_exe"
+    model_path: "/home/bosun/models/tts/ru_RU-ruslan-medium.onnx"
+    espeak_data_path: "/usr/local/share/espeak-ng-data"
 ```
+
+`voice.vad`/`voice.audio` (silence-detection, PipeWire device selection)
+don't exist yet — still genuinely future work, gated on conversation mode
+actually being built (see below), not on anything STT/TTS-specific.
 
 Empty `voice.stt.base_url` or empty `voice.tts.model_path` (the default)
 disables that half of the feature — `/api/voice` etc. report
@@ -605,24 +599,24 @@ disables that half of the feature — `/api/voice` etc. report
 `docs/memo-search.md`'s document store already use for an optional
 feature with no backing service configured.
 
-## Deployment: Docker, not systemd, for the MVP
+## Deployment: Docker, not systemd — shipped
 
 The original spec suggested systemd because it assumed a service that
-directly touches audio hardware. Since the MVP's STT engine is a pure
-HTTP inference server (no audio device access — see above) and TTS is now
-just a subprocess call from within Bosun's own container, everything
-fits the **existing** Docker Compose stack: one new `whisper-stt` service
-(mirroring `llama-chat`/`llama-embed`'s `network_mode: host`,
-`restart: unless-stopped`) plus (**shipped**) a `piper-builder` build
-stage and `onnxruntime`/model additions to the existing `bosun` image —
-reboot survival is already solved by Docker's restart policy, no new
-systemd units needed at this phase. Systemd only becomes the right tool
-once conversation mode's host-audio-touching component exists (see
-above). One deployment detail the TTS build forced that's worth noting
-here too: `bosun`'s base image moved from `alpine:3.20` to `alpine:edge`
-(needed for a musl-native `onnxruntime` package — see the TTS section) —
-this affects the whole image, not just the Piper pieces, so worth
-watching for any edge-branch package drift on a future rebuild.
+directly touches audio hardware. Since STT is a pure HTTP inference
+server (no audio device access — recording/playback both happen in the
+browser) and TTS is a subprocess call from within Bosun's own container,
+everything fits the **existing** Docker Compose stack: `whisper-stt`
+(`deploy/whisper/Dockerfile`, mirrors `llama-chat`/`llama-embed`'s
+`network_mode: host`, `restart: unless-stopped`) plus the `piper-builder`
+build stage and `onnxruntime`/`ffmpeg`/model additions to the existing
+`bosun` image — reboot survival is already solved by Docker's restart
+policy, no systemd units needed. Systemd only becomes the right tool once
+conversation mode's host-audio-touching component exists (see below). One
+deployment detail the TTS build forced, worth remembering: `bosun`'s base
+image moved from `alpine:3.20` to `alpine:edge` (needed for a musl-native
+`onnxruntime` package) — affects the whole image, not just the Piper
+pieces, so worth watching for edge-branch package drift on a future
+rebuild.
 
 ## Logging
 
@@ -646,9 +640,11 @@ cloud STT/TTS, a native mobile app — none of this now.
 Press the button → speak → whisper.cpp recognizes → Bosun (same
 `agent.Agent` as text chat) replies → Piper speaks the reply — over the
 existing web UI, phone or desktop, fully offline once models are
-downloaded, no Python anywhere in the path. **TTS half done and
-deployed** (🔊 button on every assistant reply); STT and the combined
-`/api/voice` pipeline remain design-only.
+downloaded, no Python anywhere in the path. **Shipped and deployed** —
+verified end to end against the live HTTPS service, mic press to spoken
+reply. Only genuinely deferred: continuous "conversation mode" (a loop
+that keeps listening after the reply without pressing again) and a
+dedicated Bluetooth speaker.
 
 ## Open questions before implementation starts
 
@@ -663,10 +659,11 @@ deployed** (🔊 button on every assistant reply); STT and the combined
    the real build lives in `Dockerfile` at a short path; separately, the
    deeper Alpine/musl blocker this forced into the open is also resolved
    — see the "actual blocker" subsection in the TTS section above.
-3. **Pick the actual Piper voice model by ear** — `denis`, `dmitri`, and
-   `ruslan` are all downloaded and confirmed to synthesize correctly;
-   `denis` is what's deployed right now, chosen provisionally (first
-   alphabetically), not from an actual listen comparison yet.
+3. ~~Pick the actual Piper voice model by ear~~ — **resolved**: listened
+   to all three (`denis`, `dmitri`, `ruslan`) via samples served over the
+   LAN; `ruslan` won and is deployed. A follow-up ask (adding some
+   "hoarseness") is being explored via `--noise_scale`/`--noise_w` — not
+   yet landed as a permanent config, still a manual test loop.
 4. **TTS latency in the deployed container (~4.2s) is noticeably worse
    than the ~1.5–2.4s measured in standalone tests** — traced to Alpine's
    `onnxruntime` package's much larger dependency tree (Abseil, protobuf,
@@ -688,12 +685,19 @@ deployed** (🔊 button on every assistant reply); STT and the combined
    a build arg in `Dockerfile`'s `piper-builder` stage, defaulting to
    `v1.7.0` (the tag verified throughout this doc) — confirm it's still
    current if this gets rebuilt long after the fact.
-7. **`whisper-server`'s actual request/response shape** needs verifying
-   against the pinned `whisper.cpp` commit before writing `handleSTT` —
-   the endpoint path and JSON field names in this doc are from
-   whisper.cpp's typical `server` example, not yet confirmed against the
-   exact pinned build.
-8. **ffmpeg availability for STT** — `Dockerfile` already ships
-   `poppler-utils`/`tesseract-ocr`; add `ffmpeg` there too once STT lands
-   (`espeak-ng` needed no separate package at all — statically linked
-   into `libpiper.so`, see the TTS section above).
+7. ~~`whisper-server`'s actual request/response shape~~ — **resolved**:
+   confirmed by building and querying it directly — see the STT section
+   above.
+8. ~~ffmpeg availability for STT~~ — **shipped**: added to `Dockerfile`'s
+   `apk add` line alongside `poppler-utils`/`tesseract-ocr`.
+9. **`--audio-ctx 512`'s real ceiling isn't known** — verified it doesn't
+   hurt accuracy on a 1.8s or 5.3s clip, but haven't tested how long an
+   utterance can get before this cap starts truncating or garbling
+   recognition. Push-to-talk commands are expected to stay short; worth
+   a real test with a 15–20s clip before ever reusing this config for
+   something like dictation.
+10. **Pin an exact `whisper.cpp` commit** — `WHISPER_CPP_REF` in
+    `deploy/whisper/Dockerfile` is set to the commit actually built and
+    tested (`4834a2327d008ace3ec5a9ed00f51454bcabbc1c`) — confirm it's
+    still what you want if this gets rebuilt long after the fact, same
+    caveat as `PIPER_REF`.

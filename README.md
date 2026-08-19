@@ -57,12 +57,14 @@ Early foundation. Working today:
 - **Failure log** — tool and LLM-call errors are recorded to one file
   (`internal/errlog`), reviewable with `smarthelper errors`, to drive an
   improvement loop instead of disappearing into stderr.
-- **Text-to-speech** — a 🔊 button on every assistant chat bubble speaks
-  the reply out loud via Piper, fully offline, no Python anywhere in the
-  path — see `docs/voice.md`.
+- **Voice, both directions** — a 🔊 button speaks any assistant reply out
+  loud (Piper), and a press-and-hold 🎤 button transcribes speech
+  (whisper.cpp) into the same chat flow a typed message uses, auto-speaking
+  the reply back — fully offline, no Python anywhere in the path — see
+  `docs/voice.md`.
 
-Not yet built: real sensor hardware backends, speech-to-text. See
-`SPEC.md` for the full roadmap.
+Not yet built: real fridge sensor hardware, continuous voice conversation
+mode. See `SPEC.md` for the full roadmap.
 
 ## Architecture
 

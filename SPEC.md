@@ -166,7 +166,7 @@ models without native tool calling, conservative default history limits).
 - [x] Real serial/NMEA GPS backend (`internal/tools/gps_serial.go`) — tested against an actual u-blox 7 USB receiver
 - [ ] Remaining real sensor backends (1-Wire temp probes, MQTT fridge, OBD2)
 - [ ] Integration tests against a real Ollama instance
-- [ ] Local voice interface (`docs/voice.md`) — whisper.cpp STT (design only) + Piper TTS (**implemented**: a 🔊 speak button on every assistant reply), push-to-talk MVP over the existing web UI, no cloud dependencies
+- [x] Push-to-talk voice interface (`docs/voice.md`) — whisper.cpp STT + Piper TTS, both directions, no cloud dependencies, no Python; continuous conversation mode still to come
 
 ### 8. Local Web UI + Voice Interface
 
@@ -179,11 +179,12 @@ usable latency offline.
   LAN. **No authentication** — trusted local network only, never exposed
   beyond it (no port-forwarding, no public bind address; bind to the LAN
   interface, not `0.0.0.0` on anything internet-facing).
-- **Voice interface** (see `docs/voice.md`): whisper.cpp for
-  speech-to-text (design only, not yet built), Piper for spoken
-  responses (**implemented** — a 🔊 button on every assistant chat
-  bubble, `POST /api/tts`, `internal/voice.PiperTTS`) — fully offline,
-  no Python.
+- **Voice interface** (see `docs/voice.md`, **implemented**): whisper.cpp
+  for speech-to-text (a press-and-hold 🎤 button, `POST /api/stt`,
+  `internal/voice.WhisperCppSTT`) and Piper for spoken responses (a 🔊
+  button on every assistant chat bubble, `POST /api/tts`,
+  `internal/voice.PiperTTS`) — fully offline, no Python. A voice-in turn
+  auto-speaks its own reply, closing the loop.
 - **Language**: user-selectable, not hardcoded to English. Russian is the
   primary target language for STT/TTS (Whisper supports it natively; TTS
   engine choice must too).
@@ -207,8 +208,7 @@ not a separate assistant implementation.
    actual USB receiver. Fridge (1-Wire `w1_slave` or MQTT) still uses `mock`.
 2. Integration test tier (`tests/integration/`) that talks to a configured
    local model server when its endpoint is available, skipped otherwise.
-3. Voice interface: whisper.cpp STT (still to build) + Piper TTS
-   (**shipped** — see `docs/voice.md`), language-configurable (Russian
-   first), as an alternate front-end to the same `chat` loop;
-   push-to-talk MVP next, continuous conversation mode and a dedicated
-   Bluetooth speaker after.
+3. ~~Voice interface: whisper.cpp STT + Piper TTS~~ — **shipped**,
+   push-to-talk, both directions (see `docs/voice.md`). Continuous
+   conversation mode (loop without pressing again) and a dedicated
+   Bluetooth speaker are next.
