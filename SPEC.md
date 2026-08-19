@@ -163,6 +163,7 @@ models without native tool calling, conservative default history limits).
 - [x] `make check` (fmt + vet + test + build) passing
 - [ ] Real sensor backends (1-Wire temp probes, MQTT, serial GPS/OBD2)
 - [ ] Integration tests against a real Ollama instance
+- [ ] Local voice interface (`docs/voice.md`) — whisper.cpp STT + Silero TTS, push-to-talk MVP over the existing web UI, no cloud dependencies
 
 ### 8. Local Web UI + Voice Interface
 
@@ -175,8 +176,9 @@ usable latency offline.
   LAN. **No authentication** — trusted local network only, never exposed
   beyond it (no port-forwarding, no public bind address; bind to the LAN
   interface, not `0.0.0.0` on anything internet-facing).
-- **Voice interface**: Whisper for speech-to-text, a TTS engine for spoken
-  responses — "hey, what's the weather like" in, spoken answer out.
+- **Voice interface** (spec'd, not yet implemented — see `docs/voice.md`):
+  whisper.cpp for speech-to-text, Silero for spoken responses — press a
+  button, speak, hear Bosun answer, fully offline.
 - **Language**: user-selectable, not hardcoded to English. Russian is the
   primary target language for STT/TTS (Whisper supports it natively; TTS
   engine choice must too).
@@ -199,5 +201,7 @@ not a separate assistant implementation.
    outdoor/fridge temperature) to replace `mock`.
 2. Integration test tier (`tests/integration/`) that talks to a configured
    local model server when its endpoint is available, skipped otherwise.
-3. Voice interface: Whisper STT + TTS, language-configurable (Russian first),
-   as an alternate front-end to the same `chat` loop.
+3. Voice interface: whisper.cpp STT + Silero TTS, language-configurable
+   (Russian first), as an alternate front-end to the same `chat` loop —
+   design in `docs/voice.md`; push-to-talk MVP first, continuous
+   conversation mode and a dedicated Bluetooth speaker after.
