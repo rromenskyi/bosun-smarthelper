@@ -175,6 +175,95 @@ func TestOpenAICompatibleLocalClientPromptedToolFallback(t *testing.T) {
 	}
 }
 
+// TestOpenAICompatibleLocalClientPromptedToolFallback_ExtractsJSONFromNarration
+// is a regression test for a real production bug: a weak local model wrapped
+// a perfectly valid tool call in its own narration ("Sure, I'll look that
+// up: {...} let me know if that helps"), which failed the strict
+// json.Unmarshal in chatWithPromptedTools, fell through to toolMention (which
+// always discards arguments), and silently turned a real search query into
+// an empty one — surfacing to the user as "search query is required" for a
+// query it plainly had.
+func TestOpenAICompatibleLocalClientPromptedToolFallback_ExtractsJSONFromNarration(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(`{
+			"model":"default",
+			"choices":[{"message":{"role":"assistant","content":"Sure, I'll look that up: {\"tool\":\"web_search\",\"arguments\":{\"query\":\"foo\"}} let me know if that helps."}}]
+		}`), nil
+	})
+
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second, true)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+	client.supportsTools = false
+
+	response, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "search for foo"}}, []ToolDefinition{
+		{Name: "web_search", Parameters: map[string]any{"type": "object"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != "web_search" {
+		t.Fatalf("unexpected tool calls: %+v", response.ToolCalls)
+	}
+	var args struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal([]byte(response.ToolCalls[0].Function.Arguments), &args); err != nil {
+		t.Fatalf("decode tool call arguments: %v", err)
+	}
+	if args.Query != "foo" {
+		t.Errorf("query = %q, want %q — arguments were lost by falling back to toolMention", args.Query, "foo")
+	}
+}
+
+// TestOpenAICompatibleLocalClientPromptedToolFallback_FlattenedArguments is a
+// regression test for a real production bug: the deployed local model never
+// nests parameters under "arguments" as instructed — it flattens them onto
+// the top-level object instead ({"tool":"web_search","query":"..."} rather
+// than {"tool":"web_search","arguments":{"query":"..."}}). The strict
+// promptedToolCall struct leaves Arguments empty in that case, which the
+// caller then defaults to "{}", so the tool executes with no query at all
+// and fails with "search query is required" even though the model plainly
+// supplied one. It also reproduces on a second turn after a tool result is
+// already present, since a weak model may just repeat the same malformed
+// call instead of answering from the result.
+func TestOpenAICompatibleLocalClientPromptedToolFallback_FlattenedArguments(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(`{
+			"model":"default",
+			"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"web_search\",\"query\":\"foo\"}"}}]
+		}`), nil
+	})
+
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second, true)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+	client.supportsTools = false
+
+	response, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "search for foo"}}, []ToolDefinition{
+		{Name: "web_search", Parameters: map[string]any{"type": "object"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != "web_search" {
+		t.Fatalf("unexpected tool calls: %+v", response.ToolCalls)
+	}
+	var args struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal([]byte(response.ToolCalls[0].Function.Arguments), &args); err != nil {
+		t.Fatalf("decode tool call arguments: %v", err)
+	}
+	if args.Query != "foo" {
+		t.Errorf("query = %q, want %q — flattened arguments were dropped", args.Query, "foo")
+	}
+}
+
 func TestOpenAICompatibleLocalClientRecognizesToolMention(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return jsonResponse(`{

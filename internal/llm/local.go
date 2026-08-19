@@ -512,6 +512,35 @@ type promptedToolCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
+// parsePromptedToolCall decodes a prompted tool-call JSON object into a
+// promptedToolCall. The documented shape nests parameters under "arguments"
+// ({"tool":"name","arguments":{"query":"..."}}), but a weak model will
+// frequently flatten them onto the top-level object instead
+// ({"tool":"name","query":"..."}) — tolerate both, since insisting on the
+// nested shape silently drops every argument the model actually gave.
+func parsePromptedToolCall(raw []byte) (promptedToolCall, error) {
+	var call promptedToolCall
+	if err := json.Unmarshal(raw, &call); err != nil {
+		return call, err
+	}
+	if len(call.Arguments) > 0 {
+		return call, nil
+	}
+	var flattened map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &flattened); err != nil {
+		return call, nil
+	}
+	delete(flattened, "tool")
+	delete(flattened, "arguments")
+	if len(flattened) == 0 {
+		return call, nil
+	}
+	if args, err := json.Marshal(flattened); err == nil {
+		call.Arguments = args
+	}
+	return call, nil
+}
+
 func chatWithPromptedTools(
 	ctx context.Context,
 	client *RemoteClient,
@@ -555,14 +584,26 @@ func chatWithPromptedTools(
 		return nil, err
 	}
 
-	var call promptedToolCall
 	candidate := strings.TrimSpace(response.Content)
 	candidate = strings.TrimPrefix(candidate, "```json")
 	candidate = strings.TrimPrefix(candidate, "```")
 	candidate = strings.TrimSuffix(candidate, "```")
 	candidate = strings.TrimSpace(candidate)
-	if json.Unmarshal([]byte(candidate), &call) != nil && !hasToolResult {
-		call = toolMention(candidate, tools)
+	call, parseErr := parsePromptedToolCall([]byte(candidate))
+	if parseErr != nil && !hasToolResult {
+		// A weak model rarely emits *pure* JSON and nothing else — narration
+		// before/after the object ("Sure, I'll check: {...} let me know")
+		// makes the strict parse above fail even though a perfectly valid
+		// tool call is embedded in there. Try to pull just the JSON object
+		// out before giving up on structured parsing entirely and falling
+		// back to toolMention's name-only match (which always discards
+		// arguments — see its own doc comment).
+		if object, ok := extractJSONObject(candidate); ok {
+			call, parseErr = parsePromptedToolCall([]byte(object))
+		}
+		if parseErr != nil {
+			call = toolMention(candidate, tools)
+		}
 	}
 	if !hasToolResult && call.Tool != "" {
 		if len(call.Arguments) == 0 {
@@ -628,6 +669,47 @@ func compactParameters(parameters any) string {
 		parts = append(parts, fmt.Sprintf("%s%s:%s", name, suffix, label))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// extractJSONObject finds the first balanced top-level `{...}` object in s,
+// tolerating surrounding prose, by tracking brace depth and skipping over
+// braces that appear inside a quoted string (so a query like
+// `{"query": "a {weird} value"}` doesn't confuse the scan). Returns false if
+// no closing brace ever balances the first opening one.
+func extractJSONObject(s string) (string, bool) {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return "", false
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }
 
 // toolMention is a compatibility fallback for very small models that correctly
