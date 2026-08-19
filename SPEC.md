@@ -163,7 +163,7 @@ models without native tool calling, conservative default history limits).
 - [x] `make check` (fmt + vet + test + build) passing
 - [ ] Real sensor backends (1-Wire temp probes, MQTT, serial GPS/OBD2)
 - [ ] Integration tests against a real Ollama instance
-- [ ] Local voice interface (`docs/voice.md`) — whisper.cpp STT + Silero TTS, push-to-talk MVP over the existing web UI, no cloud dependencies
+- [ ] Local voice interface (`docs/voice.md`) — whisper.cpp STT (design only) + Piper TTS (**implemented**: a 🔊 speak button on every assistant reply), push-to-talk MVP over the existing web UI, no cloud dependencies
 
 ### 8. Local Web UI + Voice Interface
 
@@ -176,9 +176,11 @@ usable latency offline.
   LAN. **No authentication** — trusted local network only, never exposed
   beyond it (no port-forwarding, no public bind address; bind to the LAN
   interface, not `0.0.0.0` on anything internet-facing).
-- **Voice interface** (spec'd, not yet implemented — see `docs/voice.md`):
-  whisper.cpp for speech-to-text, Silero for spoken responses — press a
-  button, speak, hear Bosun answer, fully offline.
+- **Voice interface** (see `docs/voice.md`): whisper.cpp for
+  speech-to-text (design only, not yet built), Piper for spoken
+  responses (**implemented** — a 🔊 button on every assistant chat
+  bubble, `POST /api/tts`, `internal/voice.PiperTTS`) — fully offline,
+  no Python.
 - **Language**: user-selectable, not hardcoded to English. Russian is the
   primary target language for STT/TTS (Whisper supports it natively; TTS
   engine choice must too).
@@ -201,7 +203,8 @@ not a separate assistant implementation.
    outdoor/fridge temperature) to replace `mock`.
 2. Integration test tier (`tests/integration/`) that talks to a configured
    local model server when its endpoint is available, skipped otherwise.
-3. Voice interface: whisper.cpp STT + Silero TTS, language-configurable
-   (Russian first), as an alternate front-end to the same `chat` loop —
-   design in `docs/voice.md`; push-to-talk MVP first, continuous
-   conversation mode and a dedicated Bluetooth speaker after.
+3. Voice interface: whisper.cpp STT (still to build) + Piper TTS
+   (**shipped** — see `docs/voice.md`), language-configurable (Russian
+   first), as an alternate front-end to the same `chat` loop;
+   push-to-talk MVP next, continuous conversation mode and a dedicated
+   Bluetooth speaker after.

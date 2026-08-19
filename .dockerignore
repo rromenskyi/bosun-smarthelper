@@ -8,4 +8,5 @@ config.yaml
 .env.example
 docs/
 deploy/
+!deploy/piper/wav-pcm16.patch
 *.md

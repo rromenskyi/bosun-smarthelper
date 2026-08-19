@@ -114,6 +114,13 @@
     }
     .bubble summary { cursor: pointer; color: var(--muted); }
     .chat-image { display: block; max-width: 100%; margin-top: 8px; border-radius: 10px; border: 1px solid var(--line); }
+    .speak-button {
+      display: block; margin-top: 8px; padding: 2px 8px; border-radius: 8px;
+      border: 1px solid var(--line); background: transparent; color: var(--muted);
+      font-size: 13px; cursor: pointer;
+    }
+    .speak-button:hover { border-color: rgba(141, 224, 183, .45); }
+    .speak-button:disabled { opacity: .5; cursor: wait; }
     .bubble details pre {
       margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere;
       color: var(--muted); font-family: ui-monospace, monospace; font-size: 11px;
@@ -295,6 +302,7 @@
     const settingsDialog = document.querySelector('#settings-dialog');
     const settingsForm = document.querySelector('#settings-form');
     let busy = false;
+    let busySpeaking = false;
     let currentProvider = 'local';
     let waitingBubble = null;
     const sessionStorageKey = 'bosun-session-id';
@@ -302,8 +310,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak' }
     };
 
     function escapeHTML(value) {
@@ -326,6 +334,45 @@
       return html;
     }
 
+    async function speakText(value, button) {
+      if (busySpeaking || !value || !value.trim()) return;
+      busySpeaking = true;
+      button.disabled = true;
+      const original = button.textContent;
+      button.textContent = '…';
+      try {
+        const response = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: value })
+        });
+        if (!response.ok) throw new Error('tts failed');
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.addEventListener('ended', () => URL.revokeObjectURL(url));
+        await audio.play();
+      } catch {
+        // Best-effort: connectivity/engine issues already surface via the status pill.
+      } finally {
+        busySpeaking = false;
+        button.disabled = false;
+        button.textContent = original;
+      }
+    }
+
+    function addSpeakButton(bubble, value) {
+      if (!value || !value.trim()) return;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'speak-button';
+      button.textContent = '🔊';
+      button.title = text[language.value].speakTitle;
+      button.setAttribute('aria-label', text[language.value].speakTitle);
+      button.addEventListener('click', () => speakText(value, button));
+      bubble.appendChild(button);
+    }
+
     function addMessage(role, value, extra = '') {
       empty.hidden = true;
       const row = document.createElement('div');
@@ -333,6 +380,9 @@
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
       bubble.innerHTML = renderMessageHTML(value);
+      if (role === 'assistant' && !extra.includes('thinking')) {
+        addSpeakButton(bubble, value);
+      }
       row.appendChild(bubble);
       messages.appendChild(row);
       scrollToBottom();
@@ -392,8 +442,10 @@
         if (!liveBubble) return;
         liveRow.classList.remove('thinking');
         const fold = liveFoldBody ? liveFoldBody.closest('details') : null;
-        liveBubble.innerHTML = renderMessageHTML(liveProse);
+        const finalText = liveProse;
+        liveBubble.innerHTML = renderMessageHTML(finalText);
         if (fold) liveBubble.appendChild(fold);
+        addSpeakButton(liveBubble, finalText);
         liveRow = null;
         liveBubble = null;
         liveProse = '';

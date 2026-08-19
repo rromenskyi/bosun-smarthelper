@@ -24,6 +24,7 @@ import (
 	"github.com/roman220/ai-local-smarthelper/internal/agent"
 	"github.com/roman220/ai-local-smarthelper/internal/documents"
 	"github.com/roman220/ai-local-smarthelper/internal/settings"
+	"github.com/roman220/ai-local-smarthelper/internal/voice"
 )
 
 const maxRequestBody = 16 * 1024
@@ -114,6 +115,7 @@ type Server struct {
 	settingsStore     *settings.Store
 	temps             temperatureController
 	caCertFile        string
+	ttsEngine         voice.TTSEngine
 }
 
 // SetDefaultLanguage changes the language used when a chat request doesn't
@@ -312,6 +314,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("POST /api/settings", s.handleSettingsUpdate)
 	mux.HandleFunc("GET /ca.pem", s.handleCACert)
+	mux.HandleFunc("POST /api/tts", s.handleTTS)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
 	}
@@ -976,7 +979,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self' data:")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self' data: blob:")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")

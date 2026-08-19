@@ -1,4 +1,12 @@
-# Voice interface (design spec — not yet implemented)
+# Voice interface
+
+**Status: TTS is implemented and deployed** — a 🔊 "speak" button on
+every assistant chat bubble, calling `POST /api/tts`, backed by Piper
+running natively inside the existing `bosun` container (see the TTS
+section below for the full story, including a real architecture change
+along the way — Alpine's own musl-native `onnxruntime` package, not the
+glibc-only path this doc originally investigated). STT and the full
+`POST /api/voice` pipeline are still design-only, not yet built.
 
 Goal: a fully local, offline-capable voice front-end to the existing chat
 loop — `microphone → STT → the same agent.Agent used by web chat → TTS →
@@ -238,6 +246,90 @@ the two) — still comfortably usable, though closer to the "≤1–2s" target
 than the earlier measurement; worth re-measuring once request text length
 and process-reuse strategy are finalized during implementation.
 
+### The actual blocker: `bosun`'s container is Alpine (musl), not glibc
+
+Everything above was verified directly on the host — but `bosun` itself
+runs in Docker, and its image (`Dockerfile`) is `alpine:3.20`, which uses
+**musl** libc, not glibc. Confirmed this is a real, hard blocker, not a
+theoretical one — three things were tried, in order:
+
+1. **Bind-mount the glibc-built `piper_exe` into the Alpine container
+   as-is.** Fails immediately: musl's dynamic linker isn't glibc's
+   (`/lib64/ld-linux-x86-64.so.2` doesn't exist under musl), so the
+   binary can't even start.
+2. **`gcompat`** (a musl→glibc compatibility shim, `apk add gcompat`,
+   only ~11 MB) — genuinely promising, and worth trying before assuming
+   it won't work: after rebuilding `piper_exe` under an *older* Ubuntu
+   22.04 (glibc 2.35) instead of this host's very new Ubuntu 26.04
+   (glibc 2.41 — new enough that the compiler was silently emitting
+   calls to brand-new glibc 2.38+ C23 symbol variants like
+   `__isoc23_strtoll` that `gcompat` doesn't shim), the binary loaded
+   cleanly under Alpine+gcompat. But actual synthesis then failed with
+   `Exception caught: No error information` — a string that lives
+   *inside* Microsoft's own `libonnxruntime.so` binary, meaning ONNX
+   Runtime's own exception handler caught something but couldn't read
+   its message. This is a C++ exception-ABI mismatch: Alpine's
+   musl-targeted `libstdc++` and the glibc-targeted `libstdc++` the
+   onnxruntime binary expects are different runtimes, and C++ exception
+   propagation/RTTI across two different C++ runtimes in one process is
+   exactly the class of thing `gcompat` documents itself as **not**
+   fully fixing ("gets most glibc binaries running, not all"). Confirmed
+   dead end, not a config issue to keep poking at.
+3. **Alpine's own `onnxruntime` package** — musl-native, no ABI boundary
+   at all. It only exists on Alpine's `edge` (rolling) branch, not on any
+   numbered stable release, so this means `bosun`'s image moves from
+   `alpine:3.20` to `alpine:edge` for this. Built `libpiper` from source
+   against it (`apk add onnxruntime-dev`, `libpiper`'s own
+   `find_package(onnxruntime QUIET)` picks it up automatically — no
+   `-DONNXRUNTIME_DIR` override needed) — **this is the one that actually
+   works**: builds clean, synthesizes real audio (verified by decoding
+   samples, not just checking the header), no crash, no exception. This
+   is what shipped.
+
+**One real cost of this path**: Alpine's `onnxruntime` package pulls in a
+much larger runtime dependency tree than Microsoft's prebuilt binary —
+`protobuf-lite`, `re2`, ~30 `libabsl_*.so` files (Abseil), and ICU
+(`libicuuc`/`libicudata`, full Unicode tables). Loading all of that on
+every fresh subprocess (no persistent server — see design above) measurably
+increases latency: **~4.2s per request in the deployed container**
+(logged via `handleTTS`'s own `elapsed_ms`), versus ~1.5–2.4s in the
+standalone tests above with Microsoft's leaner, more self-contained
+binary. Still usable, but a real, measured regression worth remembering
+if latency ever needs tightening — see Open Questions.
+
+**What actually shipped** (`Dockerfile`, `internal/voice/tts.go`,
+`internal/webui/voice.go`, `internal/webui/index.html`'s 🔊 button):
+- New `piper-builder` build stage, `FROM alpine:edge`: `apk add
+  build-base cmake git onnxruntime-dev`, clone `OHF-Voice/piper1-gpl`
+  pinned at `v1.7.0`, apply `deploy/piper/wav-pcm16.patch`, `cmake
+  --build` (no install step — `piper_exe`/`libpiper.so` are copied
+  straight out of the build tree).
+- Final stage also moved to `FROM alpine:edge` (needed for the matching
+  musl-native `onnxruntime` *runtime* package, not just `-dev`) — `apk
+  add onnxruntime` pulls its transitive deps automatically. `ffmpeg`/
+  `tesseract`/`poppler-utils` package names are unchanged on edge.
+- `COPY --from=piper-builder` for `piper_exe`, `libpiper.so`, and
+  `espeak-ng-data/` (espeak-ng itself is statically linked into
+  `libpiper.so` — `BUILD_SHARED_LIBS:BOOL=OFF` in its CMake config — so
+  only the phoneme/dictionary data files need copying, no separate
+  runtime package). `ENV LD_LIBRARY_PATH=/usr/local/lib` so `piper_exe`
+  finds the relocated `libpiper.so` — its baked-in `RUNPATH` still points
+  at the build-stage path, but `RUNPATH` (unlike old-style `RPATH`) is
+  checked *after* `LD_LIBRARY_PATH`, so this overrides it correctly.
+- `internal/config`'s new `VoiceConfig`/`TTSConfig`
+  (`voice.tts.binary_path`/`model_path`/`espeak_data_path`) — empty
+  `model_path` (the default) disables the feature.
+- `internal/voice.PiperTTS` — an `os/exec` wrapper implementing the
+  `TTSEngine` interface from the design section below (implemented as
+  designed, not changed by the Alpine detour — the interface split paid
+  for itself again: swapping the underlying binary's build story never
+  touched this code).
+- The voice model itself (`ru_RU-denis-medium.onnx`, picked provisionally
+  — not yet listen-test-confirmed as the final default, see Open
+  Questions) is a bind-mounted `./data/models/tts/` (`docker-compose.yml`),
+  not baked into the image, so switching voices is a config/bind-mount
+  edit, not a rebuild.
+
 **IEEE-float-WAV issue: patched at the source, not worked around at
 runtime.** `piper_exe` originally output IEEE float WAV (`file` reported
 "WAVE audio, IEEE Float, mono 22050 Hz") — browser `<audio>` support for
@@ -305,21 +397,17 @@ temp files, no conversion pass, no `ffmpeg` invocation for TTS at all
 (still needed for STT's browser-audio conversion, just not here),
 matching "don't persist raw audio."
 
-**`deploy/piper/Dockerfile`** (new): clone `OHF-Voice/piper1-gpl` pinned
-at a specific commit/tag (`v1.7.0`, verified above — confirm still
-current when this actually gets written), apply the two-file PCM16 patch
-(`deploy/piper/wav-pcm16.patch`, `git apply` against the checkout — the
-exact diff verified above against `wav_headers.cpp`/`wavfile.cpp`), build
-`libpiper/` per its own `CMakeLists.txt` **from a short path** (see the
-path-length bug above — Docker's own build context root is already
-short, so this is a non-issue in practice, just worth remembering if the
-build ever moves into a deeply nested directory) — this downloads/builds
-`espeak-ng` and downloads the `onnxruntime` release itself, no apt
-packages needed for either — then copy the patched `piper_exe` +
-`libpiper.so`/`libonnxruntime.so` + `espeak-ng-data/` into the final
-image (mirrors `deploy/llama/Dockerfile`'s two-stage builder/runtime
-shape). Voice `.onnx`/`.onnx.json` model files stay a bind-mounted
-`./data/models/tts/` (same "plain host directory, survives
+**Superseded by the Alpine/musl finding above**: the paragraph that used
+to be here described downloading Microsoft's prebuilt `onnxruntime`
+release inside `deploy/piper/Dockerfile`, a plan written before
+discovering `bosun`'s own image is Alpine (musl), which that binary can't
+run on at all. What actually shipped is a `piper-builder` stage added
+directly to the existing root `Dockerfile` (not a separate
+`deploy/piper/Dockerfile`), building against Alpine's own musl-native
+`onnxruntime` package — see the "actual blocker" subsection above for the
+full story, and the `Dockerfile` itself for the exact stage. Voice
+`.onnx`/`.onnx.json` model files stay a bind-mounted `./data/models/tts/`
+(same "plain host directory, survives
 `docker compose down -v`" reasoning as `./data/bosun`). No new Docker
 *service* — this becomes part of the existing `bosun` image, same as
 `ffmpeg`/`tesseract` are today (`ffmpeg` itself is still needed there,
@@ -502,11 +590,16 @@ HTTP inference server (no audio device access — see above) and TTS is now
 just a subprocess call from within Bosun's own container, everything
 fits the **existing** Docker Compose stack: one new `whisper-stt` service
 (mirroring `llama-chat`/`llama-embed`'s `network_mode: host`,
-`restart: unless-stopped`) plus `espeak-ng`/`piper`/voice-model additions
-to the existing `bosun` image — reboot survival is already solved by
-Docker's restart policy, no new systemd units needed at this phase.
-Systemd only becomes the right tool once conversation mode's
-host-audio-touching component exists (see above).
+`restart: unless-stopped`) plus (**shipped**) a `piper-builder` build
+stage and `onnxruntime`/model additions to the existing `bosun` image —
+reboot survival is already solved by Docker's restart policy, no new
+systemd units needed at this phase. Systemd only becomes the right tool
+once conversation mode's host-audio-touching component exists (see
+above). One deployment detail the TTS build forced that's worth noting
+here too: `bosun`'s base image moved from `alpine:3.20` to `alpine:edge`
+(needed for a musl-native `onnxruntime` package — see the TTS section) —
+this affects the whole image, not just the Piper pieces, so worth
+watching for any edge-branch package drift on a future rebuild.
 
 ## Logging
 
@@ -530,30 +623,36 @@ cloud STT/TTS, a native mobile app — none of this now.
 Press the button → speak → whisper.cpp recognizes → Bosun (same
 `agent.Agent` as text chat) replies → Piper speaks the reply — over the
 existing web UI, phone or desktop, fully offline once models are
-downloaded, no Python anywhere in the path.
+downloaded, no Python anywhere in the path. **TTS half done and
+deployed** (🔊 button on every assistant reply); STT and the combined
+`/api/voice` pipeline remain design-only.
 
 ## Open questions before implementation starts
 
 1. ~~Verify ONNX Runtime actually runs on this CPU without AVX2~~ —
-   **resolved**: confirmed twice on this actual host, once with the
-   archived repo's last release (onnxruntime 1.14.1) and once with the
-   actively maintained fork's current code (onnxruntime 1.22.0, via
-   `pip install piper-tts` as a quick check). Both synthesized real
-   Russian audio with no crash. See the TTS section above for numbers.
-2. ~~Fix the `libpiper` from-source build~~ — **resolved**: root cause was
-   a path-length bug in `espeak-ng`'s hardcoded 160-byte path buffer,
-   triggered by building inside this session's deeply nested scratch
-   directory, not a version mismatch or hardware issue. Rebuilding in a
-   short path (`/opt/piper-build/...`) succeeded cleanly and produced a
-   working `piper_exe` CLI. See the TTS section above for the fix and the
-   practical note for `deploy/piper/Dockerfile` (build context roots are
-   already short, so this shouldn't recur in practice).
-3. **Pick the actual Piper voice model by ear** — `denis` and `ruslan` are
-   both downloaded and confirmed to synthesize correctly (verified twice:
-   the archived prebuilt binary and the from-source `piper_exe` build);
-   still needs an actual listen-test (by ear, not by shell exit code) to
-   pick a default, optionally trying `dmitri` as a third candidate.
-4. ~~Confirm the float-to-PCM16 conversion sounds right~~ — **resolved
+   **resolved**: confirmed on this actual host with three different
+   onnxruntime builds (the archived repo's 1.14.1, the active fork's
+   1.22.0 via a throwaway Python wheel, and Alpine's own packaged
+   1.28.0) — none hit an AVX2-related crash. See the TTS section above.
+2. ~~Fix the `libpiper` from-source build~~ — **resolved, twice over**:
+   the original path-length bug (a build-tooling artifact of this
+   session's deep scratch directory, not a real issue) is moot now that
+   the real build lives in `Dockerfile` at a short path; separately, the
+   deeper Alpine/musl blocker this forced into the open is also resolved
+   — see the "actual blocker" subsection in the TTS section above.
+3. **Pick the actual Piper voice model by ear** — `denis`, `dmitri`, and
+   `ruslan` are all downloaded and confirmed to synthesize correctly;
+   `denis` is what's deployed right now, chosen provisionally (first
+   alphabetically), not from an actual listen comparison yet.
+4. **TTS latency in the deployed container (~4.2s) is noticeably worse
+   than the ~1.5–2.4s measured in standalone tests** — traced to Alpine's
+   `onnxruntime` package's much larger dependency tree (Abseil, protobuf,
+   ICU) loading fresh on every subprocess exec. Options if this needs
+   tightening later: a persistent `piper_exe`-wrapping process pool (adds
+   back some of the complexity the "shell out per request" design
+   avoided), or accepting it as the actual cost of musl-native
+   compatibility. Not blocking for now — just tracked.
+5. ~~Confirm the float-to-PCM16 conversion sounds right~~ — **resolved
    differently than planned**: instead of an `ffmpeg` conversion pass on
    every request, patched `piper_exe` itself to emit PCM16 directly (two
    small files, see TTS section) — verified via decoded sample data
@@ -562,16 +661,16 @@ downloaded, no Python anywhere in the path.
    actual listen once real speakers are available — decoded-sample
    verification confirms the data is real and in-range, not that it's
    free of subtle clipping artifacts from the `[-1,1]` clamp.
-5. **Pin an exact `piper1-gpl` commit/tag** for `deploy/piper/Dockerfile`,
-   the same way `LLAMA_CPP_REF` pins `deploy/llama/Dockerfile` — `v1.7.0`
-   is what got tested above, but confirm it's still current when the
-   Dockerfile actually gets written.
-6. **`whisper-server`'s actual request/response shape** needs verifying
+6. ~~Pin an exact `piper1-gpl` commit/tag`~~ — **shipped as `PIPER_REF`**,
+   a build arg in `Dockerfile`'s `piper-builder` stage, defaulting to
+   `v1.7.0` (the tag verified throughout this doc) — confirm it's still
+   current if this gets rebuilt long after the fact.
+7. **`whisper-server`'s actual request/response shape** needs verifying
    against the pinned `whisper.cpp` commit before writing `handleSTT` —
    the endpoint path and JSON field names in this doc are from
    whisper.cpp's typical `server` example, not yet confirmed against the
    exact pinned build.
-7. **ffmpeg availability** — `internal/webui`'s Dockerfile already ships
-   `poppler-utils`/`tesseract-ocr`; add `ffmpeg` there too once this lands
-   (`espeak-ng` no longer needs a separate apt package — `libpiper`'s own
-   build downloads/builds it from source, see the TTS section above).
+8. **ffmpeg availability for STT** — `Dockerfile` already ships
+   `poppler-utils`/`tesseract-ocr`; add `ffmpeg` there too once STT lands
+   (`espeak-ng` needed no separate package at all — statically linked
+   into `libpiper.so`, see the TTS section above).

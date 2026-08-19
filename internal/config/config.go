@@ -21,6 +21,7 @@ type Config struct {
 	Maps      MapsConfig      `mapstructure:"maps"`
 	Sensors   SensorsConfig   `mapstructure:"sensors"`
 	Logging   LoggingConfig   `mapstructure:"logging"`
+	Voice     VoiceConfig     `mapstructure:"voice"`
 }
 
 // AssistantConfig holds user-facing identity and optional response style.
@@ -51,6 +52,22 @@ type MemoConfig struct {
 // ~/.local/share/bosun/documents.json.
 type DocumentsConfig struct {
 	Path string `mapstructure:"path"`
+}
+
+// VoiceConfig holds settings for the (early, TTS-only so far) voice
+// interface — see docs/voice.md. TTS.ModelPath empty (the default)
+// disables /api/tts entirely.
+type VoiceConfig struct {
+	TTS TTSConfig `mapstructure:"tts"`
+}
+
+// TTSConfig points at a built `piper_exe` (patched to emit 16-bit PCM
+// WAV — see deploy/piper/wav-pcm16.patch) and a voice model. All three
+// paths are required together; ModelPath empty disables the feature.
+type TTSConfig struct {
+	BinaryPath     string `mapstructure:"binary_path"`
+	ModelPath      string `mapstructure:"model_path"`
+	EspeakDataPath string `mapstructure:"espeak_data_path"`
 }
 
 // ErrorLogConfig holds settings for the tool/LLM failure log used to drive

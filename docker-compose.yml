@@ -26,6 +26,11 @@ services:
       # `mkcert -cert-file data/certs/cert.pem -key-file data/certs/key.pem
       # <lan-ip> <hostname> localhost 127.0.0.1 ::1` if the LAN IP changes.
       - ./data/certs:/home/bosun/certs:ro
+      # Piper TTS voice model (docs/voice.md) — piper_exe/libpiper.so
+      # themselves are baked into the image (see Dockerfile); only the
+      # voice model is a runtime bind mount, so switching voices is a
+      # config edit, not a rebuild.
+      - ./data/models/tts:/home/bosun/models/tts:ro
 
   # See deploy/llama/Dockerfile for why this is built from source (pinned
   # commit, matching this host's already-verified bare-metal CPU-backend

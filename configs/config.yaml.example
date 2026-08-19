@@ -103,6 +103,16 @@ web:
                                              # (e.g. a corporate MDM-managed phone that blocks
                                              # installing custom root certs). See docs/tls.md.
 
+# Early, TTS-only voice interface (see docs/voice.md) — a "speak" button
+# on each assistant chat bubble. Empty model_path (the default) disables
+# it entirely; the web UI's speak button just does nothing if clicked.
+# voice:
+#   tts:
+#     binary_path: "/usr/local/bin/piper_exe"  # patched to emit 16-bit PCM WAV —
+#                                               # see deploy/piper/wav-pcm16.patch
+#     model_path: "/opt/bosun/models/tts/ru_RU-<voice>-medium.onnx"
+#     espeak_data_path: "/opt/bosun/espeak-ng-data"
+
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:
   path: ""

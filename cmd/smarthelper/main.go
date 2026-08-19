@@ -23,6 +23,7 @@ import (
 	"github.com/roman220/ai-local-smarthelper/internal/mcp"
 	"github.com/roman220/ai-local-smarthelper/internal/settings"
 	"github.com/roman220/ai-local-smarthelper/internal/tools"
+	"github.com/roman220/ai-local-smarthelper/internal/voice"
 	"github.com/roman220/ai-local-smarthelper/internal/webui"
 )
 
@@ -172,6 +173,13 @@ func serveCmd() *cobra.Command {
 			server.SetSettingsStore(settingsStore)
 			server.SetTemperatureController(router)
 			server.SetCACertFile(cfg.Web.CACertFile)
+			if cfg.Voice.TTS.ModelPath != "" {
+				server.SetTTSEngine(&voice.PiperTTS{
+					BinaryPath:     cfg.Voice.TTS.BinaryPath,
+					ModelPath:      cfg.Voice.TTS.ModelPath,
+					EspeakDataPath: cfg.Voice.TTS.EspeakDataPath,
+				})
+			}
 
 			if memoTool, ok := registry.Get("memo"); ok {
 				if mt, ok := memoTool.(*tools.MemoTool); ok {
