@@ -55,6 +55,82 @@ func TestRouterSetTemperatures(t *testing.T) {
 	}
 }
 
+func TestRouterProviderOverride(t *testing.T) {
+	t.Setenv("SMARTHELPER_TEST_ROUTER_OVERRIDE_KEY", "secret")
+	remote, err := NewRemoteClient("https://remote.test/v1", "text", "SMARTHELPER_TEST_ROUTER_OVERRIDE_KEY", "", 0.8, time.Second)
+	if err != nil {
+		t.Fatalf("create remote client: %v", err)
+	}
+	router := &Router{
+		localClient:  NewLocalClient("", "", 0.5, time.Second, true),
+		remoteClient: remote,
+		config:       &config.LLMConfig{Router: config.RouterConfig{PreferRemote: true}},
+		isOnline:     true,
+	}
+
+	if got := router.ProviderOverride(); got != "auto" {
+		t.Errorf("default override = %q, want auto", got)
+	}
+	if got := router.CurrentProvider(); got != "remote" {
+		t.Errorf("auto + online + prefer_remote = %q, want remote", got)
+	}
+
+	if err := router.SetProviderOverride("local"); err != nil {
+		t.Fatalf("SetProviderOverride(local): %v", err)
+	}
+	if got := router.ProviderOverride(); got != "local" {
+		t.Errorf("override = %q, want local", got)
+	}
+	if got := router.CurrentProvider(); got != "local" {
+		t.Errorf("forced local while online = %q, want local", got)
+	}
+	client, err := router.GetClient(context.Background())
+	if err != nil {
+		t.Fatalf("GetClient: %v", err)
+	}
+	if client.Provider() != "local" {
+		t.Errorf("GetClient provider = %q, want local", client.Provider())
+	}
+
+	if err := router.SetProviderOverride("remote"); err != nil {
+		t.Fatalf("SetProviderOverride(remote): %v", err)
+	}
+	if got := router.CurrentProvider(); got != "remote" {
+		t.Errorf("forced remote = %q, want remote", got)
+	}
+
+	if err := router.SetProviderOverride("auto"); err != nil {
+		t.Fatalf("SetProviderOverride(auto): %v", err)
+	}
+	if got := router.ProviderOverride(); got != "auto" {
+		t.Errorf("override after reset = %q, want auto", got)
+	}
+
+	if err := router.SetProviderOverride("sideways"); err == nil {
+		t.Error("expected an error for an invalid override value")
+	}
+}
+
+func TestRouterProviderOverrideRemoteFallsBackWhenUnconfigured(t *testing.T) {
+	router := &Router{
+		localClient: NewLocalClient("", "", 0.5, time.Second, true),
+		config:      &config.LLMConfig{},
+	}
+	if err := router.SetProviderOverride("remote"); err != nil {
+		t.Fatalf("SetProviderOverride(remote): %v", err)
+	}
+	// No remote client configured at all — the override can't be honored,
+	// so this should fall back to automatic selection (local) instead of
+	// erroring.
+	client, err := router.GetClient(context.Background())
+	if err != nil {
+		t.Fatalf("GetClient: %v", err)
+	}
+	if client.Provider() != "local" {
+		t.Errorf("GetClient provider = %q, want local", client.Provider())
+	}
+}
+
 func TestRouterRetriesTransientRemoteErrors(t *testing.T) {
 	attempts := 0
 	client := &RemoteClient{

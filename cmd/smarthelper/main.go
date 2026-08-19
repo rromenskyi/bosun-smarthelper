@@ -172,6 +172,7 @@ func serveCmd() *cobra.Command {
 			server.SetDocumentStore(docStore)
 			server.SetSettingsStore(settingsStore)
 			server.SetTemperatureController(router)
+			server.SetProviderOverrideController(router)
 			server.SetCACertFile(cfg.Web.CACertFile)
 			if cfg.Voice.TTS.ModelPath != "" {
 				server.SetTTSEngine(&voice.PiperTTS{

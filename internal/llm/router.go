@@ -25,6 +25,13 @@ type Router struct {
 	checkMu            sync.Mutex
 	remoteMaxRetries   int
 	remoteRetryBackoff time.Duration
+	// providerOverride forces a specific provider regardless of
+	// connectivity/prefer_remote — "" means automatic (the default).
+	// Deliberately in-memory only, not persisted: a quick manual lever
+	// for a session, not a standing config choice (see the web UI's
+	// online/offline switch next to the status pill).
+	overrideMu       sync.RWMutex
+	providerOverride string
 }
 
 // NewRouter creates a new LLM router
@@ -146,12 +153,57 @@ func (r *Router) NetworkAvailable(ctx context.Context) bool {
 }
 
 // CurrentProvider returns the provider that would serve a request using the
-// most recent connectivity state.
+// most recent connectivity state, honoring a manual ProviderOverride first.
 func (r *Router) CurrentProvider() string {
+	switch r.getProviderOverride() {
+	case "local":
+		return "local"
+	case "remote":
+		if r.remoteClient != nil {
+			return "remote"
+		}
+	}
 	if r.config.Router.PreferRemote && r.IsOnline() && r.remoteClient != nil {
 		return "remote"
 	}
 	return "local"
+}
+
+// ProviderOverride returns the current manual override: "auto" (the
+// default — automatic connectivity-based selection), "local", or
+// "remote". See SetProviderOverride.
+func (r *Router) ProviderOverride() string {
+	if override := r.getProviderOverride(); override != "" {
+		return override
+	}
+	return "auto"
+}
+
+func (r *Router) getProviderOverride() string {
+	r.overrideMu.RLock()
+	defer r.overrideMu.RUnlock()
+	return r.providerOverride
+}
+
+// SetProviderOverride forces every subsequent request onto a specific
+// provider, bypassing connectivity checks and prefer_remote entirely —
+// "local" never leaves the device even when genuinely online; "remote" is
+// a preference, not a guarantee, since Chat/ChatStream still fall back to
+// local if the remote request itself fails. "auto" (or "") restores the
+// normal automatic selection. Not persisted — resets to auto on restart.
+func (r *Router) SetProviderOverride(mode string) error {
+	switch mode {
+	case "", "auto":
+		mode = ""
+	case "local", "remote":
+		// valid as-is
+	default:
+		return fmt.Errorf("provider override must be auto, local, or remote, got %q", mode)
+	}
+	r.overrideMu.Lock()
+	r.providerOverride = mode
+	r.overrideMu.Unlock()
+	return nil
 }
 
 // LastProvider returns the provider used for the latest request attempt. It
@@ -190,10 +242,22 @@ func (r *Router) SetTemperatures(remote, local float64) {
 	}
 }
 
-// GetClient returns the appropriate client based on connectivity and config
+// GetClient returns the appropriate client based on connectivity and
+// config, honoring a manual ProviderOverride first.
 func (r *Router) GetClient(ctx context.Context) (Client, error) {
-	isOnline := r.NetworkAvailable(ctx)
+	switch r.getProviderOverride() {
+	case "local":
+		return r.localClient, nil
+	case "remote":
+		if r.remoteClient != nil {
+			return r.remoteClient, nil
+		}
+		// No remote client configured at all (e.g. missing API key) —
+		// fall through to automatic selection rather than erroring on an
+		// override that can't actually be honored.
+	}
 
+	isOnline := r.NetworkAvailable(ctx)
 	preferRemote := r.config.Router.PreferRemote
 
 	if preferRemote && isOnline && r.remoteClient != nil {

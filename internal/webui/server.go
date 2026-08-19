@@ -117,6 +117,7 @@ type Server struct {
 	caCertFile        string
 	ttsEngine         voice.TTSEngine
 	sttEngine         voice.STTEngine
+	providerOverride  providerOverrideController
 }
 
 // SetDefaultLanguage changes the language used when a chat request doesn't
@@ -318,6 +319,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tts", s.handleTTS)
 	mux.HandleFunc("POST /api/stt", s.handleSTT)
 	mux.HandleFunc("POST /api/feedback", s.handleFeedback)
+	mux.HandleFunc("POST /api/provider-override", s.handleProviderOverride)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
 	}
@@ -406,14 +408,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	status := s.status()
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"online":          status.Online,
 		"provider":        status.Provider,
 		"available_tools": status.AvailableTools,
 		// So the web UI can hide the mic button entirely when there's no
 		// STT engine configured, instead of a dead-end recording flow.
 		"stt_enabled": s.sttEngine != nil,
-	})
+	}
+	if s.providerOverride != nil {
+		response["provider_override"] = s.providerOverride.ProviderOverride()
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // handleHistory returns a session's stored transcript so the client can
