@@ -159,15 +159,61 @@ nothing to design further here until that phase starts.
 
 ## TTS: Piper, shelled out to directly — no server, no Python
 
-[Piper](https://github.com/rhasspy/piper) is a self-contained C++ binary
-using ONNX Runtime for the neural vocoder and `espeak-ng` (a C library,
-also no Python) for grapheme-to-phoneme conversion. Its official releases
-ship a prebuilt Linux x86-64 binary with a bundled `onnxruntime` shared
-library. ONNX Runtime's CPU execution provider does runtime CPU-feature
-dispatch (comparable in spirit to `ggml`'s `GGML_CPU_ALL_VARIANTS`), so it
-should run without AVX2 out of the box — **this needs a real 10-minute
-check on this host once a release is downloaded**, not just an assumption
-(see Open Questions).
+[Piper](https://github.com/rhasspy/piper) is a C++ engine using ONNX
+Runtime for the neural vocoder and `espeak-ng` (a C library, also no
+Python) for grapheme-to-phoneme conversion. ONNX Runtime's CPU execution
+provider does runtime CPU-feature dispatch (comparable in spirit to
+`ggml`'s `GGML_CPU_ALL_VARIANTS`).
+
+**Important correction, caught before implementation**: `rhasspy/piper`
+(the original repo, linked above) is **archived** on GitHub — last push
+Aug 2025, 419 open issues, no further activity. Don't build against it.
+The actively maintained continuation is
+**[OHF-Voice/piper1-gpl](https://github.com/OHF-Voice/piper1-gpl)**
+(backed by the Open Home Foundation, the org behind Home Assistant;
+5174 stars, last pushed days before this doc was updated, current
+release `v1.7.0`) — target this fork instead. It's the same engine
+lineage (same voice model format, same author-adjacent ecosystem), just
+under active maintenance.
+
+**Verified on this actual host, twice, both without any AVX2-related
+crash**:
+1. The archived repo's last-ever release (`2023.11.14-2`,
+   bundled `libonnxruntime.so.1.14.1`) — ran two Russian voices
+   (`ru_RU-denis-medium`, `ru_RU-ruslan-medium`), no crash, no `dmesg`
+   illegal-instruction trap. Measured numbers, cold process each time (no
+   persistent server, matching the design below):
+
+   | | denis, ~4.0s of audio | ruslan, ~1.8s of audio |
+   |---|---|---|
+   | model load | 0.37s | 0.37s |
+   | inference | 1.11s | 0.30s |
+   | real-time factor | 0.27 | 0.17 |
+   | total wall time | ~1.5s | 0.74s |
+   | peak RSS | ~126 MB | ~126 MB |
+
+   Comfortably inside the spec's "≤1–2s TTS latency" target even
+   including a full cold process start each request. Output is 16-bit
+   mono PCM WAV at the voice's native 22050 Hz (confirms the sample-rate
+   note below).
+2. The **active fork's current code** (`piper1-gpl` v1.7.0, which bundles
+   a much newer `onnxruntime` — 1.22.0, not 1.14.1) — verified via
+   `pip install piper-tts` in a throwaway venv as a quick check (Python
+   here only as a verification harness, not the production path — see
+   below): `python3 -m piper --model ru_RU-denis-medium.onnx ...`
+   synthesized the same test sentence cleanly, no crash. Confirms the
+   newer onnxruntime the maintained fork ships also runs fine on this
+   CPU, not just the 2-year-old archived one.
+
+**Not yet fully verified**: building `libpiper` — this fork's actual
+pure-C/C++ core (`libpiper/`, a CMake project, no Python involved at
+all — see below) — from source hit a build-tooling snag partway through
+(the bundled `espeak-ng`'s phoneme-data compile step failed with ~981
+"bad vowel file" errors, which reads like a data/tool version mismatch,
+not a CPU-instruction problem). Left as an open item to resolve during
+implementation, not a hardware blocker — both verifications above already
+confirm the actual computation (onnxruntime CPU inference) runs fine here
+regardless of which exact build path gets it there.
 
 Model loading is fast enough (small ONNX graph, no multi-gigabyte weights)
 that **Piper doesn't need to run as a persistent server at all** — Bosun
@@ -178,20 +224,38 @@ architecture (no sidecar process, no Dockerfile, no port to manage, no
 HTTP client to write) compared to the Silero design:
 
 ```
-piper --model /opt/bosun/models/tts/<voice>.onnx \
-      --output_file - <<< "Капитан! Старпом на связи." > out.wav
+bosun-piper-cli --model /opt/bosun/models/tts/<voice>.onnx \
+                --espeak-data /opt/bosun/espeak-ng-data \
+                --output_file - <<< "Капитан! Старпом на связи." > out.wav
 ```
+
+`bosun-piper-cli` isn't Piper's own binary — `piper1-gpl` doesn't ship one
+(its CLI is the Python module tested above). It's a **~40-line C++ program
+we write**, directly mirroring `libpiper/README.md`'s example (`piper_create`
+→ `piper_synthesize_start`/`piper_synthesize_next` loop → write a WAV
+header + the accumulated float32 samples), linked against `libpiper` and
+`libonnxruntime`. This keeps the same "build a small thing from an
+upstream C library, pin a commit" shape already used twice in this repo
+(`deploy/llama/Dockerfile`, and the planned `deploy/whisper/Dockerfile`) —
+just a third instance of it, not a new pattern.
 
 Bosun's `internal/webui`/`internal/voice` code runs this via `os/exec`
 with the text piped to stdin and the WAV read from stdout — no temp files
 needed for the common case, matching "don't persist raw audio."
 
-**Dockerfile change**: add `espeak-ng` (apt package) and the `piper`
-binary + voice `.onnx`/`.onnx.json` model files to the existing
-`Dockerfile` (same section that already installs `poppler-utils`/
-`tesseract-ocr`), plus a bind-mounted `./data/models/tts/` for the model
-files themselves (same "plain host directory, survives `docker compose
-down -v`" reasoning as `./data/bosun`). No new Docker service.
+**`deploy/piper/Dockerfile`** (new): clone `OHF-Voice/piper1-gpl` pinned
+at a specific commit/tag (`v1.7.0` or later, once actually verified —
+see Open Questions), build `libpiper/` per its own `CMakeLists.txt`
+(which downloads/builds `espeak-ng` and downloads the `onnxruntime`
+release itself — no apt packages needed for either), compile
+`bosun-piper-cli` against the resulting `install/` directory, and copy
+the binary + `libonnxruntime.so`/`libespeak-ng` shared libs +
+`espeak-ng-data/` into the final image (mirrors `deploy/llama/Dockerfile`'s
+two-stage builder/runtime shape). Voice `.onnx`/`.onnx.json` model files
+stay a bind-mounted `./data/models/tts/` (same "plain host directory,
+survives `docker compose down -v`" reasoning as `./data/bosun`). No new
+Docker *service* — this becomes part of the existing `bosun` image, same
+as `ffmpeg`/`tesseract` are today.
 
 **Bosun's `POST /api/tts`**: accepts `{"text": "..."}`, runs the
 configured Piper voice, returns the WAV, logs latency. **Text passes
@@ -206,17 +270,21 @@ live, without building out anything now.
 
 **Voice/speaker naming changes from the original spec**: `aidar`/`eugene`
 were Silero-specific multi-speaker names — Piper voices are one model
-file per voice, not one model with named speakers inside it. Male Russian
-Piper voices exist in the community `rhasspy/piper-voices` collection
-(names like `ru_RU-denis-medium`/`ru_RU-ruslan-medium` from memory), but
-**the exact current list needs verifying against that repo at
-implementation time** rather than trusting a name recalled here — pick
-whichever one or two actually sound best on a real listen-test, matching
-the spirit of the original "test at least two male speakers" requirement
-even though the specific names change. There's no separate `speaker`
-field in config any more — `voice.tts.model_path` (below) *is* the voice
-selection, since each Piper voice is its own model file; switching voices
-is a one-line config edit, no `speaker` parameter needed per request.
+file per voice, not one model with named speakers inside it.
+**Confirmed against the live `rhasspy/piper-voices` Hugging Face repo**
+(not just recalled) — note this is a separate, still-actively-updated
+model-hosting repo (last modified days before this doc was updated) from
+the archived `rhasspy/piper` *engine* repo above; voice models didn't go
+stale just because the original engine did: `ru/ru_RU/` currently has
+four voices — `denis`, `dmitri`, `ruslan` (male) and `irina` (female),
+each only in a `medium` quality tier. Downloaded and test-synthesized
+`denis` and `ruslan` above; a real listen-test (not yet done — needs an
+actual speaker, not a shell) between those two, and maybe `dmitri` as a
+third candidate, decides the default.
+There's no separate `speaker` field in config any more —
+`voice.tts.model_path` (below) *is* the voice selection, since each Piper
+voice is its own model file; switching voices is a one-line config edit,
+no `speaker` parameter needed per request.
 
 **Sample rate is dictated by the voice model, not freely chosen**: unlike
 Silero (where 24 kHz was a real choice), a Piper voice's `.onnx.json`
@@ -398,21 +466,34 @@ downloaded, no Python anywhere in the path.
 
 ## Open questions before implementation starts
 
-1. **Verify ONNX Runtime actually runs on this CPU without AVX2** — the
-   whole Piper recommendation rests on ONNX Runtime's CPU provider having
-   a working non-AVX2 fallback path. Download Piper's official release +
-   one Russian voice and just run it once on this host before writing any
-   integration code — cheap to check, expensive to assume wrong.
-2. **Pick and pin the actual Piper voice model(s)** — check the current
-   `rhasspy/piper-voices` listing for available male Russian voices (names
-   recalled here, like `ru_RU-denis-medium`, are not verified against the
-   live repo), download two candidates, and listen-test before picking a
-   default.
-3. **`whisper-server`'s actual request/response shape** needs verifying
+1. ~~Verify ONNX Runtime actually runs on this CPU without AVX2~~ —
+   **resolved**: confirmed twice on this actual host, once with the
+   archived repo's last release (onnxruntime 1.14.1) and once with the
+   actively maintained fork's current code (onnxruntime 1.22.0, via
+   `pip install piper-tts` as a quick check). Both synthesized real
+   Russian audio with no crash. See the TTS section above for numbers.
+2. **Fix the `libpiper` from-source build** — hit a build-tooling snag
+   (espeak-ng's bundled phoneme-data compile step, ~981 "bad vowel file"
+   errors) partway through building the actual C/C++ core this project
+   would ship against, as opposed to the Python-wheel path used only to
+   verify hardware compatibility above. Needs resolving (likely an
+   espeak-ng data/tool version mismatch — check upstream issues, or try
+   pinning a different `espeak-ng` commit than `libpiper/CMakeLists.txt`
+   defaults to) before `deploy/piper/Dockerfile` can actually be written.
+3. **Pick and pin the actual Piper voice model** — `denis` and `ruslan`
+   are both downloaded and confirmed to synthesize correctly; still needs
+   an actual listen-test (by ear, not by shell exit code) to pick a
+   default, optionally trying `dmitri` as a third candidate.
+4. **Pin an exact `piper1-gpl` commit/tag** for `deploy/piper/Dockerfile`,
+   the same way `LLAMA_CPP_REF` pins `deploy/llama/Dockerfile` — `v1.7.0`
+   is what got tested above, but confirm it's still current when the
+   Dockerfile actually gets written.
+5. **`whisper-server`'s actual request/response shape** needs verifying
    against the pinned `whisper.cpp` commit before writing `handleSTT` —
    the endpoint path and JSON field names in this doc are from
    whisper.cpp's typical `server` example, not yet confirmed against the
    exact pinned build.
-4. **ffmpeg and espeak-ng availability** — `internal/webui`'s Dockerfile
-   already ships `poppler-utils`/`tesseract-ocr`; add both there too once
-   this lands (`espeak-ng` is Piper's phonemizer dependency).
+6. **ffmpeg availability** — `internal/webui`'s Dockerfile already ships
+   `poppler-utils`/`tesseract-ocr`; add `ffmpeg` there too once this lands
+   (`espeak-ng` no longer needs a separate apt package — `libpiper`'s own
+   build downloads/builds it from source, see the TTS section above).
