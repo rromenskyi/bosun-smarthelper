@@ -13,6 +13,7 @@ services:
     depends_on:
       - llama-chat
       - llama-embed
+      - whisper-stt
     env_file:
       - .env
     volumes:
@@ -79,3 +80,26 @@ services:
       --alias embed --host 127.0.0.1 --port 1235
       --embeddings -c 512 -np 1 -t 2
       --sleep-idle-seconds 300
+
+  # STT (docs/voice.md). See deploy/whisper/Dockerfile for why this is
+  # built from source, same as llama-chat/llama-embed.
+  whisper-stt:
+    build: ./deploy/whisper
+    image: bosun-whisper-cpp:local
+    container_name: whisper-stt
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data/models/whisper:/models:ro
+    # --audio-ctx 512: whisper.cpp's encoder otherwise always processes a
+    # fixed ~30s-equivalent window regardless of actual utterance length,
+    # so a short push-to-talk command costs the same ~12-13s as a much
+    # longer one on this CPU — confirmed by measurement, not assumption.
+    # 512 cuts that to ~5s for both a 1.8s and a 5.3s test utterance, with
+    # no accuracy loss on either in testing. Push-to-talk commands are
+    # expected to be short; bump this (or drop it, 0 = full context) if
+    # longer dictation-style input ever needs it.
+    command: >-
+      --model /models/ggml-tiny.bin
+      --host 127.0.0.1 --port 1236
+      --threads 4 --language ru --audio-ctx 512

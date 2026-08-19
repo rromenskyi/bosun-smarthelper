@@ -53,7 +53,10 @@ FROM alpine:edge
 # onnxruntime: Piper TTS's runtime dependency (see the piper-builder stage
 # above) — apk pulls in its transitive deps (protobuf-lite, re2, abseil,
 # icu) automatically.
-RUN apk add --no-cache ca-certificates poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-rus onnxruntime && \
+# ffmpeg: converts whatever format the browser's MediaRecorder produced
+# (typically audio/webm;codecs=opus) into the 16kHz mono PCM WAV
+# whisper.cpp expects — see internal/webui/voice.go's convertToWAV.
+RUN apk add --no-cache ca-certificates poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-rus onnxruntime ffmpeg && \
     addgroup -g 1000 bosun && adduser -S -u 1000 -G bosun -h /home/bosun -s /sbin/nologin bosun && \
     mkdir -p /home/bosun/.local/share/bosun && \
     chown -R bosun:bosun /home/bosun

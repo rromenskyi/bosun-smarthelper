@@ -59,11 +59,12 @@ type DocumentsConfig struct {
 	Path string `mapstructure:"path"`
 }
 
-// VoiceConfig holds settings for the (early, TTS-only so far) voice
-// interface — see docs/voice.md. TTS.ModelPath empty (the default)
-// disables /api/tts entirely.
+// VoiceConfig holds settings for the voice interface — see docs/voice.md.
+// TTS.ModelPath empty disables /api/tts; STT.BaseURL empty disables
+// /api/stt. Independent of each other.
 type VoiceConfig struct {
 	TTS TTSConfig `mapstructure:"tts"`
+	STT STTConfig `mapstructure:"stt"`
 }
 
 // TTSConfig points at a built `piper_exe` (patched to emit 16-bit PCM
@@ -73,6 +74,16 @@ type TTSConfig struct {
 	BinaryPath     string `mapstructure:"binary_path"`
 	ModelPath      string `mapstructure:"model_path"`
 	EspeakDataPath string `mapstructure:"espeak_data_path"`
+}
+
+// STTConfig points at a running `whisper-server` (see
+// deploy/whisper/Dockerfile) — a separate long-running process, unlike
+// TTS's per-request subprocess, since whisper.cpp's model load time is
+// significant enough to be worth keeping resident. BaseURL empty (the
+// default) disables /api/stt entirely.
+type STTConfig struct {
+	BaseURL  string `mapstructure:"base_url"`
+	Language string `mapstructure:"language"`
 }
 
 // ErrorLogConfig holds settings for the tool/LLM failure log used to drive

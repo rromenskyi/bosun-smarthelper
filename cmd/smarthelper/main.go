@@ -180,6 +180,12 @@ func serveCmd() *cobra.Command {
 					EspeakDataPath: cfg.Voice.TTS.EspeakDataPath,
 				})
 			}
+			if cfg.Voice.STT.BaseURL != "" {
+				server.SetSTTEngine(&voice.WhisperCppSTT{
+					BaseURL:  cfg.Voice.STT.BaseURL,
+					Language: cfg.Voice.STT.Language,
+				})
+			}
 
 			if memoTool, ok := registry.Get("memo"); ok {
 				if mt, ok := memoTool.(*tools.MemoTool); ok {

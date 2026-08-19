@@ -116,6 +116,7 @@ type Server struct {
 	temps             temperatureController
 	caCertFile        string
 	ttsEngine         voice.TTSEngine
+	sttEngine         voice.STTEngine
 }
 
 // SetDefaultLanguage changes the language used when a chat request doesn't
@@ -315,6 +316,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings", s.handleSettingsUpdate)
 	mux.HandleFunc("GET /ca.pem", s.handleCACert)
 	mux.HandleFunc("POST /api/tts", s.handleTTS)
+	mux.HandleFunc("POST /api/stt", s.handleSTT)
 	mux.HandleFunc("POST /api/feedback", s.handleFeedback)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
@@ -403,7 +405,15 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.status())
+	status := s.status()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"online":          status.Online,
+		"provider":        status.Provider,
+		"available_tools": status.AvailableTools,
+		// So the web UI can hide the mic button entirely when there's no
+		// STT engine configured, instead of a dead-end recording flow.
+		"stt_enabled": s.sttEngine != nil,
+	})
 }
 
 // handleHistory returns a session's stored transcript so the client can

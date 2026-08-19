@@ -1,12 +1,13 @@
 # Voice interface
 
-**Status: TTS is implemented and deployed** — a 🔊 "speak" button on
-every assistant chat bubble, calling `POST /api/tts`, backed by Piper
-running natively inside the existing `bosun` container (see the TTS
-section below for the full story, including a real architecture change
-along the way — Alpine's own musl-native `onnxruntime` package, not the
-glibc-only path this doc originally investigated). STT and the full
-`POST /api/voice` pipeline are still design-only, not yet built.
+**Status: push-to-talk MVP is implemented and deployed.** Both directions
+work: 🔊 TTS on every assistant reply (Piper, native inside `bosun`'s own
+container — see the TTS section for the Alpine/musl story), and a 🎤
+push-to-talk button (whisper.cpp, its own `whisper-stt` container) that
+transcribes, sends the text through the exact same `ask()` a typed
+message uses, and auto-speaks the reply to close the loop. Continuous
+"conversation mode" (loop without pressing again) is the deliberate next
+step, not part of this pass.
 
 Goal: a fully local, offline-capable voice front-end to the existing chat
 loop — `microphone → STT → the same agent.Agent used by web chat → TTS →
@@ -73,70 +74,66 @@ No Python anywhere in this diagram: whisper.cpp is C++, Piper is C++ +
 ONNX Runtime, orchestration is Go. TTS doesn't even need a network hop —
 see below.
 
-## STT: whisper.cpp, run as its own server (mirrors `llama-server`)
+## STT: whisper.cpp, run as its own server (mirrors `llama-server`) — shipped
 
 whisper.cpp ships its own HTTP server example (`whisper-server`), and it's
-built on the same `ggml` backend as `llama.cpp`. That means the exact
-CPU-dispatch trick already used in `deploy/llama/Dockerfile` — build with
+built on the same `ggml` backend as `llama.cpp`. The exact CPU-dispatch
+trick already used in `deploy/llama/Dockerfile` — build with
 `-DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON` so the
-binary picks the right SIMD variant (SSE4.2/AVX, never AVX2/FMA/F16C) at
-startup instead of assuming one — applies unchanged. No Python, no
-PyTorch, matching the requirement directly.
+binary picks the right SIMD variant at startup instead of assuming one —
+applies unchanged, **verified**: built from source
+(`deploy/whisper/Dockerfile`, pinned at commit `4834a2327d008ace3ec5a9ed
+00f51454bcabbc1c`) and confirmed it auto-selects `ggml-cpu-sandybridge.so`
+(SSE4.2+AVX, no AVX2/FMA/F16C) on this exact host, no crash. No Python,
+no PyTorch.
 
-**`deploy/whisper/Dockerfile`** (new, same shape as `deploy/llama/Dockerfile`):
-```dockerfile
-ARG WHISPER_CPP_REF=<pin to a specific commit, like LLAMA_CPP_REF>
-FROM ubuntu:26.04 AS builder
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git ca-certificates libssl-dev pkg-config curl \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
-RUN git clone https://github.com/ggml-org/whisper.cpp.git . && git checkout "${WHISPER_CPP_REF}"
-RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
-    -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON \
-    -DWHISPER_SDL2=OFF && cmake --build build -j"$(nproc)" --target whisper-server
-FROM ubuntu:26.04
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 libgomp1 && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /src/build/bin/ /usr/local/lib/whisper.cpp/
-RUN ln -s /usr/local/lib/whisper.cpp/whisper-server /usr/local/bin/whisper-server
-ENV LD_LIBRARY_PATH=/usr/local/lib/whisper.cpp
-USER ubuntu
-ENTRYPOINT ["/usr/local/bin/whisper-server"]
-```
+**whisper-server's actual `/inference` endpoint** (the earlier open
+question — now confirmed, not guessed): `POST /inference`, multipart form
+with `file` (the WAV), `language`, `response_format=json`; response is
+`{"text": "..."}`. Verified with a real round-trip: synthesized a test
+sentence with Piper, fed the resulting WAV back into whisper-server, and
+it came back recognizable (`"Капитан Старпом на связи. Системы в норме
+курс держим..."` for `"Капитан! Старпом на связи. Системы в норме, курс
+держим..."` — small ASR errors from the `tiny` model, meaning intact).
 
-**`docker-compose.yml`** addition, mirroring `llama-chat`/`llama-embed`:
-```yaml
-whisper-stt:
-  build: ./deploy/whisper
-  image: bosun-whisper-cpp:local
-  container_name: whisper-stt
-  restart: unless-stopped
-  network_mode: host
-  volumes:
-    - ./data/models/whisper:/models:ro
-  command: >-
-    --model /models/ggml-tiny.bin
-    --host 127.0.0.1 --port 1236
-    --threads 4 --language ru
-```
+**A real, measured latency problem, and the fix**: whisper.cpp's encoder
+always processes a fixed context window (`n_audio_ctx=1500`, roughly a
+30-second-equivalent pass) regardless of how short the actual utterance
+is — confirmed by measurement, not assumption: a 5.3s test clip and a
+1.8s test clip took nearly identical time (13.2s vs 12.5s) with default
+settings on this CPU. That's far outside the "≤2-3s" target for a short
+push-to-talk command. `whisper-server`'s `--audio-ctx N` flag (default 0
+= full context) shrinks that window — tested 512 and 768 against both
+clips; **512** gave the best balance: ~4.6s for the 1.8s clip, ~5.3s for
+the 5.3s clip (both close to real-time), no accuracy loss observed at
+either length. This is now the deployed default
+(`docker-compose.yml`'s `whisper-stt` service) — see Open Questions for
+the real ceiling this hasn't been tested against (much longer dictation
+would need a higher value, or 0, at the cost of returning to the
+fixed-window latency).
 
-Model files (`ggml-tiny.bin`, later `ggml-base.bin`) download once with
-`whisper.cpp`'s own `models/download-ggml-model.sh` into
-`./data/models/whisper/` (a plain bind-mounted host directory, same
-survives-`docker compose down -v` reasoning as `./data/bosun`). Switching
-tiny → base is a one-line `command:` edit, no rebuild.
+**`deploy/whisper/Dockerfile`** (shipped, same shape as
+`deploy/llama/Dockerfile`): builder stage clones `ggml-org/whisper.cpp`
+pinned at `WHISPER_CPP_REF`, builds with the flags above targeting just
+`whisper-server`; final stage copies the whole `bin/` directory (one
+`libggml-cpu-*.so` per microarchitecture, picked at runtime) and symlinks
+the binary.
 
-**Bosun's `POST /api/stt`** (new handler, `internal/webui/voice.go`):
-accepts `audio/wav` (already-converted PCM), proxies to
-`http://127.0.0.1:1236/inference` (whisper-server's actual endpoint),
-reshapes the response into the contracted shape, and logs latency:
-```json
-{"text": "Старпом, как наши системы?", "language": "ru", "duration_ms": 1840}
-```
-`duration_ms` is *this request's* STT latency (matches the spec's example
-key name, even though it reads like audio duration at first glance — kept
-as specified since the voice pipeline's `timings` object already has a
-separate, unambiguous `stt_ms`).
+**`docker-compose.yml`**'s `whisper-stt` service (shipped): built from
+that Dockerfile, `network_mode: host`, model directory bind-mounted from
+`./data/models/whisper/` (both `ggml-tiny.bin` and `ggml-base.bin`
+downloaded there — switching is a one-line `command:` edit, no rebuild),
+`--threads 4 --language ru --audio-ctx 512`.
+
+**Bosun's `POST /api/stt`** (`internal/webui/voice.go`'s `handleSTT`,
+backed by `internal/voice.WhisperCppSTT`): accepts a multipart form field
+`audio` (whatever the browser's `MediaRecorder` produced), converts it to
+16kHz mono PCM WAV via `ffmpeg` (`convertToWAV`, same subprocess-pipe
+pattern as `internal/webui/pdf.go`), proxies to whisper-server, and
+returns `{"text": "...", "language": "ru"}` — simpler than the originally
+sketched `duration_ms` field, since latency is already logged
+server-side (`elapsed_ms`) and there was no concrete consumer for a
+per-response duration in the shipped MVP.
 
 ## Converting browser audio: ffmpeg, server-side
 

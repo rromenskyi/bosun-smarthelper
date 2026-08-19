@@ -133,7 +133,7 @@
       background: var(--bg);
     }
     .composer {
-      display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end;
+      display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: end;
       padding: 10px; border: 1px solid var(--line); border-radius: 22px;
       background: rgba(20, 36, 30, .96); box-shadow: 0 18px 60px rgba(0, 0, 0, .3);
     }
@@ -148,6 +148,15 @@
     }
     .send:disabled { opacity: .4; cursor: wait; }
     .send.stop { background: var(--danger); color: #3a0f0a; }
+    .mic {
+      width: 46px; height: 46px; border-radius: 15px; border: 1px solid var(--line);
+      cursor: pointer; background: transparent; color: var(--text); font-size: 20px;
+      touch-action: none; user-select: none;
+    }
+    .mic:disabled { opacity: .4; cursor: wait; }
+    .mic.recording { background: var(--danger); color: #3a0f0a; border-color: transparent; animation: mic-pulse 1s ease-in-out infinite; }
+    .mic.processing { opacity: .6; cursor: wait; animation: pulse 1.2s ease-in-out infinite alternate; }
+    @keyframes mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(211, 82, 66, .5); } 50% { box-shadow: 0 0 0 8px rgba(211, 82, 66, 0); } }
     .form-meta { display: flex; justify-content: space-between; align-items: center; padding: 7px 5px 0; color: var(--muted); font-size: 11px; }
     select { color: var(--muted); border: 0; background: transparent; outline: 0; }
     option { color: #111; }
@@ -276,6 +285,7 @@
     <form id="chat-form">
       <div class="composer">
         <textarea id="message" rows="1" maxlength="4000" placeholder="Напиши сообщение…" required></textarea>
+        <button class="mic" id="mic" type="button" aria-label="Голосовой ввод" title="Голосовой ввод" hidden>🎤</button>
         <button class="send" id="send" type="button" aria-label="Отправить">↑</button>
       </div>
       <div class="form-meta">
@@ -294,6 +304,7 @@
     const messages = document.querySelector('#messages');
     const empty = document.querySelector('#empty');
     const send = document.querySelector('#send');
+    const mic = document.querySelector('#mic');
     const language = document.querySelector('#language');
     const bell = document.querySelector('#bell');
     const bellAudio = new Audio(BELL_SOUND);
@@ -313,8 +324,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input' }
     };
 
     function escapeHTML(value) {
@@ -393,7 +404,7 @@
       button.classList.add('feedback-chosen');
     }
 
-    function addMessageActions(bubble, value, userText) {
+    function addMessageActions(bubble, value, userText, autoSpeak = false) {
       if (!value || !value.trim()) return;
       const actions = document.createElement('div');
       actions.className = 'message-actions';
@@ -405,6 +416,9 @@
       speakButton.setAttribute('aria-label', text[language.value].speakTitle);
       speakButton.addEventListener('click', () => speakText(value, speakButton));
       actions.appendChild(speakButton);
+      // A voice-in turn completes the loop by speaking the reply back
+      // automatically — a typed turn never auto-plays audio unprompted.
+      if (autoSpeak) speakText(value, speakButton);
 
       if (userText && userText.trim()) {
         const regenerateButton = document.createElement('button');
@@ -434,7 +448,7 @@
       bubble.appendChild(actions);
     }
 
-    function addMessage(role, value, extra = '', userText = '') {
+    function addMessage(role, value, extra = '', userText = '', autoSpeak = false) {
       empty.hidden = true;
       const row = document.createElement('div');
       row.className = `message ${role} ${extra}`;
@@ -442,7 +456,7 @@
       bubble.className = 'bubble';
       bubble.innerHTML = renderMessageHTML(value);
       if (role === 'assistant' && !extra.includes('thinking') && !extra.includes('error')) {
-        addMessageActions(bubble, value, userText);
+        addMessageActions(bubble, value, userText, autoSpeak);
       }
       row.appendChild(bubble);
       messages.appendChild(row);
@@ -462,7 +476,7 @@
       send.setAttribute('aria-label', text[language.value][isBusy ? 'stopLabel' : 'sendLabel']);
     }
 
-    async function ask(value) {
+    async function ask(value, isVoiceTurn = false) {
       if (busy || !value.trim()) return;
       busy = true;
       setSendButtonState(true);
@@ -506,7 +520,7 @@
         const finalText = liveProse;
         liveBubble.innerHTML = renderMessageHTML(finalText);
         if (fold) liveBubble.appendChild(fold);
-        addMessageActions(liveBubble, finalText, value.trim());
+        addMessageActions(liveBubble, finalText, value.trim(), isVoiceTurn);
         liveRow = null;
         liveBubble = null;
         liveProse = '';
@@ -604,7 +618,7 @@
             sessionId = data.session_id;
             localStorage.setItem(sessionStorageKey, sessionId);
           }
-          addMessage('assistant', data.answer, '', value.trim());
+          addMessage('assistant', data.answer, '', value.trim(), isVoiceTurn);
         }
       } catch (error) {
         clearQueued();
@@ -669,6 +683,8 @@
       document.querySelector('#settings-saved-hint').textContent = text[locale].settingsSaved;
       document.querySelector('#settings-close').textContent = text[locale].settingsClose;
       document.querySelector('#settings-ca-cert-link').textContent = text[locale].settingsCaCertLink;
+      mic.title = text[locale].micTitle;
+      mic.setAttribute('aria-label', text[locale].micTitle);
     }
 
     form.addEventListener('submit', event => { event.preventDefault(); ask(input.value); });
@@ -678,6 +694,87 @@
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
     });
     document.querySelectorAll('.chip').forEach(button => button.addEventListener('click', () => ask(button.dataset[language.value])));
+
+    // Push-to-talk (docs/voice.md): press mic, speak, release — the
+    // recording is transcribed via /api/stt, sent through the exact same
+    // ask() a typed message uses, and the reply is auto-spoken to close
+    // the loop (see addMessageActions' autoSpeak param).
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let micStream = null;
+
+    function setMicState(state) {
+      mic.classList.toggle('recording', state === 'recording');
+      mic.classList.toggle('processing', state === 'processing');
+      mic.disabled = state === 'processing';
+    }
+
+    async function startRecording() {
+      if (busy || mediaRecorder) return;
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        return; // no mic / permission denied — nothing to record
+      }
+      audioChunks = [];
+      mediaRecorder = new MediaRecorder(micStream);
+      mediaRecorder.addEventListener('dataavailable', event => {
+        if (event.data.size > 0) audioChunks.push(event.data);
+      });
+      mediaRecorder.start();
+      setMicState('recording');
+    }
+
+    function stopStream() {
+      if (micStream) {
+        micStream.getTracks().forEach(track => track.stop());
+        micStream = null;
+      }
+    }
+
+    async function stopRecordingAndSend() {
+      if (!mediaRecorder) return;
+      const recorder = mediaRecorder;
+      mediaRecorder = null;
+      setMicState('processing');
+
+      const recorded = await new Promise(resolve => {
+        recorder.addEventListener('stop', () => resolve(new Blob(audioChunks, { type: recorder.mimeType })));
+        recorder.stop();
+      });
+      stopStream();
+
+      try {
+        const formData = new FormData();
+        formData.append('audio', recorded, 'recording.webm');
+        const response = await fetch('/api/stt', { method: 'POST', body: formData });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'transcription failed');
+        if (data.text && data.text.trim()) {
+          ask(data.text.trim(), true);
+        }
+      } catch {
+        // Best-effort: connectivity/engine issues already surface via the status pill.
+      } finally {
+        setMicState('idle');
+      }
+    }
+
+    function cancelRecording() {
+      if (!mediaRecorder) return;
+      const recorder = mediaRecorder;
+      mediaRecorder = null;
+      recorder.stop();
+      stopStream();
+      setMicState('idle');
+    }
+
+    mic.addEventListener('mousedown', startRecording);
+    mic.addEventListener('mouseup', stopRecordingAndSend);
+    mic.addEventListener('mouseleave', cancelRecording);
+    mic.addEventListener('touchstart', event => { event.preventDefault(); startRecording(); });
+    mic.addEventListener('touchend', event => { event.preventDefault(); stopRecordingAndSend(); });
+    mic.addEventListener('touchcancel', cancelRecording);
     bell.addEventListener('click', () => {
       bellAudio.currentTime = 0;
       bellAudio.play().catch(() => {});
@@ -832,6 +929,7 @@
             button.hidden = !available.has(button.dataset.tool);
           });
         }
+        mic.hidden = !data.stt_enabled;
         updateLanguage();
       }).catch(updateLanguage);
     }

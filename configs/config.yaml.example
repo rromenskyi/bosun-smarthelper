@@ -112,6 +112,11 @@ web:
 #                                               # see deploy/piper/wav-pcm16.patch
 #     model_path: "/opt/bosun/models/tts/ru_RU-<voice>-medium.onnx"
 #     espeak_data_path: "/opt/bosun/espeak-ng-data"
+#   stt:
+#     base_url: "http://127.0.0.1:1236"        # a running whisper-server —
+                                                # see docker-compose.yml's whisper-stt
+                                                # service and docs/voice.md
+#     language: "ru"
 
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:
