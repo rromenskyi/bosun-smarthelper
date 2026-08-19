@@ -324,8 +324,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…' }
     };
 
     function escapeHTML(value) {
@@ -702,6 +702,11 @@
     let mediaRecorder = null;
     let audioChunks = [];
     let micStream = null;
+    // A transient "thinking"-style bubble (same look as the queued/waiting
+    // ones — see queuedRow/startStep in ask()) standing in for the
+    // recording/transcribing states, since a color change on a small
+    // button alone is easy to miss.
+    let micStatusRow = null;
 
     function setMicState(state) {
       mic.classList.toggle('recording', state === 'recording');
@@ -709,12 +714,20 @@
       mic.disabled = state === 'processing';
     }
 
+    function removeMicStatus() {
+      if (micStatusRow) {
+        micStatusRow.remove();
+        micStatusRow = null;
+      }
+    }
+
     async function startRecording() {
       if (busy || mediaRecorder) return;
       try {
         micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch {
-        return; // no mic / permission denied — nothing to record
+        addMessage('assistant', text[language.value].micError, 'error');
+        return;
       }
       audioChunks = [];
       mediaRecorder = new MediaRecorder(micStream);
@@ -723,6 +736,7 @@
       });
       mediaRecorder.start();
       setMicState('recording');
+      micStatusRow = addMessage('assistant', text[language.value].micListening, 'thinking live');
     }
 
     function stopStream() {
@@ -737,6 +751,7 @@
       const recorder = mediaRecorder;
       mediaRecorder = null;
       setMicState('processing');
+      if (micStatusRow) micStatusRow.querySelector('.bubble').textContent = text[language.value].micProcessing;
 
       const recorded = await new Promise(resolve => {
         recorder.addEventListener('stop', () => resolve(new Blob(audioChunks, { type: recorder.mimeType })));
@@ -750,11 +765,13 @@
         const response = await fetch('/api/stt', { method: 'POST', body: formData });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'transcription failed');
+        removeMicStatus();
         if (data.text && data.text.trim()) {
           ask(data.text.trim(), true);
         }
       } catch {
-        // Best-effort: connectivity/engine issues already surface via the status pill.
+        removeMicStatus();
+        addMessage('assistant', text[language.value].error, 'error');
       } finally {
         setMicState('idle');
       }
@@ -767,6 +784,7 @@
       recorder.stop();
       stopStream();
       setMicState('idle');
+      removeMicStatus();
     }
 
     mic.addEventListener('mousedown', startRecording);
@@ -929,7 +947,11 @@
             button.hidden = !available.has(button.dataset.tool);
           });
         }
-        mic.hidden = !data.stt_enabled;
+        // getUserMedia only works in a secure context (HTTPS, or
+        // localhost) — never show a mic that can only silently fail, e.g.
+        // on the plain-HTTP fallback bind for devices that can't trust
+        // the TLS cert (see docs/tls.md).
+        mic.hidden = !data.stt_enabled || !window.isSecureContext;
         updateLanguage();
       }).catch(updateLanguage);
     }
