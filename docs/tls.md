@@ -141,6 +141,14 @@ interface's private address only in practice (no public IP is ever assigned
 to this LAN-only host), and it still has no authentication, so this remains
 strictly a trusted-LAN deployment either way.
 
+## Reaching it from outside the LAN
+
+Everything above is about the LAN-only path. For access from outside the
+LAN, see `docs/cloudflare.md` — a separate, additive `cloudflared` tunnel to
+a dedicated domain, **not** a change to this no-auth LAN setup. That path
+needs its own authentication gate (Cloudflare Access) in front of it, since
+nothing here provides any.
+
 Binding to `0.0.0.0` does **not** remove the need to rerun
 `scripts/regen-cert.sh` after an IP change — that only fixes what address
 the *socket* listens on. The TLS cert's SAN list is still pinned to whatever

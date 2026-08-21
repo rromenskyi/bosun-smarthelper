@@ -62,6 +62,10 @@ Early foundation. Working today:
   (whisper.cpp) into the same chat flow a typed message uses, auto-speaking
   the reply back — fully offline, no Python anywhere in the path — see
   `docs/voice.md`.
+- **Remote access via Cloudflare Tunnel** — an outbound-only `cloudflared`
+  connector exposes a dedicated domain without forwarding any router
+  ports, additive to (not a replacement for) direct LAN access — see
+  `docs/cloudflare.md`.
 
 Not yet built: real fridge sensor hardware, continuous voice conversation
 mode. See `SPEC.md` for the full roadmap.

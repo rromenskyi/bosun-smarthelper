@@ -121,3 +121,20 @@ services:
       --model /models/ggml-tiny.bin
       --host 127.0.0.1 --port 1236
       --threads 4 --language ru --audio-ctx 512
+
+  # Outbound-only connector for remote access (bosunonline.us) — no port
+  # forwarding on the router. Host networking so it can reach the
+  # plain-HTTP fallback listener at localhost:8080 (TLS is already
+  # terminated at Cloudflare's edge; a second TLS hop to loopback would be
+  # pure overhead). Auth for remote requests must be enforced by a
+  # Cloudflare Access policy in front of this, not by bosun itself, which
+  # has none — see docs/cloudflare.md, including its "known gap" section
+  # if that policy hasn't been confirmed yet.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    network_mode: host
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
