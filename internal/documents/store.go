@@ -182,11 +182,14 @@ func (s *Store) Delete(id string) error {
 	return s.save(data)
 }
 
-// Search ranks chunks across all documents by cosine similarity to query.
+// Search ranks chunks by cosine similarity to query, across all documents
+// by default or restricted to one when documentID is non-empty — e.g. once
+// a caller already knows (from List) which document is relevant, scoping
+// to it avoids the rest of a large, unrelated store diluting the results.
 // Falls back to a plain substring match — never an error — when embeddings
 // are disabled, the embeddings server is unreachable, or no chunk has a
 // vector yet.
-func (s *Store) Search(ctx context.Context, query string, limit int) ([]ScoredChunk, error) {
+func (s *Store) Search(ctx context.Context, query string, limit int, documentID string) ([]ScoredChunk, error) {
 	if limit <= 0 {
 		limit = 5
 	}
@@ -195,6 +198,13 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]ScoredCh
 	s.mu.Unlock()
 	if err != nil {
 		return nil, err
+	}
+	if documentID != "" {
+		if record, ok := data.Documents[documentID]; ok {
+			data.Documents = map[string]Record{documentID: record}
+		} else {
+			data.Documents = nil
+		}
 	}
 
 	var results []ScoredChunk

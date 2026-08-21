@@ -253,6 +253,71 @@ func TestMemoToolSearchMergesDocumentResults(t *testing.T) {
 	}
 }
 
+func TestMemoToolTopicsListsUploadedDocuments(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	docStore := documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	tool.SetDocumentStore(docStore)
+	ctx := context.Background()
+
+	summary, err := docStore.Add(ctx, "Car manual", "Fuse 12 controls the headlights.")
+	if err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+	// A memo must never show up in topics — that's what "list" is for.
+	if _, err := tool.Execute(ctx, map[string]any{"action": "write", "key": "shopping", "content": "Buy milk"}); err != nil {
+		t.Fatalf("write memo: %v", err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "topics"})
+	if err != nil {
+		t.Fatalf("topics: %v", err)
+	}
+	view := result.(map[string]any)
+	topics := view["documents"].([]map[string]any)
+	if len(topics) != 1 || topics[0]["document_id"] != summary.ID || topics[0]["title"] != "Car manual" {
+		t.Fatalf("topics = %#v, want just the Car manual document", topics)
+	}
+}
+
+func TestMemoToolTopicsWithoutDocumentStoreReturnsEmpty(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	result, err := tool.Execute(context.Background(), map[string]any{"action": "topics"})
+	if err != nil {
+		t.Fatalf("topics: %v", err)
+	}
+	view := result.(map[string]any)
+	if view["count"] != 0 {
+		t.Errorf("count = %v, want 0 when no document store is configured", view["count"])
+	}
+}
+
+func TestMemoToolSearchScopesToDocumentID(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	docStore := documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	tool.SetDocumentStore(docStore)
+	ctx := context.Background()
+
+	carSummary, err := docStore.Add(ctx, "Car manual", "the headlight fuse is number 12")
+	if err != nil {
+		t.Fatalf("add car manual: %v", err)
+	}
+	if _, err := docStore.Add(ctx, "Boat manual", "the headlight fuse is number 3"); err != nil {
+		t.Fatalf("add boat manual: %v", err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{
+		"action": "search", "query": "headlight fuse", "document_id": carSummary.ID,
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	view := result.(map[string]any)
+	results := view["results"].([]map[string]any)
+	if len(results) != 1 || results[0]["document_title"] != "Car manual" {
+		t.Fatalf("results = %#v, want only the Car manual match", results)
+	}
+}
+
 func TestMemoToolWriteWithTagsAndFilter(t *testing.T) {
 	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
 	ctx := context.Background()

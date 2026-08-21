@@ -74,7 +74,7 @@ func (t *MemoTool) Name() string {
 }
 
 func (t *MemoTool) Description() string {
-	return "Write, read, list, search, archive, or delete persistent local memos. Listing exposes timestamps, status, and age_days so old notes can be reviewed. Search finds memos and uploaded reference documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question that a stored document (e.g. a manual) might answer. A search result may include image_url when the source is a diagram rather than text (e.g. a fuse panel chart) — include it in your answer as a markdown image: ![description](image_url). When writing, add a few short lowercase tags describing the topic (e.g. \"purchases\", \"fuel_system\", \"oil\") — use list or search with tag to reliably find every memo on a topic, not just the closest-sounding ones."
+	return "Write, read, list, search, topics, archive, or delete persistent local memos and uploaded reference documents. Listing exposes timestamps, status, and age_days so old notes can be reviewed. topics lists uploaded documents (title + document_id) with no search needed — check it when unsure whether something is covered, or to find the right document_id to scope a search to it instead of the whole store. Search finds memos and documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question a stored document might answer. A search result may include image_url when the source is a diagram — include it in your answer as a markdown image: ![description](image_url). When writing, add a few short lowercase tags describing the topic (e.g. \"purchases\", \"fuel_system\", \"oil\") — use list or search with tag to reliably find every memo on a topic, not just the closest-sounding ones."
 }
 
 func (t *MemoTool) InputSchema() map[string]any {
@@ -83,8 +83,8 @@ func (t *MemoTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"action": map[string]any{
 				"type":        "string",
-				"enum":        []string{"write", "read", "list", "search", "archive", "delete"},
-				"description": "Operation to perform. Use list to inspect memo dates and age before archival or deletion; use search to recall a memo by meaning.",
+				"enum":        []string{"write", "read", "list", "search", "topics", "archive", "delete"},
+				"description": "Operation to perform. Use list to inspect memo dates and age before archival or deletion; use search to recall a memo/document by meaning; use topics to see what documents exist before deciding whether/where to search.",
 			},
 			"key": map[string]any{
 				"type":        "string",
@@ -114,6 +114,10 @@ func (t *MemoTool) InputSchema() map[string]any {
 			"limit": map[string]any{
 				"type":        "number",
 				"description": "For search, maximum number of results (default 5).",
+			},
+			"document_id": map[string]any{
+				"type":        "string",
+				"description": "For search, restrict document results to this one document (see topics for the id) instead of the whole store.",
 			},
 		},
 		"required":             []string{"action"},
@@ -159,7 +163,7 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 	key, _ := args["key"].(string)
 	action = strings.TrimSpace(action)
 	key = strings.TrimSpace(key)
-	if action != "list" && action != "search" && (key == "" || len([]rune(key)) > 128) {
+	if action != "list" && action != "search" && action != "topics" && (key == "" || len([]rune(key)) > 128) {
 		return nil, fmt.Errorf("memo key must contain 1 to 128 characters")
 	}
 
@@ -238,6 +242,8 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 		return memoView(record, time.Now()), nil
 	case "search":
 		return t.search(ctx, data, args)
+	case "topics":
+		return t.topics()
 	case "archive":
 		record, ok := data.Memos[key]
 		if !ok {
@@ -350,7 +356,9 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 	}
 
 	if t.docs != nil {
-		if chunks, err := t.docs.Search(ctx, query, limit); err == nil {
+		documentID, _ := args["document_id"].(string)
+		documentID = strings.TrimSpace(documentID)
+		if chunks, err := t.docs.Search(ctx, query, limit, documentID); err == nil {
 			for _, chunk := range chunks {
 				if chunk.Score < t.minRelevance {
 					continue
@@ -380,6 +388,32 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 		results = results[:limit]
 	}
 	return map[string]any{"results": results, "count": len(results)}, nil
+}
+
+// topics lists uploaded documents (title + id + chunk_count, no chunk
+// content) so the model can see what reference material actually exists
+// before deciding whether/where to search — cheaper than a search call,
+// and lets it recognize a document as the right one to search
+// (document_id) even when a query's exact wording wouldn't have scored
+// well against that document's chunks directly. Memos aren't listed here;
+// use action "list" (optionally with "tag") for those.
+func (t *MemoTool) topics() (any, error) {
+	if t.docs == nil {
+		return map[string]any{"documents": []any{}, "count": 0}, nil
+	}
+	summaries, err := t.docs.List()
+	if err != nil {
+		return nil, err
+	}
+	topics := make([]map[string]any, 0, len(summaries))
+	for _, s := range summaries {
+		topics = append(topics, map[string]any{
+			"document_id": s.ID,
+			"title":       s.Title,
+			"chunk_count": s.ChunkCount,
+		})
+	}
+	return map[string]any{"documents": topics, "count": len(topics)}, nil
 }
 
 func memoView(record memoRecord, now time.Time) map[string]any {

@@ -73,7 +73,7 @@ func TestStoreSearchFallsBackToSubstringWithoutEmbeddings(t *testing.T) {
 		t.Fatalf("add document: %v", err)
 	}
 
-	results, err := store.Search(ctx, "headlights", 5)
+	results, err := store.Search(ctx, "headlights", 5, "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestStoreSearchRanksBySemanticSimilarity(t *testing.T) {
 		t.Fatalf("add document: %v", err)
 	}
 
-	results, err := store.Search(ctx, "which fuse is broken", 1)
+	results, err := store.Search(ctx, "which fuse is broken", 1, "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestStoreAddPagesWithImage(t *testing.T) {
 		t.Fatalf("chunk count = %d, want 2", summary.ChunkCount)
 	}
 
-	results, err := store.Search(ctx, "Locations", 5)
+	results, err := store.Search(ctx, "Locations", 5, "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -154,6 +154,43 @@ func TestStoreAddPagesWithImage(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("results = %#v, want one with the fuse panel image_url", results)
+	}
+}
+
+func TestStoreSearchScopesToDocumentID(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	ctx := context.Background()
+
+	carSummary, err := store.Add(ctx, "Car manual", "the headlight fuse is number 12")
+	if err != nil {
+		t.Fatalf("add car manual: %v", err)
+	}
+	if _, err := store.Add(ctx, "Boat manual", "the headlight fuse is number 3"); err != nil {
+		t.Fatalf("add boat manual: %v", err)
+	}
+
+	results, err := store.Search(ctx, "headlight fuse", 5, carSummary.ID)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) != 1 || results[0].DocumentID != carSummary.ID {
+		t.Fatalf("results = %#v, want only the Car manual chunk", results)
+	}
+}
+
+func TestStoreSearchUnknownDocumentIDReturnsNoResults(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	ctx := context.Background()
+	if _, err := store.Add(ctx, "Car manual", "the headlight fuse is number 12"); err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+
+	results, err := store.Search(ctx, "headlight fuse", 5, "does-not-exist")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("results = %#v, want none for an unknown document_id", results)
 	}
 }
 
