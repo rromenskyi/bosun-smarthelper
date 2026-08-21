@@ -297,6 +297,49 @@ func TestOpenAICompatibleLocalClientPromptedToolFallback_StripsSignatureParens(t
 	}
 }
 
+// TestOpenAICompatibleLocalClientPromptedToolFallback_StripsRetryToolCallAfterResult
+// is a regression test for a real production bug: after a tool result was
+// already fed back (memo search, a first call for this turn), the model
+// wasn't happy with the results and tried to search again with a refined
+// query instead of just answering — but a tool call is never issued twice
+// in one turn, so the raw JSON it wrote ({"tool":"memo",...}) leaked
+// straight into the visible chat after the model's own prose explanation,
+// instead of being stripped or acted on.
+func TestOpenAICompatibleLocalClientPromptedToolFallback_StripsRetryToolCallAfterResult(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(`{
+			"model":"default",
+			"choices":[{"message":{"role":"assistant","content":"Вот, старпом. В документах нет прямой схемы.\n\n{\"tool\":\"memo\",\"action\":\"search\",\"query\":\"refined query\"}"}}]
+		}`), nil
+	})
+
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second, true)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+	client.supportsTools = false
+	definitions := []ToolDefinition{{Name: "memo", Parameters: map[string]any{"type": "object"}}}
+
+	response, err := client.Chat(context.Background(), []Message{
+		{Role: "user", Content: "find the fuse diagram"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "prompted_call_0", Type: "function"}}},
+		{Role: "tool", Name: "memo", Content: `{"count":0,"results":[]}`},
+	}, definitions)
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if len(response.ToolCalls) != 0 {
+		t.Errorf("ToolCalls = %+v, want none — a tool call is never re-issued after a result already exists this turn", response.ToolCalls)
+	}
+	if strings.Contains(response.Content, "{") || strings.Contains(response.Content, "\"tool\"") {
+		t.Errorf("content = %q, still contains the raw tool-call JSON that should have been stripped", response.Content)
+	}
+	if !strings.Contains(response.Content, "Вот, старпом") {
+		t.Errorf("content = %q, lost the model's real prose along with the stripped JSON", response.Content)
+	}
+}
+
 func TestOpenAICompatibleLocalClientRecognizesToolMention(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return jsonResponse(`{

@@ -599,22 +599,35 @@ func chatWithPromptedTools(
 	candidate = strings.TrimSuffix(candidate, "```")
 	candidate = strings.TrimSpace(candidate)
 	call, parseErr := parsePromptedToolCall([]byte(candidate))
-	if parseErr != nil && !hasToolResult {
+	// matchedObject is the exact JSON substring that produced call, if any
+	// — tracked so a tool call detected *after* hasToolResult (see below)
+	// can be stripped from the visible reply instead of leaking as raw
+	// JSON, without actually re-invoking the tool.
+	matchedObject := candidate
+	if parseErr != nil {
 		// A weak model rarely emits *pure* JSON and nothing else — narration
 		// before/after the object ("Sure, I'll check: {...} let me know")
 		// makes the strict parse above fail even though a perfectly valid
 		// tool call is embedded in there. Try to pull just the JSON object
-		// out before giving up on structured parsing entirely and falling
-		// back to toolMention's name-only match (which always discards
-		// arguments — see its own doc comment).
+		// out before giving up on structured parsing entirely.
 		if object, ok := extractJSONObject(candidate); ok {
-			call, parseErr = parsePromptedToolCall([]byte(object))
+			if parsedCall, err := parsePromptedToolCall([]byte(object)); err == nil {
+				call, parseErr, matchedObject = parsedCall, nil, object
+			}
 		}
 		if parseErr != nil {
-			call = toolMention(candidate, tools)
+			matchedObject = ""
+			// toolMention's name-only match (which always discards
+			// arguments — see its own doc comment) only makes sense to
+			// *initiate* a first tool call, not to reinterpret a reply
+			// that's answering from an existing tool result.
+			if !hasToolResult {
+				call = toolMention(candidate, tools)
+			}
 		}
 	}
-	if !hasToolResult && call.Tool != "" {
+	switch {
+	case !hasToolResult && call.Tool != "":
 		if len(call.Arguments) == 0 {
 			call.Arguments = json.RawMessage(`{}`)
 		}
@@ -623,6 +636,15 @@ func chatWithPromptedTools(
 		toolCall.Function.Arguments = string(call.Arguments)
 		response.Content = ""
 		response.ToolCalls = []ToolCall{toolCall}
+	case hasToolResult && call.Tool != "" && matchedObject != "":
+		// The model tried to call a tool again after already getting a
+		// result for this turn (e.g. retrying with a refined query). We
+		// don't act on it — that would need a real multi-round retry
+		// design to avoid a weak model looping forever instead of ever
+		// answering — but the raw JSON must not leak into the visible
+		// chat either. Strip just that object; whatever real prose the
+		// model wrote around it (there often is some) becomes the answer.
+		response.Content = strings.TrimSpace(strings.Replace(response.Content, matchedObject, "", 1))
 	}
 
 	return response, nil
