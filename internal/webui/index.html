@@ -264,6 +264,11 @@
       <p class="docs-hint" id="docs-hint">Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.</p>
       <form id="docs-upload-form">
         <input type="text" id="doc-title" placeholder="Название (необязательно)">
+        <select id="doc-ocr-language">
+          <option value="eng">OCR: English</option>
+          <option value="rus">OCR: Русский</option>
+          <option value="eng+rus">OCR: English + Русский</option>
+        </select>
         <input type="file" id="doc-file" accept=".txt,text/plain,.pdf,application/pdf" required>
         <button type="submit" id="docs-upload-button">Загрузить</button>
       </form>
@@ -950,6 +955,7 @@
       const formData = new FormData();
       formData.append('file', fileInput.files[0]);
       if (titleInput.value.trim()) formData.append('title', titleInput.value.trim());
+      formData.append('ocr_language', document.querySelector('#doc-ocr-language').value);
       const uploadButton = document.querySelector('#docs-upload-button');
       uploadButton.disabled = true;
       try {

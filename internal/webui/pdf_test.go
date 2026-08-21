@@ -61,7 +61,7 @@ func TestExtractPDFPagesTextPage(t *testing.T) {
 	requirePoppler(t)
 	imagesDir := filepath.Join(t.TempDir(), "images")
 
-	pages, err := extractPDFPages(context.Background(), []byte(onePageTextPDF), imagesDir, "/document-images/")
+	pages, err := extractPDFPages(context.Background(), []byte(onePageTextPDF), imagesDir, "/document-images/", "eng")
 	if err != nil {
 		t.Fatalf("extractPDFPages: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestExtractPDFPagesBlankPageRendersImage(t *testing.T) {
 	requirePoppler(t)
 	imagesDir := filepath.Join(t.TempDir(), "images")
 
-	pages, err := extractPDFPages(context.Background(), []byte(onePageBlankPDF), imagesDir, "/document-images/")
+	pages, err := extractPDFPages(context.Background(), []byte(onePageBlankPDF), imagesDir, "/document-images/", "eng")
 	if err != nil {
 		t.Fatalf("extractPDFPages: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestExtractPDFPagesBlankPageRendersImage(t *testing.T) {
 func TestExtractPDFPagesRejectsGarbage(t *testing.T) {
 	requirePoppler(t)
 	imagesDir := filepath.Join(t.TempDir(), "images")
-	if _, err := extractPDFPages(context.Background(), []byte("not a pdf at all"), imagesDir, "/document-images/"); err == nil {
+	if _, err := extractPDFPages(context.Background(), []byte("not a pdf at all"), imagesDir, "/document-images/", "eng"); err == nil {
 		t.Error("expected an error for content that isn't a valid PDF")
 	}
 }
@@ -121,11 +121,47 @@ func TestOCRImageRecognizesText(t *testing.T) {
 		t.Fatalf("render page image: %v", err)
 	}
 
-	text, err := ocrImage(context.Background(), imagePath)
+	text, err := ocrImage(context.Background(), imagePath, "eng")
 	if err != nil {
 		t.Fatalf("ocrImage: %v", err)
 	}
 	if !strings.Contains(text, "Hello World") {
 		t.Errorf("OCR text = %q, want it to contain Hello World", text)
+	}
+}
+
+func TestOCRImageDefaultsLanguageWhenEmpty(t *testing.T) {
+	requirePoppler(t)
+	requireTesseract(t)
+
+	tempDir := t.TempDir()
+	pdfPath := filepath.Join(tempDir, "input.pdf")
+	if err := os.WriteFile(pdfPath, []byte(onePageTextPDF), 0o600); err != nil {
+		t.Fatalf("write temp pdf: %v", err)
+	}
+	imagePath, _, err := renderPDFPageImage(context.Background(), pdfPath, 1, filepath.Join(tempDir, "images"), "/document-images/")
+	if err != nil {
+		t.Fatalf("render page image: %v", err)
+	}
+
+	text, err := ocrImage(context.Background(), imagePath, "")
+	if err != nil {
+		t.Fatalf("ocrImage: %v", err)
+	}
+	if !strings.Contains(text, "Hello World") {
+		t.Errorf("OCR text = %q, want it to contain Hello World with the default language", text)
+	}
+}
+
+func TestValidOCRLanguage(t *testing.T) {
+	for _, valid := range []string{"eng", "rus", "eng+rus", "fra+deu+ita"} {
+		if !validOCRLanguage.MatchString(valid) {
+			t.Errorf("validOCRLanguage(%q) = false, want true", valid)
+		}
+	}
+	for _, invalid := range []string{"", "english", "eng+", "eng rus", "eng; rm -rf /", "EN"} {
+		if validOCRLanguage.MatchString(invalid) {
+			t.Errorf("validOCRLanguage(%q) = true, want false", invalid)
+		}
 	}
 }

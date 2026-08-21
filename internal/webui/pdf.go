@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -24,8 +25,10 @@ const minPDFPageTextChars = 40
 // extractPDFPages shells out to poppler-utils (pdfinfo, pdftotext,
 // pdftoppm — must be present in the runtime image) to turn a PDF into
 // per-page PageInputs: real text when a page has an extractable text
-// layer, otherwise a rendered page image.
-func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPrefix string) ([]documents.PageInput, error) {
+// layer, otherwise a rendered page image. ocrLanguage is a tesseract
+// language spec (e.g. "eng", "rus", "eng+rus") for pages that need OCR —
+// see ValidOCRLanguage and ocrImage for why this isn't just always both.
+func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPrefix, ocrLanguage string) ([]documents.PageInput, error) {
 	tempDir, err := os.MkdirTemp("", "bosun-pdf-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
@@ -60,8 +63,8 @@ func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPr
 			return nil, err
 		}
 		pageText := fmt.Sprintf("Page %d (diagram or scanned image, no text recognized)", page)
-		if ocrText, err := ocrImage(ctx, imagePath); err == nil && len(strings.TrimSpace(ocrText)) > 0 {
-			pageText = fmt.Sprintf("Page %d (OCR)\n\n%s", page, strings.TrimSpace(ocrText))
+		if ocrText, err := ocrImage(ctx, imagePath, ocrLanguage); err == nil && len(strings.TrimSpace(ocrText)) > 0 {
+			pageText = documents.CleanOCRText(fmt.Sprintf("Page %d (OCR)\n\n%s", page, strings.TrimSpace(ocrText)))
 		}
 		pages = append(pages, documents.PageInput{Text: pageText, ImageURL: imageURL})
 	}
@@ -119,11 +122,31 @@ func renderPDFPageImage(ctx context.Context, pdfPath string, page int, imagesDir
 	return matches[0], urlPrefix + filepath.Base(matches[0]), nil
 }
 
-// ocrImage runs tesseract on an already-rendered image. English and
-// Russian only (this deployment's chat languages) — a manual in another
-// language would need its language data added alongside them.
-func ocrImage(ctx context.Context, imagePath string) (string, error) {
-	out, err := exec.CommandContext(ctx, "tesseract", imagePath, "-", "-l", "eng+rus").Output()
+// validOCRLanguage matches a tesseract -l argument: one or more 3-letter
+// language codes joined by "+" (e.g. "eng", "rus", "eng+rus") — tesseract's
+// own naming convention for its bundled language data files.
+var validOCRLanguage = regexp.MustCompile(`^[a-z]{3}(\+[a-z]{3})*$`)
+
+// defaultOCRLanguage is used when a document upload doesn't specify one.
+// Not "eng+rus": running both on an English-only technical diagram
+// measurably made things worse, not more permissive — tesseract's combined
+// model frequently misread plain English glyphs as look-alike Cyrillic
+// ones ("ILLUMINATION SWITCH" came out as "ИЕЦАЮНАТЮН SWITCH"), turning a
+// real, searchable word into noise instead of just failing to recognize
+// it. A manual that's actually in Russian (or any other language
+// tesseract's image has data for) should pass that language explicitly at
+// upload time instead.
+const defaultOCRLanguage = "eng"
+
+// ocrImage runs tesseract on an already-rendered image with the given
+// language spec (validate with validOCRLanguage before calling; an invalid
+// one just makes tesseract itself fail, but validating earlier gives a
+// clearer error to the uploader).
+func ocrImage(ctx context.Context, imagePath, language string) (string, error) {
+	if language == "" {
+		language = defaultOCRLanguage
+	}
+	out, err := exec.CommandContext(ctx, "tesseract", imagePath, "-", "-l", language).Output()
 	if err != nil {
 		return "", fmt.Errorf("tesseract: %w", err)
 	}

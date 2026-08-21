@@ -724,6 +724,18 @@ func (s *Server) handleDocumentUpload(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		title = header.Filename
 	}
+	// Which language(s) tesseract OCRs scanned/diagram pages with — see
+	// pdf.go's defaultOCRLanguage for why this isn't hardcoded to more than
+	// one language: a document actually in another language needs this
+	// set explicitly, since guessing wrong (or always combining languages
+	// "to be safe") measurably hurts OCR quality.
+	ocrLanguage := strings.TrimSpace(r.FormValue("ocr_language"))
+	if ocrLanguage == "" {
+		ocrLanguage = defaultOCRLanguage
+	} else if !validOCRLanguage.MatchString(ocrLanguage) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ocr_language must look like a tesseract language code, e.g. eng, rus, or eng+rus"})
+		return
+	}
 	content, err := io.ReadAll(file)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read file"})
@@ -734,7 +746,7 @@ func (s *Server) handleDocumentUpload(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if bytes.HasPrefix(content, pdfMagic) {
-		pages, err := extractPDFPages(ctx, content, s.documentImagesDir, "/document-images/")
+		pages, err := extractPDFPages(ctx, content, s.documentImagesDir, "/document-images/", ocrLanguage)
 		if err != nil {
 			s.logger.Error("extract pdf", "error", err)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not process PDF"})

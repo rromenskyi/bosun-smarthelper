@@ -123,6 +123,34 @@ func TestServerDocumentUploadRequiresFile(t *testing.T) {
 	}
 }
 
+func TestServerDocumentUploadRejectsInvalidOCRLanguage(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("title", "Test manual")
+	_ = writer.WriteField("ocr_language", "english; rm -rf /")
+	part, err := writer.CreateFormFile("file", "manual.txt")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("some text")); err != nil {
+		t.Fatalf("write file content: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/documents", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", response.Code)
+	}
+}
+
 func TestServerDocumentUploadRejectsBinaryContent(t *testing.T) {
 	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
 	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
