@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/roman220/ai-local-smarthelper/internal/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
+	"github.com/shirou/gopsutil/v4/sensors"
 )
 
 // roundPercent rounds a raw percentage to a whole number — a captain's log
@@ -20,11 +22,52 @@ func roundPercent(v float64) float64 {
 	return math.Round(v)
 }
 
-// bytesToGB rounds a raw byte count to one decimal place of GB, so the LLM
-// reports "7.7 GB" consistently instead of computing (and varying) its own
-// "7.69 GB"-style conversion from a raw byte count every time.
+// bytesToGB rounds a raw byte count to a whole number of GB — a captain's
+// log doesn't need "7.7 GB" either, whole gigabytes are plenty.
 func bytesToGB(v uint64) float64 {
-	return math.Round(float64(v)/1e9*10) / 10
+	return math.Round(float64(v) / 1e9)
+}
+
+// averageCoreTemperature reads the average per-core CPU die temperature
+// (e.g. coretemp_core_0/coretemp_core_1 on this host's Sandy Bridge i5),
+// rounded to a whole degree. Averages only sensors labeled "core_" so the
+// package-level reading (coretemp_package_id_0, itself close to the max
+// of the cores, not an independent measurement) doesn't skew it; falls
+// back to averaging every reported sensor if none are labeled "core_"
+// (other hardware/driver naming). Reports ok=false — rather than a
+// fabricated zero — if no sensors are readable at all, e.g. no coretemp
+// driver loaded.
+func averageCoreTemperature() (float64, bool) {
+	temps, err := sensors.SensorsTemperatures()
+	if err != nil {
+		return 0, false
+	}
+	return averageTemperature(temps)
+}
+
+// averageTemperature is the pure averaging logic behind
+// averageCoreTemperature, split out so it's testable without real hardware
+// sensors.
+func averageTemperature(temps []sensors.TemperatureStat) (float64, bool) {
+	if len(temps) == 0 {
+		return 0, false
+	}
+	var coreSum, sum float64
+	var coreCount, count int
+	for _, t := range temps {
+		sum += t.Temperature
+		count++
+		// "core_" (not just "core") since "coretemp_package_id_0" would
+		// otherwise match too — "coretemp" itself contains "core".
+		if strings.Contains(strings.ToLower(t.SensorKey), "core_") {
+			coreSum += t.Temperature
+			coreCount++
+		}
+	}
+	if coreCount > 0 {
+		return math.Round(coreSum / float64(coreCount)), true
+	}
+	return math.Round(sum / float64(count)), true
 }
 
 // SystemTool provides system metrics
@@ -42,7 +85,7 @@ func (t *SystemTool) Name() string {
 }
 
 func (t *SystemTool) Description() string {
-	return "Get system metrics: CPU, memory, disk, uptime"
+	return "Get system metrics: CPU (incl. temperature), memory, disk, uptime"
 }
 
 func (t *SystemTool) InputSchema() map[string]any {
@@ -103,6 +146,9 @@ func (t *SystemTool) Execute(ctx context.Context, args map[string]any) (any, err
 		}
 		result["cpu_percent"] = rounded
 		result["cpu_cores"] = counts
+		if temp, ok := averageCoreTemperature(); ok {
+			result["cpu_temp_c"] = temp
+		}
 	}
 
 	if include["memory"] {
