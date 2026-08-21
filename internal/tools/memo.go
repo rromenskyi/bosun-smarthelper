@@ -41,6 +41,28 @@ type memoRecord struct {
 	Tags             []string `json:"tags,omitempty"`
 	CanonicalTags    []string `json:"canonical_tags,omitempty"`
 	TagsNormalizedAt string   `json:"tags_normalized_at,omitempty"`
+	// Maintenance tracking (all optional; empty MetricName means this
+	// memo isn't a maintenance record at all). Deliberately not tied to
+	// any one domain — MetricName is a freeform counter name the model
+	// chooses per piece of equipment (e.g. "odometer_km" for a car,
+	// "main_engine_hours"/"generator_hours" for a boat with more than
+	// one engine), not a hardcoded "mileage" field. See docs/memo-search.md.
+	MetricName string `json:"metric_name,omitempty"`
+	// MetricValue is the counter's value at the time of this record —
+	// either a maintenance event ("changed the oil at 55000") or just a
+	// standalone reading ("current odometer is 61000"); the latter is how
+	// "how much is left" gets answered without any live sensor, by using
+	// the most recent record for the same MetricName as "the last known
+	// value".
+	MetricValue float64 `json:"metric_value,omitempty"`
+	// DueDate (RFC3339), when set, is checked against the current date —
+	// in Go, not left to the model to reason about — so "maintenance" can
+	// reliably report overdue/days-remaining.
+	DueDate string `json:"due_date,omitempty"`
+	// DueMetricValue, when set, is the counter value this item is next
+	// due at; "maintenance" reports it alongside the most recent known
+	// MetricValue for the same MetricName, if any.
+	DueMetricValue float64 `json:"due_metric_value,omitempty"`
 }
 
 type memoFile struct {
@@ -74,7 +96,7 @@ func (t *MemoTool) Name() string {
 }
 
 func (t *MemoTool) Description() string {
-	return "Write, read, list, search, topics, archive, or delete persistent local memos and uploaded reference documents. Listing exposes timestamps, status, and age_days so old notes can be reviewed. topics lists uploaded documents (title + document_id) with no search needed — check it when unsure whether something is covered, or to find the right document_id to scope a search to it instead of the whole store. Search finds memos and documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question a stored document might answer. A search result may include image_url when the source is a diagram — include it in your answer as a markdown image: ![description](image_url). When writing, add a few short lowercase tags describing the topic (e.g. \"purchases\", \"fuel_system\", \"oil\") — use list or search with tag to reliably find every memo on a topic, not just the closest-sounding ones."
+	return "Write, read, list, search, topics, maintenance, archive, or delete persistent local memos and uploaded reference documents. Listing exposes timestamps, status, and age_days so old notes can be reviewed. topics lists uploaded documents (title + document_id) with no search needed — check it when unsure whether something is covered, or to find the right document_id to scope a search to it instead of the whole store. Search finds memos and documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question a stored document might answer. A search result may include image_url when the source is a diagram — include it in your answer as a markdown image: ![description](image_url). When writing, add a few short lowercase tags describing the topic (e.g. \"purchases\", \"fuel_system\", \"oil\") — use list or search with tag to reliably find every memo on a topic, not just the closest-sounding ones. For equipment upkeep (odometer, engine-hour meters, etc.): write metric_name/metric_value for a reading or event, plus due_date and/or due_metric_value for when the next one is due — compute due_metric_value yourself from a stated interval (\"changed oil at 55000, next in 10000\" -> metric_value:55000, due_metric_value:65000), don't just restate the interval in content. maintenance reports what's due (it computes overdue itself, don't do date math) and lists known_metrics — reuse an existing name; if write's response includes existing_metric_names, your metric_name didn't match any of them, so re-write immediately with the right one instead of leaving two names for the same equipment."
 }
 
 func (t *MemoTool) InputSchema() map[string]any {
@@ -83,12 +105,12 @@ func (t *MemoTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"action": map[string]any{
 				"type":        "string",
-				"enum":        []string{"write", "read", "list", "search", "topics", "archive", "delete"},
-				"description": "Operation to perform. Use list to inspect memo dates and age before archival or deletion; use search to recall a memo/document by meaning; use topics to see what documents exist before deciding whether/where to search.",
+				"enum":        []string{"write", "read", "list", "search", "topics", "maintenance", "archive", "delete"},
+				"description": "Operation to perform. Use list to inspect memo dates and age before archival or deletion; use search to recall a memo/document by meaning; use topics to see what documents exist before deciding whether/where to search; use maintenance to see what equipment upkeep is due.",
 			},
 			"key": map[string]any{
 				"type":        "string",
-				"description": "Short stable memo identifier; required except for list and search.",
+				"description": "Short stable memo identifier; required except for list, search, topics, and maintenance.",
 			},
 			"content": map[string]any{
 				"type":        "string",
@@ -118,6 +140,22 @@ func (t *MemoTool) InputSchema() map[string]any {
 			"document_id": map[string]any{
 				"type":        "string",
 				"description": "For search, restrict document results to this one document (see topics for the id) instead of the whole store.",
+			},
+			"metric_name": map[string]any{
+				"type":        "string",
+				"description": "For write, a freeform counter name for equipment upkeep, e.g. \"odometer_km\", \"main_engine_hours\", \"generator_hours\" — check maintenance's known_metrics and reuse the exact existing name for the same equipment.",
+			},
+			"metric_value": map[string]any{
+				"type":        "number",
+				"description": "For write, the counter's value now — either at a maintenance event, or just a standalone reading (e.g. \"current odometer is 61000\") used as the latest known value for that metric_name.",
+			},
+			"due_date": map[string]any{
+				"type":        "string",
+				"description": "For write, a calendar date (YYYY-MM-DD) this item is next due by — maintenance compares it to the real date, not the model.",
+			},
+			"due_metric_value": map[string]any{
+				"type":        "number",
+				"description": "For write, the metric_name counter value this item is next due at.",
 			},
 		},
 		"required":             []string{"action"},
@@ -163,7 +201,7 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 	key, _ := args["key"].(string)
 	action = strings.TrimSpace(action)
 	key = strings.TrimSpace(key)
-	if action != "list" && action != "search" && action != "topics" && (key == "" || len([]rune(key)) > 128) {
+	if action != "list" && action != "search" && action != "topics" && action != "maintenance" && (key == "" || len([]rune(key)) > 128) {
 		return nil, fmt.Errorf("memo key must contain 1 to 128 characters")
 	}
 
@@ -225,6 +263,22 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 		if rawTags, ok := args["tags"]; ok {
 			record.Tags = parseTags(rawTags)
 		}
+		if rawMetricName, ok := args["metric_name"].(string); ok {
+			record.MetricName = strings.TrimSpace(rawMetricName)
+		}
+		if rawMetricValue, ok := args["metric_value"].(float64); ok {
+			record.MetricValue = rawMetricValue
+		}
+		if rawDueDate, ok := args["due_date"].(string); ok && strings.TrimSpace(rawDueDate) != "" {
+			parsed, err := parseFlexibleDate(rawDueDate)
+			if err != nil {
+				return nil, fmt.Errorf("due_date %q is not a valid date: %w", rawDueDate, err)
+			}
+			record.DueDate = parsed.Format(time.RFC3339)
+		}
+		if rawDueMetricValue, ok := args["due_metric_value"].(float64); ok {
+			record.DueMetricValue = rawDueMetricValue
+		}
 		if t.embed != nil {
 			// Best-effort: a slow or unreachable embeddings server must
 			// never block saving the memo itself. A missing vector just
@@ -239,11 +293,38 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 		if err := t.save(data); err != nil {
 			return nil, err
 		}
-		return memoView(record, time.Now()), nil
+		view := memoView(record, time.Now())
+		if record.MetricName != "" {
+			// A model deciding on a metric_name only sees known_metrics
+			// via the "maintenance" action, which it may not have called
+			// this turn — surface the same list here too, so a name that
+			// doesn't match any existing one gets flagged immediately,
+			// in time for the agent loop's next tool-call round this
+			// same turn to fix it, rather than silently fragmenting
+			// "odometer_km" into "odometer" and "odometer_km" as two
+			// unrelated counters.
+			others := make(map[string]bool)
+			for otherKey, other := range data.Memos {
+				if otherKey != key && other.Status != "archived" && other.MetricName != "" {
+					others[other.MetricName] = true
+				}
+			}
+			if len(others) > 0 && !others[record.MetricName] {
+				names := make([]string, 0, len(others))
+				for name := range others {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+				view["existing_metric_names"] = names
+			}
+		}
+		return view, nil
 	case "search":
 		return t.search(ctx, data, args)
 	case "topics":
 		return t.topics()
+	case "maintenance":
+		return t.maintenance(data, time.Now())
 	case "archive":
 		record, ok := data.Memos[key]
 		if !ok {
@@ -416,6 +497,94 @@ func (t *MemoTool) topics() (any, error) {
 	return map[string]any{"documents": topics, "count": len(topics)}, nil
 }
 
+// parseFlexibleDate accepts either a bare calendar date (what a model, or a
+// user dictating one, is far more likely to say — "2028-08-20") or RFC3339
+// (what write itself stores it back as).
+func parseFlexibleDate(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	// A bare calendar date (no zone of its own) is parsed as local
+	// midnight, not UTC midnight — time.Parse defaults to UTC, which
+	// would silently shift "how many days until due" by up to a day
+	// depending on the host's offset from UTC when compared against
+	// time.Now() (local). RFC3339 already carries an explicit offset, so
+	// it's unaffected either way.
+	if t, err := time.ParseInLocation("2006-01-02", raw, time.Local); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, raw)
+}
+
+// maintenance reports every active memo tracking a due date and/or a due
+// counter value (see memoRecord's MetricName/DueDate/DueMetricValue) —
+// deliberately not tied to any one domain (a car's odometer, a boat's
+// main-engine or generator hour meter, ...). Whether a date-based item is
+// overdue is computed here, in Go, against the real clock — not left to
+// the model to reason about from a raw date string. A counter-based item
+// (no live sensor backs any of this) is paired with the most recent other
+// memo sharing the same MetricName, treating it as "the last known
+// reading" — e.g. a memo that's just "current odometer 61000" with no due
+// fields of its own. known_metrics lists every MetricName seen at all, so
+// the model can reuse an existing one instead of inventing a slightly
+// different spelling for the same equipment across separate write calls.
+func (t *MemoTool) maintenance(data memoFile, now time.Time) (any, error) {
+	latestByMetric := make(map[string]struct {
+		value float64
+		at    string
+	})
+	knownMetrics := make(map[string]bool)
+	for _, record := range data.Memos {
+		if record.Status == "archived" || record.MetricName == "" {
+			continue
+		}
+		knownMetrics[record.MetricName] = true
+		if current, ok := latestByMetric[record.MetricName]; !ok || record.UpdatedAt > current.at {
+			latestByMetric[record.MetricName] = struct {
+				value float64
+				at    string
+			}{record.MetricValue, record.UpdatedAt}
+		}
+	}
+
+	items := make([]map[string]any, 0)
+	for _, record := range data.Memos {
+		if record.Status == "archived" || (record.DueDate == "" && record.DueMetricValue == 0) {
+			continue
+		}
+		item := map[string]any{"key": record.Key, "content": truncateForSearch(record.Content)}
+		if record.MetricName != "" {
+			item["metric_name"] = record.MetricName
+		}
+		if record.DueDate != "" {
+			due, err := time.Parse(time.RFC3339, record.DueDate)
+			if err == nil {
+				item["due_date"] = record.DueDate
+				daysUntil := int(due.Sub(now).Hours() / 24)
+				item["days_until_due"] = daysUntil
+				item["overdue"] = daysUntil < 0
+			}
+		}
+		if record.DueMetricValue != 0 && record.MetricName != "" {
+			item["due_metric_value"] = record.DueMetricValue
+			if latest, ok := latestByMetric[record.MetricName]; ok {
+				item["latest_known_metric_value"] = latest.value
+				item["remaining_metric_value"] = record.DueMetricValue - latest.value
+			}
+		}
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return fmt.Sprint(items[i]["key"]) < fmt.Sprint(items[j]["key"])
+	})
+
+	metrics := make([]string, 0, len(knownMetrics))
+	for name := range knownMetrics {
+		metrics = append(metrics, name)
+	}
+	sort.Strings(metrics)
+
+	return map[string]any{"items": items, "count": len(items), "known_metrics": metrics}, nil
+}
+
 func memoView(record memoRecord, now time.Time) map[string]any {
 	status := record.Status
 	if status == "" {
@@ -437,6 +606,16 @@ func memoView(record memoRecord, now time.Time) map[string]any {
 	}
 	if len(record.CanonicalTags) > 0 {
 		view["canonical_tags"] = record.CanonicalTags
+	}
+	if record.MetricName != "" {
+		view["metric_name"] = record.MetricName
+		view["metric_value"] = record.MetricValue
+	}
+	if record.DueDate != "" {
+		view["due_date"] = record.DueDate
+	}
+	if record.DueMetricValue != 0 {
+		view["due_metric_value"] = record.DueMetricValue
 	}
 	return view
 }

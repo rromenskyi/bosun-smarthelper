@@ -45,6 +45,13 @@ In daily use, not just a prototype. Working today:
   recognized; a diagram chunk with no matching procedural text elsewhere
   in the store still surfaces on its own, and the model drops its image
   straight into the answer as markdown — see `docs/memo-search.md`.
+- **Equipment maintenance tracking** — optional counter/date fields on a
+  memo (`metric_name`/`metric_value`/`due_date`/`due_metric_value`) log an
+  oil change, an engine-hour reading, anything with a due date; `maintenance`
+  reports what's due and how much of a counter is left, computed in Go
+  against the real clock, not the model. Domain-neutral by design — a car's
+  odometer and a boat's main-engine hours both fit the same two fields — see
+  `docs/maintenance-tracking.md`.
 - **Online knowledge tools** — DuckDuckGo web search and Wikipedia summaries,
   automatically hidden while offline.
 - **Settings page** — the web UI's gear icon lets you edit the assistant's
@@ -170,7 +177,7 @@ authentication is provided, so keep it on a trusted LAN.
 | `get_fridge_temp` | Refrigerator/freezer temperature | `zone?` (`fridge`\|`freezer`) |
 | `get_gps` | Coordinates, speed, altitude | — |
 | `get_system_info` | CPU (incl. temperature), RAM, disk, uptime | `include?` (`cpu`,`memory`,`disk`,`host`) |
-| `memo` | Persistent dated notes; `search` finds memos and uploaded documents by meaning; `topics` lists uploaded documents without searching; `tag`/`document_id` narrow either | `action`, `key?`, `content?`, `tags?`, `include_archived?`, `tag?`, `query?`, `limit?`, `document_id?` |
+| `memo` | Persistent dated notes; `search` finds memos and uploaded documents by meaning; `topics` lists uploaded documents without searching; `tag`/`document_id` narrow either; `maintenance` reports due equipment upkeep logged via the metric/due-date fields | `action`, `key?`, `content?`, `tags?`, `include_archived?`, `tag?`, `query?`, `limit?`, `document_id?`, `metric_name?`, `metric_value?`, `due_date?`, `due_metric_value?` |
 | `web_search` | DuckDuckGo web results | `query`, `limit?` |
 | `wikipedia` | Wikipedia summary and source URL | `title`, `lang?` |
 | `get_directions` | Google/Apple Maps links for a destination (route from the current GPS location when available) | `destination` |

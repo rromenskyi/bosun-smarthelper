@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/roman220/ai-local-smarthelper/internal/config"
 	"github.com/roman220/ai-local-smarthelper/internal/documents"
@@ -373,5 +374,212 @@ func TestMemoToolWriteWithTagsAndFilter(t *testing.T) {
 	searchView := searchResult.(map[string]any)
 	if searchView["count"] != 0 {
 		t.Errorf("tag-filtered search count = %v, want 0 (oil-change isn't tagged purchases)", searchView["count"])
+	}
+}
+
+func TestMemoToolWriteStoresMaintenanceFields(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil",
+		"metric_name": "odometer_km", "metric_value": 55000.0,
+		"due_date": "2028-08-20", "due_metric_value": 65000.0,
+	})
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	view := result.(map[string]any)
+	if view["metric_name"] != "odometer_km" || view["metric_value"] != 55000.0 {
+		t.Errorf("view = %+v, want metric_name/metric_value stored", view)
+	}
+	if view["due_metric_value"] != 65000.0 {
+		t.Errorf("view = %+v, want due_metric_value stored", view)
+	}
+	dueDate, _ := view["due_date"].(string)
+	if !strings.HasPrefix(dueDate, "2028-08-20") {
+		t.Errorf("due_date = %q, want it to start with 2028-08-20", dueDate)
+	}
+}
+
+func TestMemoToolWriteRejectsInvalidDueDate(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil",
+		"due_date": "next tuesday",
+	}); err == nil {
+		t.Error("expected an error for an unparseable due_date")
+	}
+}
+
+func TestMemoToolMaintenanceReportsOverdueAndUpcoming(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+
+	past := time.Now().Add(-48 * time.Hour).Format("2006-01-02")
+	future := time.Now().Add(240 * time.Hour).Format("2006-01-02")
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "coolant-check", "content": "Checked coolant", "due_date": past,
+	}); err != nil {
+		t.Fatalf("write overdue item: %v", err)
+	}
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "belt-check", "content": "Checked belt", "due_date": future,
+	}); err != nil {
+		t.Fatalf("write upcoming item: %v", err)
+	}
+	// A plain memo with no due fields at all must never show up here.
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "shopping", "content": "Buy milk",
+	}); err != nil {
+		t.Fatalf("write unrelated memo: %v", err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "maintenance"})
+	if err != nil {
+		t.Fatalf("maintenance: %v", err)
+	}
+	view := result.(map[string]any)
+	items := view["items"].([]map[string]any)
+	if len(items) != 2 {
+		t.Fatalf("items = %+v, want exactly the 2 due-tracked memos", items)
+	}
+	byKey := map[string]map[string]any{}
+	for _, item := range items {
+		byKey[item["key"].(string)] = item
+	}
+	if byKey["coolant-check"]["overdue"] != true {
+		t.Errorf("coolant-check overdue = %v, want true", byKey["coolant-check"]["overdue"])
+	}
+	if byKey["belt-check"]["overdue"] != false {
+		t.Errorf("belt-check overdue = %v, want false", byKey["belt-check"]["overdue"])
+	}
+	daysUntil, _ := byKey["belt-check"]["days_until_due"].(int)
+	if daysUntil < 9 || daysUntil > 10 {
+		t.Errorf("belt-check days_until_due = %v, want roughly 10", daysUntil)
+	}
+}
+
+func TestMemoToolMaintenanceComputesRemainingFromLatestReading(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil",
+		"metric_name": "odometer_km", "metric_value": 55000.0, "due_metric_value": 65000.0,
+	}); err != nil {
+		t.Fatalf("write maintenance item: %v", err)
+	}
+	// A later, unrelated memo that just happens to mention the current
+	// reading — this is the only "sensor" this mechanism has.
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "odometer-reading", "content": "Current odometer",
+		"metric_name": "odometer_km", "metric_value": 61000.0,
+	}); err != nil {
+		t.Fatalf("write reading: %v", err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "maintenance"})
+	if err != nil {
+		t.Fatalf("maintenance: %v", err)
+	}
+	view := result.(map[string]any)
+	items := view["items"].([]map[string]any)
+	var oilChange map[string]any
+	for _, item := range items {
+		if item["key"] == "oil-change" {
+			oilChange = item
+		}
+	}
+	if oilChange == nil {
+		t.Fatalf("items = %+v, missing oil-change", items)
+	}
+	if oilChange["latest_known_metric_value"] != 61000.0 {
+		t.Errorf("latest_known_metric_value = %v, want 61000", oilChange["latest_known_metric_value"])
+	}
+	if oilChange["remaining_metric_value"] != 4000.0 {
+		t.Errorf("remaining_metric_value = %v, want 4000 (65000-61000)", oilChange["remaining_metric_value"])
+	}
+
+	metrics, _ := view["known_metrics"].([]string)
+	if len(metrics) != 1 || metrics[0] != "odometer_km" {
+		t.Errorf("known_metrics = %v, want just odometer_km", metrics)
+	}
+}
+
+func TestMemoToolMaintenanceExcludesArchivedMemos(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "old-item", "content": "Old maintenance item",
+		"due_date": time.Now().Add(-48 * time.Hour).Format("2006-01-02"),
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := tool.Execute(ctx, map[string]any{"action": "archive", "key": "old-item"}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "maintenance"})
+	if err != nil {
+		t.Fatalf("maintenance: %v", err)
+	}
+	view := result.(map[string]any)
+	if view["count"] != 0 {
+		t.Errorf("count = %v, want 0 — the only due item is archived", view["count"])
+	}
+}
+
+func TestMemoToolWriteFlagsUnrecognizedMetricName(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil",
+		"metric_name": "odometer_km", "metric_value": 55000.0,
+	}); err != nil {
+		t.Fatalf("write first record: %v", err)
+	}
+
+	// A slightly different spelling for the same counter — write's own
+	// response must flag this immediately, in time for the model to
+	// correct it within the same turn, rather than silently fragmenting
+	// into two unrelated counters.
+	result, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "odometer-reading", "content": "Current odometer",
+		"metric_name": "odometer", "metric_value": 61000.0,
+	})
+	if err != nil {
+		t.Fatalf("write second record: %v", err)
+	}
+	view := result.(map[string]any)
+	existing, _ := view["existing_metric_names"].([]string)
+	if len(existing) != 1 || existing[0] != "odometer_km" {
+		t.Errorf("existing_metric_names = %v, want [odometer_km]", existing)
+	}
+}
+
+func TestMemoToolWriteReusingKnownMetricNameOmitsHint(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil",
+		"metric_name": "odometer_km", "metric_value": 55000.0,
+	}); err != nil {
+		t.Fatalf("write first record: %v", err)
+	}
+	result, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "odometer-reading", "content": "Current odometer",
+		"metric_name": "odometer_km", "metric_value": 61000.0,
+	})
+	if err != nil {
+		t.Fatalf("write second record: %v", err)
+	}
+	view := result.(map[string]any)
+	if _, ok := view["existing_metric_names"]; ok {
+		t.Errorf("existing_metric_names = %v, want absent — the name matches an existing one", view["existing_metric_names"])
 	}
 }

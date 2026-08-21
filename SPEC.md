@@ -41,7 +41,7 @@ Exposed over stdio as an MCP server (`smarthelper mcp`):
 | `get_fridge_temp` | Fridge/freezer temperature | `{"fridge_c": 4.0, "freezer_c": -18.0}` |
 | `get_gps` | Coordinates, speed, altitude | `{"latitude": 40.7608, "longitude": -111.891, "speed_kmh": 0}` |
 | `get_system_info` | CPU (incl. temperature), RAM, disk, uptime | `{"cpu_percent": [...], "cpu_temp_c": 67, "memory": {...}}` |
-| `memo` | Dated persistent local notes; `search` finds memos/documents by meaning; `topics` lists uploaded documents without searching | `{"key":"shopping","updated_at":"...","age_days":2}` |
+| `memo` | Dated persistent local notes; `search` finds memos/documents by meaning; `topics` lists uploaded documents without searching; `maintenance` reports due equipment upkeep | `{"key":"shopping","updated_at":"...","age_days":2}` |
 | `web_search` | DuckDuckGo results | `{"query":"...","results":[...]}` |
 | `wikipedia` | Encyclopedia summary | `{"title":"...","extract":"...","url":"..."}` |
 | `get_directions` | Google/Apple Maps links for a destination, routed from the current GPS location when available | `{"destination":"...","maps_url":"..."}` |
@@ -172,6 +172,7 @@ models without native tool calling, conservative default history limits).
 - [x] Remote access via Cloudflare Tunnel (`docs/cloudflare.md`) — outbound-only `cloudflared`, a real Let's Encrypt cert via DNS-01, split-horizon DNS so the LAN path never leaves the network, and a Cloudflare Access gate in front of the tunnel — see the corrected non-goal below
 - [x] Manual online/offline provider override (`internal/llm.Router.SetProviderOverride`) alongside the automatic connectivity-based selection, exposed as a clickable status pill in the web UI
 - [x] `web.bind`/`http_fallback_bind` can be `0.0.0.0` (`webui.ValidateBind`), for a host without a DHCP reservation — still rejects public and link-local addresses; the no-auth LAN trust model is unchanged either way
+- [x] Equipment maintenance tracking (`docs/maintenance-tracking.md`) — optional `metric_name`/`metric_value`/`due_date`/`due_metric_value` fields on a regular memo, domain-neutral (a car's odometer and a boat's main-engine hours both fit); `maintenance` action reports what's overdue/upcoming (computed in Go against the real clock) and the remaining counter value against the latest known reading; `write`'s own response flags a `metric_name` that doesn't match any other known one (`existing_metric_names`) so a weak model can self-correct within the same turn instead of fragmenting one counter into two names
 
 ### 8. Local Web UI + Voice Interface
 

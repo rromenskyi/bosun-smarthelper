@@ -32,6 +32,12 @@ top-level tour has room for. Grouped by what you're trying to do.
   relevance floor and repetition-guard that keep a weak model from going
   off the rails, and `documents.Store.AttachOrphanedImages` for merging a
   diagram onto the text chunk that actually covers it.
+- **[maintenance-tracking.md](maintenance-tracking.md)** — logging
+  counter/date-based equipment upkeep (oil changes, engine-hour meters,
+  anything with a due date) as optional fields on a regular memo, and the
+  `maintenance` action that reports what's due — domain-neutral by design,
+  so a car's odometer and a boat's main-engine hours both fit without a
+  schema change.
 - **[voice.md](voice.md)** — push-to-talk speech input (whisper.cpp) and
   spoken replies (Piper TTS), fully offline, no Python in the path; the
   Alpine/musl-vs-glibc onnxruntime saga that shaped how it's built.
