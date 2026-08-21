@@ -40,10 +40,11 @@ Exposed over stdio as an MCP server (`smarthelper mcp`):
 | `get_weather` | Current weather and 1–16 day forecast | `{"temperature_c": 22.5, "daily_forecast": [...]}` |
 | `get_fridge_temp` | Fridge/freezer temperature | `{"fridge_c": 4.0, "freezer_c": -18.0}` |
 | `get_gps` | Coordinates, speed, altitude | `{"latitude": 40.7608, "longitude": -111.891, "speed_kmh": 0}` |
-| `get_system_info` | CPU, RAM, disk, uptime | `{"cpu_percent": [...], "memory": {...}}` |
-| `memo` | Dated persistent local notes; `search` finds memos/documents by meaning | `{"key":"shopping","updated_at":"...","age_days":2}` |
+| `get_system_info` | CPU (incl. temperature), RAM, disk, uptime | `{"cpu_percent": [...], "cpu_temp_c": 67, "memory": {...}}` |
+| `memo` | Dated persistent local notes; `search` finds memos/documents by meaning; `topics` lists uploaded documents without searching | `{"key":"shopping","updated_at":"...","age_days":2}` |
 | `web_search` | DuckDuckGo results | `{"query":"...","results":[...]}` |
 | `wikipedia` | Encyclopedia summary | `{"title":"...","extract":"...","url":"..."}` |
+| `get_directions` | Google/Apple Maps links for a destination, routed from the current GPS location when available | `{"destination":"...","maps_url":"..."}` |
 
 Status: **implemented**. All four tools have local/mock paths. Weather also has
 an online Open-Meteo backend with Open-Meteo city geocoding, Nominatim landmark
@@ -161,12 +162,16 @@ models without native tool calling, conservative default history limits).
 - [x] Semantic memo/document search (`docs/memo-search.md`) — reuses the `memo` tool's `search` action, so the LLM tool contract doesn't grow; document upload (text or PDF, web-UI-only) can attach a diagram image to a search result when a page has little or no text
 - [x] Web UI settings page (`docs/settings.md`) — persona/prompt, default language, LLM temperatures, and memo canonical tags editable live from a JSON overlay store, no restart needed
 - [x] Optional HTTPS via mkcert (`docs/tls.md`) — trusted-with-no-warning TLS for a private LAN IP that has no public CA
-- [ ] OCR for scanned PDF pages (no engine installed yet — a scanned page's rendered image currently has no extracted text alongside it)
+- [x] OCR for scanned PDF pages (tesseract, `eng` by default — `eng+rus` measurably misread English diagram text as look-alike Cyrillic garbage; per-upload `ocr_language` overrides it) — `internal/documents.CleanOCRText` strips residual noise, and `documents.Store.AttachOrphanedImages` (`smarthelper documents attach-images`) merges a diagram chunk onto the best-matching text chunk anywhere in the store instead of leaving it an orphaned, weakly-labeled entry
 - [x] `make check` (fmt + vet + test + build) passing
-- [x] Real serial/NMEA GPS backend (`internal/tools/gps_serial.go`) — tested against an actual u-blox 7 USB receiver
+- [x] Real serial/NMEA GPS backend (`internal/tools/gps_serial.go`) — tested against an actual u-blox 7 USB receiver; hot-pluggable (bind-mounted `/dev` + a cgroup device rule, not a static `devices:` entry) so bosun starts fine even if the GPS wasn't plugged in yet at boot
 - [ ] Remaining real sensor backends (1-Wire temp probes, MQTT fridge, OBD2)
 - [ ] Integration tests against a real Ollama instance
 - [x] Push-to-talk voice interface (`docs/voice.md`) — whisper.cpp STT + Piper TTS, both directions, no cloud dependencies, no Python; continuous conversation mode still to come
+- [x] Local monitoring dashboard (`docs/monitoring.md`) — a bounded-history SQLite time series for CPU/memory/disk/GPS/fridge, sampled on an interval; what to sample is a `config.yaml` list (`metrics.sources`), not hardcoded
+- [x] Remote access via Cloudflare Tunnel (`docs/cloudflare.md`) — outbound-only `cloudflared`, a real Let's Encrypt cert via DNS-01, split-horizon DNS so the LAN path never leaves the network, and a Cloudflare Access gate in front of the tunnel — see the corrected non-goal below
+- [x] Manual online/offline provider override (`internal/llm.Router.SetProviderOverride`) alongside the automatic connectivity-based selection, exposed as a clickable status pill in the web UI
+- [x] `web.bind`/`http_fallback_bind` can be `0.0.0.0` (`webui.ValidateBind`), for a host without a DHCP reservation — still rejects public and link-local addresses; the no-auth LAN trust model is unchanged either way
 
 ### 8. Local Web UI + Voice Interface
 
@@ -194,10 +199,16 @@ not a separate assistant implementation.
 
 ### 9. Non-Goals (for now)
 
-- Multi-user / auth (by design — LAN-only, single trusted user)
+- Multi-user / auth *for the base LAN service* (by design — no-auth,
+  single trusted network; remote access is a separate, additive path —
+  see below, not a change to this)
 - Tool sandboxing (runs as the invoking user)
 - Model management (assumes Ollama/llamafile already installed)
-- Internet-facing exposure of the web UI (explicitly out of scope, not just undone)
+
+Internet-facing exposure was originally listed here as explicitly out of
+scope; it's since been added deliberately (`docs/cloudflare.md`), but only
+as an additive path gated by Cloudflare Access — the base LAN service is
+still no-auth and was never made directly internet-facing itself.
 
 ---
 
@@ -212,3 +223,12 @@ not a separate assistant implementation.
    push-to-talk, both directions (see `docs/voice.md`). Continuous
    conversation mode (loop without pressing again) and a dedicated
    Bluetooth speaker are next.
+4. ~~Remote access + a local monitoring dashboard~~ — **shipped**:
+   Cloudflare Tunnel with a real cert and Access-gated auth
+   (`docs/cloudflare.md`), and a config-driven metrics dashboard
+   (`docs/monitoring.md`).
+5. A document-navigation layer above flat chunk search — `memo`'s
+   `topics`/`document_id` (list what's uploaded, scope a search to one
+   document) are a first step; a fuller "chunkless RAG"-style structured
+   navigation (walk a document's actual headings/sections instead of a
+   flat similarity pool) is still just an idea, not started.

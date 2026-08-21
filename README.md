@@ -8,7 +8,7 @@ MCP-compatible client (Claude Desktop, custom agents, etc.) can query it.
 
 ## Status
 
-Early foundation. Working today:
+In daily use, not just a prototype. Working today:
 
 - **LLM routing** — local (Ollama) and remote (OpenAI-compatible) clients
   behind one interface, with connectivity-based selection and failover.
@@ -37,13 +37,14 @@ Early foundation. Working today:
   archived, and deleted through the `memo` tool.
 - **Semantic memo/document search** — `memo`'s `search` action finds memos
   and uploaded reference documents (manuals, how-tos) by meaning, not just
-  exact words. Documents (plain text or PDF) are uploaded through the web
-  UI only, never an LLM-callable action, to keep the tool contract small.
-  A diagram-only page (e.g. a fuse panel chart) can carry an image instead
-  of text; search surfaces it and the model drops it straight into its
-  answer as a markdown image. PDF pages are split with poppler-utils —
-  there's no OCR, so a scanned page's image has no extracted text next to
-  it — see `docs/memo-search.md`.
+  exact words; `topics` lists what's uploaded without searching, and
+  `document_id` scopes a search to one of them. Documents (plain text or
+  PDF) are uploaded through the web UI only, never an LLM-callable action,
+  to keep the tool contract small. A scanned/diagram page is OCR'd
+  (tesseract) and carries its image alongside whatever text was
+  recognized; a diagram chunk with no matching procedural text elsewhere
+  in the store still surfaces on its own, and the model drops its image
+  straight into the answer as markdown — see `docs/memo-search.md`.
 - **Online knowledge tools** — DuckDuckGo web search and Wikipedia summaries,
   automatically hidden while offline.
 - **Settings page** — the web UI's gear icon lets you edit the assistant's
@@ -73,7 +74,9 @@ Early foundation. Working today:
   once its tool exists — see `docs/monitoring.md`.
 
 Not yet built: real fridge sensor hardware, continuous voice conversation
-mode. See `SPEC.md` for the full roadmap.
+mode. See `SPEC.md` for the full roadmap, and
+[`docs/README.md`](docs/README.md) for a topic-organized index of every
+doc referenced throughout this file.
 
 ## Architecture
 
@@ -166,8 +169,8 @@ authentication is provided, so keep it on a trusted LAN.
 | `get_weather` | Current conditions and up to 16 forecast days | `location?`, `forecast_days?` (1–16) |
 | `get_fridge_temp` | Refrigerator/freezer temperature | `zone?` (`fridge`\|`freezer`) |
 | `get_gps` | Coordinates, speed, altitude | — |
-| `get_system_info` | CPU, RAM, disk, uptime | `include?` (`cpu`,`memory`,`disk`,`host`) |
-| `memo` | Persistent dated notes; `search` finds memos and uploaded documents by meaning; `tag` filters either for exact recall | `action`, `key?`, `content?`, `tags?`, `include_archived?`, `tag?`, `query?`, `limit?` |
+| `get_system_info` | CPU (incl. temperature), RAM, disk, uptime | `include?` (`cpu`,`memory`,`disk`,`host`) |
+| `memo` | Persistent dated notes; `search` finds memos and uploaded documents by meaning; `topics` lists uploaded documents without searching; `tag`/`document_id` narrow either | `action`, `key?`, `content?`, `tags?`, `include_archived?`, `tag?`, `query?`, `limit?`, `document_id?` |
 | `web_search` | DuckDuckGo web results | `query`, `limit?` |
 | `wikipedia` | Wikipedia summary and source URL | `title`, `lang?` |
 | `get_directions` | Google/Apple Maps links for a destination (route from the current GPS location when available) | `destination` |
