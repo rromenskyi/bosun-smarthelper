@@ -21,11 +21,17 @@ if [ -z "$LAN_IP" ]; then
 fi
 
 MDNS_HOST="$(hostname | tr '[:upper:]' '[:lower:]').local"
+# bosunonline.us resolves straight to the LAN IP for local clients (see
+# docs/cloudflare.md's split-horizon DNS override on the router) instead of
+# going out through the Cloudflare tunnel — but that only avoids a
+# certificate warning if this leaf cert also covers that name, since it's
+# still this mkcert cert answering the TLS handshake, not Cloudflare's.
+PUBLIC_DOMAIN="bosunonline.us"
 
-echo "Regenerating cert for: $LAN_IP $MDNS_HOST localhost 127.0.0.1 ::1"
+echo "Regenerating cert for: $LAN_IP $MDNS_HOST $PUBLIC_DOMAIN localhost 127.0.0.1 ::1"
 mkdir -p "$CERT_DIR"
 mkcert -cert-file "$CERT_DIR/cert.pem" -key-file "$CERT_DIR/key.pem" \
-	"$LAN_IP" "$MDNS_HOST" localhost 127.0.0.1 ::1
+	"$LAN_IP" "$MDNS_HOST" "$PUBLIC_DOMAIN" localhost 127.0.0.1 ::1
 
 if [ ! -f "$CERT_DIR/rootCA.pem" ]; then
 	cp "$(mkcert -CAROOT)/rootCA.pem" "$CERT_DIR/rootCA.pem"
