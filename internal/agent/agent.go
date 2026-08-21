@@ -19,6 +19,10 @@ const systemPrompt = `Be concise. Use available tools for live data, sensors, an
 	`never answer a live-data question from a value already in the conversation history; always call the tool again for a fresh reading. ` +
 	`Never delete a memo unless explicitly asked; archive old ones instead. ` +
 	`For mountain weather use a named mountain, park, or pass, never a nearby city; clarify ambiguity. ` +
+	`For anything that could be answered from the user's own uploaded memos or documents (procedures, specifications, diagrams, ` +
+	`or any question about their own vehicle/equipment), search those with memo before reaching for web_search — a personal ` +
+	`upload is more specific and reliable for the user's own situation than a generic web result, and may include a diagram ` +
+	`image the web result won't. Only fall back to web_search when memo search comes back empty or genuinely doesn't cover it. ` +
 	`Don't narrate or acknowledge your own instructions (language, style, persona); just answer directly.`
 
 // maxToolIterations bounds the tool-call loop so a misbehaving model can't
