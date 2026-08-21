@@ -29,17 +29,46 @@ faulty compressor even if it never uses the word "fridge."
 Some reference material — a fuse panel chart, a wiring diagram — is a
 picture, not text. There's no vision model here (nothing "looks at" the
 image at answer time), but a `Chunk` can carry an `ImageURL` alongside
-text recognized from it by OCR (`tesseract`, `eng+rus` — see "PDF
-ingestion" below and `examples/import-manual/`), so it's still findable
-by actual content, not just a generic caption. OCR quality varies with
-scan/render quality and isn't guaranteed to find anything; when it
-doesn't, the page's title/caption is what's left to search against. A
-`search` result with an image includes `image_url`; the memo tool's
-description tells the model to drop it into its answer as a normal
-markdown image (`![description](image_url)`), and the web UI already
-renders that inline — see `renderMessageHTML` in `index.html`. Images are
-served from `internal/documents.Store.ImagesDir()` (a sibling directory to
+text recognized from it by OCR (`tesseract`; see "PDF ingestion" below
+and `examples/import-manual/`), so it's still findable by actual content,
+not just a generic caption. OCR quality varies with scan/render quality
+and isn't guaranteed to find anything; when it doesn't, the page's
+title/caption is what's left to search against. A `search` result with an
+image includes `image_url`; the memo tool's description tells the model
+to drop it into its answer as a normal markdown image
+(`![description](image_url)`), and the web UI already renders that
+inline — see `renderMessageHTML` in `index.html`. Images are served from
+`internal/documents.Store.ImagesDir()` (a sibling directory to
 `documents.json`) via `GET /document-images/...` in `server.go`.
+
+OCR language defaults to `eng` (an upload can set a different one via the
+`ocr_language` form field — see `internal/webui/pdf.go`'s
+`defaultOCRLanguage`), not `eng+rus`: running both on an English-only
+technical diagram measurably made things worse, not more permissive —
+tesseract's combined model frequently misread plain English glyphs as
+look-alike Cyrillic ones. `internal/documents.CleanOCRText` also strips
+residual OCR noise (stray single characters, symbol-embedded garbage, any
+token with a non-ASCII letter) from a chunk's OCR body at ingestion time,
+leaving its structured head (page number or breadcrumb) untouched.
+
+### Attaching images to the text that actually covers them
+
+A batch of scanned diagram pages and a batch of the same manual's
+procedural text are often uploaded as separate documents (a scraper's own
+choice, not something this project controls) — without linking them, an
+image chunk is just a weakly-captioned orphan competing in the same search
+pool as real prose, and a hit on one never surfaces the other even when
+they cover the exact same topic. `internal/documents.Store.AttachOrphanedImages`
+fixes this after the fact: for every image chunk, it finds the
+best-matching text chunk *anywhere in the store* by cosine similarity
+between their existing embeddings, and — above a relevance floor — merges
+the image onto that text chunk and drops the now-redundant standalone
+one. Matching is purely by embedding similarity, not by document title or
+any "(Diagrams)"-style naming convention, so it's not tied to how this
+particular corpus happened to be produced. Run it (or re-run it after a
+new batch of uploads) via `smarthelper documents attach-images`; an image
+with no good match is left standalone, still searchable on its own OCR'd
+text exactly as before.
 
 ## PDF ingestion
 
