@@ -329,7 +329,7 @@ func attachImagesCmd() *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 			if minRelevance <= 0 {
-				minRelevance = cfg.Memo.MinSearchRelevance
+				minRelevance = cfg.Memo.AttachImageMinRelevance
 			}
 			store := documents.NewStore(cfg.Documents.Path, embeddings.NewClient(&cfg.LLM.Embeddings))
 			summary, err := store.AttachOrphanedImages(cmd.Context(), minRelevance)
@@ -341,7 +341,7 @@ func attachImagesCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Float64Var(&minRelevance, "min-relevance", 0, "Minimum cosine similarity to merge (0 = use memo.min_search_relevance from config)")
+	cmd.Flags().Float64Var(&minRelevance, "min-relevance", 0, "Minimum cosine similarity to merge (0 = use memo.attach_image_min_relevance from config)")
 	return cmd
 }
 

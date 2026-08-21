@@ -68,7 +68,22 @@ any "(Diagrams)"-style naming convention, so it's not tied to how this
 particular corpus happened to be produced. Run it (or re-run it after a
 new batch of uploads) via `smarthelper documents attach-images`; an image
 with no good match is left standalone, still searchable on its own OCR'd
-text exactly as before.
+text exactly as before. Merging also removes any document left with zero
+chunks as a result (this run's or an earlier one's) — an empty document
+record is pure clutter, never contributing a search result.
+
+The merge threshold is `memo.attach_image_min_relevance` (default 0.6),
+deliberately higher than `min_search_relevance` (0.4): showing a so-so
+search result is low-stakes, but permanently merging an image onto the
+wrong chunk isn't safe at the same bar. Confirmed live at the default
+0.4 — an image from an unrelated Ford manual merged onto an unrelated
+Valvoline product sheet's chunk at 0.41, a false positive across two
+genuinely unrelated documents (as opposed to, say, two different
+subsystems of the same manual, where a wrong-but-nearby match is lower
+stakes). There's no way to undo an already-made merge automatically —
+the original orphaned chunk's text is gone once merged — so a wrong one
+found after the fact has to be fixed by hand (clear that chunk's
+`image_url`) or by re-uploading the affected document.
 
 ## PDF ingestion
 

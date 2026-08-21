@@ -136,6 +136,12 @@ memo:
                                              # memo/document search hit is dropped before it ever
                                              # reaches the LLM — a weak match is noise, not an answer.
                                              # 0 (or below) disables filtering. See docs/memo-search.md.
+  # attach_image_min_relevance: 0.6         # Separate, higher threshold for `smarthelper documents
+                                             # attach-images` (documents.Store.AttachOrphanedImages) —
+                                             # a so-so search result is low-stakes, but permanently
+                                             # merging an image onto the wrong chunk across two
+                                             # unrelated documents isn't safe at the same bar as
+                                             # min_search_relevance. See docs/memo-search.md.
 
 # Uploaded reference documents (manuals, how-tos) for semantic search —
 # uploaded only via the web UI, never an LLM-callable action. Empty path

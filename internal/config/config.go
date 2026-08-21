@@ -103,6 +103,15 @@ type MemoConfig struct {
 	// similarity, roughly [-1, 1]. 0 (or below) disables filtering
 	// entirely. See docs/memo-search.md.
 	MinSearchRelevance float64 `mapstructure:"min_search_relevance"`
+	// AttachImageMinRelevance is the threshold documents.Store.AttachOrphanedImages
+	// uses, separate from (and higher than) MinSearchRelevance: showing a
+	// so-so search result is low-stakes, but permanently merging an image
+	// onto the wrong text chunk across two unrelated documents is a real
+	// mistake a mere "somewhat relevant" score isn't a safe bar for —
+	// confirmed live: an image from an unrelated Ford manual got merged
+	// onto an unrelated Valvoline product sheet's chunk at 0.41. See
+	// docs/memo-search.md.
+	AttachImageMinRelevance float64 `mapstructure:"attach_image_min_relevance"`
 }
 
 // DocumentsConfig holds settings for uploaded reference documents (see
@@ -404,6 +413,7 @@ func setDefaults(v *viper.Viper) {
 	// not a real answer — filtered out before it ever reaches the LLM.
 	// See docs/memo-search.md.
 	v.SetDefault("memo.min_search_relevance", 0.4)
+	v.SetDefault("memo.attach_image_min_relevance", 0.6)
 
 	// Metrics defaults — see docs/monitoring.md. This default source list
 	// covers every sensor this project ships with today; a deployment
