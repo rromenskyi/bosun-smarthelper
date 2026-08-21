@@ -39,7 +39,7 @@ func main() {
 		Use:   "smarthelper",
 		Short: "Bosun (Starpom), a local-first assistant with hybrid LLM routing and MCP tools",
 	}
-	root.AddCommand(versionCmd(), mcpCmd(), chatCmd(), serveCmd(), errorsCmd())
+	root.AddCommand(versionCmd(), mcpCmd(), chatCmd(), serveCmd(), errorsCmd(), documentsCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
@@ -303,6 +303,45 @@ func errorsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum recent entries to show (0 = all)")
+	return cmd
+}
+
+// documentsCmd holds maintenance operations on the document store that
+// don't belong behind a chat tool call (see docs/memo-search.md on why
+// document upload itself is web-UI-only).
+func documentsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "documents",
+		Short: "Maintenance operations on uploaded reference documents",
+	}
+	cmd.AddCommand(attachImagesCmd())
+	return cmd
+}
+
+func attachImagesCmd() *cobra.Command {
+	var minRelevance float64
+	cmd := &cobra.Command{
+		Use:   "attach-images",
+		Short: "Merge orphaned image chunks onto their best-matching text chunk (see documents.AttachOrphanedImages)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			if minRelevance <= 0 {
+				minRelevance = cfg.Memo.MinSearchRelevance
+			}
+			store := documents.NewStore(cfg.Documents.Path, embeddings.NewClient(&cfg.LLM.Embeddings))
+			summary, err := store.AttachOrphanedImages(cmd.Context(), minRelevance)
+			if err != nil {
+				return fmt.Errorf("attach images: %w", err)
+			}
+			fmt.Printf("attached %d image chunks to a matching text chunk, %d left standalone (no match >= %.2f)\n",
+				summary.Attached, summary.Unmatched, minRelevance)
+			return nil
+		},
+	}
+	cmd.Flags().Float64Var(&minRelevance, "min-relevance", 0, "Minimum cosine similarity to merge (0 = use memo.min_search_relevance from config)")
 	return cmd
 }
 
