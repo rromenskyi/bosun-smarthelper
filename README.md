@@ -66,6 +66,11 @@ Early foundation. Working today:
   connector exposes a dedicated domain without forwarding any router
   ports, additive to (not a replacement for) direct LAN access — see
   `docs/cloudflare.md`.
+- **Local monitoring dashboard** — a 📊 button charts CPU/memory/disk/GPS/
+  fridge over time from a local SQLite store, a personal bounded-history
+  analog to MRTG/Grafana; which sensors it samples is a `config.yaml` list,
+  not hardcoded, so a future sensor (battery, water tank) is a config edit
+  once its tool exists — see `docs/monitoring.md`.
 
 Not yet built: real fridge sensor hardware, continuous voice conversation
 mode. See `SPEC.md` for the full roadmap.

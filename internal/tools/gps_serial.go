@@ -18,6 +18,10 @@ import (
 // risking an unbounded scan if the receiver never gets a fix.
 const gpsMaxNMEALines = 120
 
+// gpsStationarySpeedThresholdKMH: reported speeds below this are floored to
+// zero — see readNMEAFix.
+const gpsStationarySpeedThresholdKMH = 1.0
+
 // readSerialGPS opens the configured serial port and reads live NMEA 0183
 // sentences from a real GPS receiver. Closing the port when ctx is done
 // unblocks a pending read, so this is cancellable the same way any other
@@ -95,6 +99,15 @@ func readNMEAFix(r io.Reader, maxLines int) (map[string]any, error) {
 	}
 	if !havePosition {
 		return nil, fmt.Errorf("no GPS fix yet — check antenna placement and try again")
+	}
+
+	// A stationary receiver still reports tiny nonzero speeds (GPS
+	// position/velocity noise, not real motion) — e.g. 0.022 knots ≈ 0.04
+	// km/h — which reads as nonsense both in chat ("скорость 0.12 км/ч"
+	// while parked) and as jitter on the monitoring dashboard
+	// (docs/monitoring.md). Below this threshold, report a clean 0.
+	if speedKMH < gpsStationarySpeedThresholdKMH {
+		speedKMH = 0
 	}
 
 	result := map[string]any{

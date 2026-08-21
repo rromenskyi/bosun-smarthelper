@@ -22,6 +22,59 @@ type Config struct {
 	Sensors   SensorsConfig   `mapstructure:"sensors"`
 	Logging   LoggingConfig   `mapstructure:"logging"`
 	Voice     VoiceConfig     `mapstructure:"voice"`
+	Metrics   MetricsConfig   `mapstructure:"metrics"`
+}
+
+// MetricsConfig holds the local monitoring dashboard's sampling and
+// retention settings (internal/metrics, docs/monitoring.md) — a personal,
+// bounded-history analog to MRTG/Grafana, not a general observability
+// stack.
+type MetricsConfig struct {
+	// Enabled defaults to true — sampling a handful of already-available
+	// sensors every few seconds is cheap, and the dashboard has nothing to
+	// show without it.
+	Enabled bool `mapstructure:"enabled"`
+	// Interval between samples, e.g. "30s".
+	Interval string `mapstructure:"interval"`
+	// RetentionDays bounds the store's size, same idea as MRTG's fixed
+	// rrd file — old samples are pruned rather than kept forever.
+	RetentionDays int `mapstructure:"retention_days"`
+	// StorePath is the SQLite file's location. Empty uses
+	// metrics.DefaultPath() (~/.local/share/bosun/metrics.db).
+	StorePath string `mapstructure:"store_path"`
+	// Sources declares what to sample — deliberately data, not code, so a
+	// new sensor (e.g. a battery/water-tank reading once that hardware
+	// exists) is a config.yaml addition, not a Go change. Defaults cover
+	// every sensor this project ships with; see the default value set in
+	// setDefaults and docs/monitoring.md for the exact shape.
+	Sources []MetricSource `mapstructure:"sources"`
+}
+
+// MetricSource is one row of the metrics dashboard's "what to show, from
+// where, how to parse it" table.
+type MetricSource struct {
+	// Metric is the name samples are stored/queried under (internal/metrics).
+	Metric string `mapstructure:"metric"`
+	// Tool is a registered tool name (internal/tools.Registry) — the exact
+	// same tool the chat agent calls, so a sensor only needs implementing
+	// once.
+	Tool string `mapstructure:"tool"`
+	// Args, if set, are passed to the tool's Execute as-is (same shape as
+	// its InputSchema — e.g. {"include": ["cpu"]} for get_system_info).
+	Args map[string]any `mapstructure:"args"`
+	// Field is a dot-separated path into the tool's map[string]any result,
+	// e.g. "memory.used_percent" for a nested field, or "fridge_c" for a
+	// top-level one.
+	Field string `mapstructure:"field"`
+	// Aggregate is "" (Field must resolve to a single number) or "avg"
+	// (Field must resolve to a []float64, e.g. per-core cpu_percent,
+	// averaged into one sample).
+	Aggregate string `mapstructure:"aggregate"`
+	// LabelRU/LabelEN/Unit are shown in the dashboard's metric picker and
+	// chart headers.
+	LabelRU string `mapstructure:"label_ru"`
+	LabelEN string `mapstructure:"label_en"`
+	Unit    string `mapstructure:"unit"`
 }
 
 // AssistantConfig holds user-facing identity and optional response style.
@@ -351,6 +404,24 @@ func setDefaults(v *viper.Viper) {
 	// not a real answer — filtered out before it ever reaches the LLM.
 	// See docs/memo-search.md.
 	v.SetDefault("memo.min_search_relevance", 0.4)
+
+	// Metrics defaults — see docs/monitoring.md. This default source list
+	// covers every sensor this project ships with today; a deployment
+	// with more hardware (battery, water tank, ...) appends to it in
+	// config.yaml rather than replacing it, unless it explicitly wants to
+	// drop one of these.
+	v.SetDefault("metrics.enabled", true)
+	v.SetDefault("metrics.interval", "30s")
+	v.SetDefault("metrics.retention_days", 30)
+	v.SetDefault("metrics.sources", []map[string]any{
+		{"metric": "cpu_temp_c", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu_temp_c", "label_ru": "Температура CPU", "label_en": "CPU temperature", "unit": "°C"},
+		{"metric": "cpu_percent", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu_percent", "aggregate": "avg", "label_ru": "Загрузка CPU", "label_en": "CPU load", "unit": "%"},
+		{"metric": "mem_used_percent", "tool": "get_system_info", "args": map[string]any{"include": []any{"memory"}}, "field": "memory.used_percent", "label_ru": "Память", "label_en": "Memory", "unit": "%"},
+		{"metric": "disk_used_percent", "tool": "get_system_info", "args": map[string]any{"include": []any{"disk"}}, "field": "disk.used_percent", "label_ru": "Диск", "label_en": "Disk", "unit": "%"},
+		{"metric": "gps_speed_kmh", "tool": "get_gps", "field": "speed_kmh", "label_ru": "Скорость", "label_en": "Speed", "unit": "km/h"},
+		{"metric": "fridge_c", "tool": "get_fridge_temp", "field": "fridge_c", "label_ru": "Холодильник", "label_en": "Fridge", "unit": "°C"},
+		{"metric": "freezer_c", "tool": "get_fridge_temp", "field": "freezer_c", "label_ru": "Морозилка", "label_en": "Freezer", "unit": "°C"},
+	})
 
 	// MCP defaults
 	v.SetDefault("mcp.server_name", "bosun")

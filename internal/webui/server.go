@@ -23,6 +23,7 @@ import (
 
 	"github.com/roman220/ai-local-smarthelper/internal/agent"
 	"github.com/roman220/ai-local-smarthelper/internal/documents"
+	"github.com/roman220/ai-local-smarthelper/internal/metrics"
 	"github.com/roman220/ai-local-smarthelper/internal/settings"
 	"github.com/roman220/ai-local-smarthelper/internal/voice"
 )
@@ -124,6 +125,8 @@ type Server struct {
 	ttsEngine         voice.TTSEngine
 	sttEngine         voice.STTEngine
 	providerOverride  providerOverrideController
+	metricsStore      *metrics.Store
+	metricsLabels     map[string]MetricLabel
 }
 
 // SetDefaultLanguage changes the language used when a chat request doesn't
@@ -326,6 +329,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/stt", s.handleSTT)
 	mux.HandleFunc("POST /api/feedback", s.handleFeedback)
 	mux.HandleFunc("POST /api/provider-override", s.handleProviderOverride)
+	mux.HandleFunc("GET /api/metrics/list", s.handleMetricsList)
+	mux.HandleFunc("GET /api/metrics", s.handleMetricsQuery)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
 	}
@@ -423,6 +428,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		// So the web UI can hide the mic button entirely when there's no
 		// STT engine configured, instead of a dead-end recording flow.
 		"stt_enabled": s.sttEngine != nil,
+		// Same idea for the monitoring dashboard button (docs/monitoring.md).
+		"metrics_enabled": s.metricsStore != nil,
 	}
 	if s.providerOverride != nil {
 		response["provider_override"] = s.providerOverride.ProviderOverride()

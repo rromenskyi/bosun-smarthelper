@@ -21,6 +21,7 @@ import (
 	"github.com/roman220/ai-local-smarthelper/internal/errlog"
 	"github.com/roman220/ai-local-smarthelper/internal/llm"
 	"github.com/roman220/ai-local-smarthelper/internal/mcp"
+	"github.com/roman220/ai-local-smarthelper/internal/metrics"
 	"github.com/roman220/ai-local-smarthelper/internal/settings"
 	"github.com/roman220/ai-local-smarthelper/internal/tools"
 	"github.com/roman220/ai-local-smarthelper/internal/voice"
@@ -186,6 +187,30 @@ func serveCmd() *cobra.Command {
 					BaseURL:  cfg.Voice.STT.BaseURL,
 					Language: cfg.Voice.STT.Language,
 				})
+			}
+
+			if cfg.Metrics.Enabled {
+				metricsStore, err := metrics.Open(cfg.Metrics.StorePath)
+				if err != nil {
+					logger.Warn("could not open metrics store; monitoring dashboard disabled", "error", err)
+				} else {
+					server.SetMetricsStore(metricsStore)
+					labels := make(map[string]webui.MetricLabel, len(cfg.Metrics.Sources))
+					for _, source := range cfg.Metrics.Sources {
+						labels[source.Metric] = webui.MetricLabel{RU: source.LabelRU, EN: source.LabelEN, Unit: source.Unit}
+					}
+					server.SetMetricsLabels(labels)
+					interval, err := time.ParseDuration(cfg.Metrics.Interval)
+					if err != nil || interval <= 0 {
+						interval = 30 * time.Second
+					}
+					retentionDays := cfg.Metrics.RetentionDays
+					if retentionDays <= 0 {
+						retentionDays = 30
+					}
+					collector := metrics.NewCollector(metricsStore, registry, cfg.Metrics.Sources, logger)
+					go collector.Run(cmd.Context(), interval, time.Duration(retentionDays)*24*time.Hour)
+				}
 			}
 
 			if memoTool, ok := registry.Get("memo"); ok {

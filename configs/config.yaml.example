@@ -213,6 +213,45 @@ sensors:
     type: "native"                          # native (uses gopsutil)
     # include: ["cpu", "memory", "disk", "network"]
 
+# Local monitoring dashboard — a personal, bounded-history analog to
+# MRTG/Grafana (internal/metrics, docs/monitoring.md). Samples CPU/memory/
+# disk/GPS/fridge on an interval, stores them in a local SQLite file, and
+# charts them from a button in the web UI.
+metrics:
+  enabled: true
+  interval: "30s"                          # How often to sample
+  retention_days: 30                       # Older samples are pruned automatically
+  # store_path: ""                         # Empty uses metrics.DefaultPath()
+                                            # (~/.local/share/bosun/metrics.db)
+  # "sources" is data, not code — what to sample, from where, and how to
+  # parse it. Defaults to every sensor this project ships with (see
+  # internal/config's setDefaults); uncomment to see/override that list, or
+  # just append a new entry once a new sensor tool exists (e.g. a future
+  # battery/water-tank tool) without touching any Go code:
+  # sources:
+  #   - metric: cpu_temp_c                 # name stored/queried under
+  #     tool: get_system_info              # a registered tool (internal/tools.Registry)
+  #     args: { include: ["cpu"] }         # passed to the tool's Execute as-is
+  #     field: cpu_temp_c                  # dot path into the tool's result, e.g. "memory.used_percent"
+  #     label_ru: "Температура CPU"        # shown in the dashboard's metric picker
+  #     label_en: "CPU temperature"
+  #     unit: "°C"
+  #   - metric: cpu_percent
+  #     tool: get_system_info
+  #     args: { include: ["cpu"] }
+  #     field: cpu_percent
+  #     aggregate: avg                     # field is a []float64 (per-core) — average it into one reading
+  #     label_ru: "Загрузка CPU"
+  #     label_en: "CPU load"
+  #     unit: "%"
+  #   # Once a battery tool exists, adding it here is the entire integration:
+  #   - metric: battery_percent
+  #     tool: get_battery
+  #     field: percent
+  #     label_ru: "Заряд"
+  #     label_en: "Charge"
+  #     unit: "%"
+
 # Logging
 logging:
   level: "info"                             # debug, info, warn, error

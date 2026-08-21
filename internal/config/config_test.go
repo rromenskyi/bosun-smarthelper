@@ -44,4 +44,26 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Sensors.GPS.MockLatitude != 40.7608 || cfg.Sensors.GPS.MockLongitude != -111.8910 {
 		t.Errorf("mock GPS = %v,%v, want Salt Lake City", cfg.Sensors.GPS.MockLatitude, cfg.Sensors.GPS.MockLongitude)
 	}
+	if !cfg.Metrics.Enabled {
+		t.Error("metrics.enabled = false, want true")
+	}
+	if len(cfg.Metrics.Sources) == 0 {
+		t.Fatal("metrics.sources decoded empty — the default source list didn't survive Viper/mapstructure decoding")
+	}
+	var cpuTemp *MetricSource
+	for i, src := range cfg.Metrics.Sources {
+		if src.Metric == "cpu_temp_c" {
+			cpuTemp = &cfg.Metrics.Sources[i]
+		}
+	}
+	if cpuTemp == nil {
+		t.Fatal("metrics.sources has no cpu_temp_c entry")
+	}
+	if cpuTemp.Tool != "get_system_info" || cpuTemp.Field != "cpu_temp_c" || cpuTemp.LabelRU != "Температура CPU" {
+		t.Errorf("cpu_temp_c source = %+v, want tool=get_system_info field=cpu_temp_c label_ru=Температура CPU", cpuTemp)
+	}
+	include, ok := cpuTemp.Args["include"].([]any)
+	if !ok || len(include) != 1 || include[0] != "cpu" {
+		t.Errorf("cpu_temp_c source Args[\"include\"] = %v, want [\"cpu\"]", cpuTemp.Args["include"])
+	}
 }

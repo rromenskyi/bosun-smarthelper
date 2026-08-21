@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -112,6 +113,12 @@ func TestReadNMEAFix_RealCapturedCycle(t *testing.T) {
 	if lat < 40.86 || lat > 40.87 {
 		t.Errorf("latitude = %v, want roughly 40.87", lat)
 	}
+	// This capture is from a stationary receiver (0.022 knots ≈ 0.04
+	// km/h, pure GPS noise) — floored to a clean 0, not reported as real
+	// motion. See gpsStationarySpeedThresholdKMH.
+	if result["speed_kmh"] != 0.0 {
+		t.Errorf("speed_kmh = %v, want 0 (stationary-noise floor)", result["speed_kmh"])
+	}
 }
 
 func TestReadNMEAFix_NoFixYet(t *testing.T) {
@@ -132,5 +139,40 @@ func TestReadNMEAFix_SkipsCorruptedLines(t *testing.T) {
 	}
 	if result["altitude_m"] != 1449.7 {
 		t.Errorf("altitude_m = %v, want 1449.7", result["altitude_m"])
+	}
+}
+
+// nmeaChecksum computes the XOR checksum verifyNMEAChecksum expects, for
+// building synthetic sentences in tests.
+func nmeaChecksum(sentence string) string {
+	star := strings.IndexByte(sentence, '*')
+	if star < 0 {
+		star = len(sentence)
+	}
+	var sum byte
+	for i := 1; i < star; i++ {
+		sum ^= sentence[i]
+	}
+	return strings.ToUpper(strconv.FormatUint(uint64(sum), 16))
+}
+
+func TestReadNMEAFix_RealMotionSurvivesTheStationaryFloor(t *testing.T) {
+	body := "$GPRMC,031517.00,A,4052.13148,N,11152.10040,W,10.0,,190826,,,D"
+	rmc := body + "*" + nmeaChecksum(body) + "\r\n"
+	// The RMC line here is the moving one (10 knots), not
+	// sampleNMEACycle's own stationary one — reusing just its GGA line
+	// (for altitude, to make readNMEAFix stop scanning) rather than the
+	// whole cycle, so the last-seen speed before that stop is the moving
+	// reading, not overwritten by a second, stationary RMC.
+	gga := "$GPGGA,031517.00,4052.13148,N,11152.10040,W,2,12,0.71,1449.7,M,-18.7,M,,0000*5A\r\n"
+	result, err := readNMEAFix(strings.NewReader(rmc+gga), gpsMaxNMEALines)
+	if err != nil {
+		t.Fatalf("readNMEAFix: %v", err)
+	}
+	// 10 knots ~= 18.52 km/h — real motion, must not be floored to 0 the
+	// way the stationary 0.022-knot noise in sampleNMEACycle is.
+	speed, _ := result["speed_kmh"].(float64)
+	if speed < 18 || speed > 19 {
+		t.Errorf("speed_kmh = %v, want ~18.52 (10 knots, real motion, not floored)", speed)
 	}
 }
