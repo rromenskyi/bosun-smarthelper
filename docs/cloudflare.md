@@ -39,37 +39,32 @@ Cloudflare and the tunnel.
   Access/Tunnel config or SSL certificate-pack status — those need a
   broader token or the dashboard itself.
 
-## Known gap — Access is not confirmed configured
+## Access is confirmed configured
 
-**Nothing has verified a Cloudflare Access application/policy exists for
-this hostname.** Without one, the moment Cloudflare's edge certificate for
-`bosunonline.us` finishes issuing, this tunnel exposes bosun — no
-authentication, memos, documents, GPS, everything — to the entire internet,
-not just to us. The DNS-scoped API token can't check or create Access apps
-(confirmed: `GET /accounts/.../access/apps` returns "Authentication error"
-with this token's permissions), so this has to be verified/created by hand
-in the dashboard:
+An unauthenticated request to `https://bosunonline.us/*` gets a `302` to
+`https://roman220.cloudflareaccess.com/cdn-cgi/access/login/bosunonline.us`
+— confirmed live, not just assumed from the dashboard — so a Cloudflare
+Access application/policy is in front of the hostname and bosun itself is
+never reached without passing it first. (The DNS-scoped API token still
+can't read the Access app/policy config itself — `GET
+/accounts/.../access/apps` returns "Authentication error" — so if the
+policy ever needs changing, that's still a dashboard-only edit: Zero Trust
+→ Access → Applications.)
 
-Zero Trust → **Access → Applications → Add an application → Self-hosted**.
-Application domain `bosunonline.us`. Policy → Include → Emails → your
-email → Action Allow. Login method: One-time PIN is the simplest to start.
-
-**Do this before relying on the tunnel for anything** — until it's
-confirmed, treat `https://bosunonline.us` as publicly reachable with no
-gate in front of it.
-
-## TLS status while Universal SSL is issuing
+## TLS issuance took a few tries
 
 A freshly added zone's Cloudflare-edge certificate (SSL/TLS → Edge
 Certificates → Universal, covering `bosunonline.us` and `*.bosunonline.us`)
-can take minutes to ~24h to finish issuing after nameserver activation.
-Until then, `https://bosunonline.us` fails the TLS handshake at Cloudflare's
-edge itself (`SSL alert number 40` / `handshake failure`) — plain
-`http://bosunonline.us` still works and 301-redirects to `https://`, which
-is actually a useful signal: it means DNS, the zone, and the tunnel route
-are all fine, and the only thing pending is edge-cert issuance. No config
-change fixes this faster; it's Cloudflare's own validation, "no action
-required" per their own dashboard copy.
+is normally supposed to finish within minutes of nameserver activation, up
+to ~24h in rare cases. On this zone it didn't move past "Pending
+Validation" on its own; toggling the Universal SSL switch off and back on
+made the certificate disappear entirely ("No certificates" listed) rather
+than restart cleanly, and it took a second off/on cycle before it actually
+came back and issued successfully. If this happens again: don't repeatedly
+toggle — one off/on cycle, then leave it alone; toggling mid-issuance seems
+to be what got it stuck, not what fixed it. `http://bosunonline.us` working
+and 301-redirecting to `https://` the whole time was the useful signal that
+DNS/zone/tunnel were never the problem — only edge-cert issuance was.
 
 ## Operational notes
 
