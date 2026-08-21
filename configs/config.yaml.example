@@ -94,7 +94,9 @@ web:
   # tls_key_file: ""                        # serve HTTPS — e.g. a cert/key pair from mkcert, which a
                                              # phone/laptop can be made to trust with no browser warning
                                              # even though this is a private LAN IP, not a public domain.
-                                             # See docs/tls.md.
+                                             # See docs/tls.md. If you own a real domain, a real
+                                             # Let's Encrypt cert via DNS-01 needs no per-device trust
+                                             # at all — see docs/cloudflare.md instead.
   # ca_cert_file: ""                        # Optional: path to the CA's public cert (mkcert's
                                              # rootCA.pem — never its rootCA-key.pem) so a new device
                                              # can download and trust it at GET /ca.pem, linked from the

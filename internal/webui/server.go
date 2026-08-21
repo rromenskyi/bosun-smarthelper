@@ -344,12 +344,14 @@ func newHTTPServer(address string, handler http.Handler, requestTimeout time.Dur
 }
 
 // Serve listens until ctx is cancelled. When both certFile and keyFile are
-// non-empty it serves HTTPS (e.g. certs from mkcert — see docs/tls.md);
-// otherwise plain HTTP, matching every deployment before TLS support existed.
-// When TLS is enabled and httpFallbackBind is non-empty, it additionally
-// serves plain HTTP (same handler) on that address — for a device that
-// can't be made to trust the TLS cert at all (e.g. a corporate MDM-managed
-// phone that blocks installing custom root certs).
+// non-empty it serves HTTPS — an mkcert-issued cert (docs/tls.md) or a real
+// publicly-trusted one for a domain name (docs/cloudflare.md), Serve itself
+// doesn't care which; otherwise plain HTTP, matching every deployment
+// before TLS support existed. When TLS is enabled and httpFallbackBind is
+// non-empty, it additionally serves plain HTTP (same handler) on that
+// address — for a device that can't be made to trust the TLS cert at all
+// (e.g. a corporate MDM-managed phone that blocks installing custom root
+// certs).
 func (s *Server) Serve(ctx context.Context, address, certFile, keyFile, httpFallbackBind string) error {
 	handler := s.Handler()
 	useTLS := certFile != "" && keyFile != ""

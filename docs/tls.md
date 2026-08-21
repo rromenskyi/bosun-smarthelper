@@ -1,5 +1,20 @@
 # HTTPS via mkcert
 
+**This deployment no longer uses any of this.** Once a real domain
+(`bosunonline.us`) and Cloudflare entered the picture, a real
+publicly-trusted Let's Encrypt certificate became available via DNS-01 —
+see `docs/cloudflare.md` — which needs no per-device CA install at all, on
+top of a real cert, so it replaced mkcert here entirely: no more
+`web.ca_cert_file`, no `/ca.pem` download route, and raw LAN-IP/`.local`
+access was deliberately dropped in favor of always using
+`https://bosunonline.us` (works both locally, via split-horizon DNS, and
+remotely, via the tunnel). Everything below is kept as generic guidance for
+a deployment that has no domain to fall back on — that's still a real,
+supported path through `internal/webui.Server.Serve`/`ValidateBind`, just
+not what this specific host runs anymore.
+
+---
+
 The web UI is a LAN-only appliance bound to a private IP, not a public
 domain — a normal CA (Let's Encrypt etc.) can't issue a cert for that, and a
 plain self-signed one makes every browser show a "not secure" warning
