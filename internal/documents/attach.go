@@ -8,8 +8,9 @@ import (
 
 // AttachSummary reports what AttachOrphanedImages did.
 type AttachSummary struct {
-	Attached  int // image chunks merged into a matching text chunk
-	Unmatched int // image chunks left standalone (no good enough match found)
+	Attached              int // image chunks merged into a matching text chunk
+	Unmatched             int // image chunks left standalone (no good enough match found)
+	EmptyDocumentsRemoved int // documents left with zero chunks (this run or a previous one), deleted
 }
 
 // chunkRef locates one chunk within a Store's documents.
@@ -99,6 +100,19 @@ func (s *Store) AttachOrphanedImages(ctx context.Context, minRelevance float64) 
 		}
 		record.Chunks = kept
 		data.Documents[docID] = record
+	}
+
+	// A document can end up with zero chunks — every one of its images
+	// merged elsewhere, nothing else in it — either from this run or a
+	// previous one (before this pruning existed). An empty document is
+	// pure clutter: it can never contribute a search result, so leaving
+	// the record around (still listed by List()/topics) only misleads
+	// about what's actually searchable.
+	for docID, record := range data.Documents {
+		if len(record.Chunks) == 0 {
+			delete(data.Documents, docID)
+			summary.EmptyDocumentsRemoved++
+		}
 	}
 
 	if err := s.save(data); err != nil {

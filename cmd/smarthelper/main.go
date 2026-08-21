@@ -336,8 +336,8 @@ func attachImagesCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("attach images: %w", err)
 			}
-			fmt.Printf("attached %d image chunks to a matching text chunk, %d left standalone (no match >= %.2f)\n",
-				summary.Attached, summary.Unmatched, minRelevance)
+			fmt.Printf("attached %d image chunks to a matching text chunk, %d left standalone (no match >= %.2f), %d now-empty documents removed\n",
+				summary.Attached, summary.Unmatched, minRelevance, summary.EmptyDocumentsRemoved)
 			return nil
 		},
 	}

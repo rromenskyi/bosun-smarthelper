@@ -74,8 +74,8 @@ func TestAttachOrphanedImagesMergesGoodMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AttachOrphanedImages: %v", err)
 	}
-	if summary.Attached != 1 || summary.Unmatched != 0 {
-		t.Fatalf("summary = %+v, want 1 attached, 0 unmatched", summary)
+	if summary.Attached != 1 || summary.Unmatched != 0 || summary.EmptyDocumentsRemoved != 1 {
+		t.Fatalf("summary = %+v, want 1 attached, 0 unmatched, 1 empty document removed", summary)
 	}
 
 	docs, err := store.load()
@@ -87,18 +87,25 @@ func TestAttachOrphanedImagesMergesGoodMatch(t *testing.T) {
 		t.Errorf("text chunk = %+v, want the image attached to it", textDoc.Chunks)
 	}
 
-	// The diagram document's own chunk must be gone — its only content
-	// (the image) now lives on the text chunk; leaving it in place would
-	// just be the same "junk pile" duplication this mechanism replaces.
+	// The diagram document had only that one chunk, now merged elsewhere
+	// — the empty husk of a document must be gone entirely, not just
+	// emptied, or it's still clutter in List()/topics for something that
+	// can never contribute a search result.
 	for docID, doc := range docs.Documents {
 		if docID == textSummary.ID {
 			continue
+		}
+		if len(doc.Chunks) == 0 {
+			t.Errorf("empty document %q (id %s) should have been removed, not left behind", doc.Title, docID)
 		}
 		for _, chunk := range doc.Chunks {
 			if chunk.ImageURL == "/document-images/wiper.png" {
 				t.Errorf("orphaned image chunk for wiper.png still present in doc %q after merging", doc.Title)
 			}
 		}
+	}
+	if _, stillExists := docs.Documents[textSummary.ID]; !stillExists {
+		t.Fatal("the text document itself was incorrectly removed")
 	}
 }
 
@@ -124,8 +131,8 @@ func TestAttachOrphanedImagesLeavesUnmatchedBelowThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AttachOrphanedImages: %v", err)
 	}
-	if summary.Attached != 0 || summary.Unmatched != 1 {
-		t.Fatalf("summary = %+v, want 0 attached, 1 unmatched", summary)
+	if summary.Attached != 0 || summary.Unmatched != 1 || summary.EmptyDocumentsRemoved != 0 {
+		t.Fatalf("summary = %+v, want 0 attached, 1 unmatched, 0 empty documents removed", summary)
 	}
 
 	docs, err := store.load()
@@ -164,8 +171,8 @@ func TestAttachOrphanedImagesDoesNotDoubleAttachToSameTextChunk(t *testing.T) {
 	}
 	// Only one image chunk can occupy the single available text chunk;
 	// the other must be reported unmatched rather than silently dropped.
-	if summary.Attached != 1 || summary.Unmatched != 1 {
-		t.Fatalf("summary = %+v, want exactly 1 attached and 1 unmatched", summary)
+	if summary.Attached != 1 || summary.Unmatched != 1 || summary.EmptyDocumentsRemoved != 0 {
+		t.Fatalf("summary = %+v, want exactly 1 attached, 1 unmatched, 0 empty documents removed (the diagram doc still has its unmatched chunk)", summary)
 	}
 
 	docs, err := store.load()
@@ -175,5 +182,49 @@ func TestAttachOrphanedImagesDoesNotDoubleAttachToSameTextChunk(t *testing.T) {
 	textDoc := docs.Documents[textSummary.ID]
 	if len(textDoc.Chunks) != 1 || textDoc.Chunks[0].ImageURL == "" {
 		t.Fatalf("text chunk = %+v, want exactly one image attached", textDoc.Chunks)
+	}
+}
+
+// TestAttachOrphanedImagesRemovesAlreadyEmptyDocumentFromEarlierRun is a
+// regression test for a real gap: a document left with zero chunks by an
+// earlier run (before this pruning existed) has nothing left for *this*
+// run to merge, but it's still pure clutter and must be removed too, not
+// just newly-emptied ones.
+func TestAttachOrphanedImagesRemovesAlreadyEmptyDocumentFromEarlierRun(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	ctx := context.Background()
+
+	emptySummary, err := store.AddPages(ctx, "Already Empty (Diagrams)", []PageInput{{Text: "placeholder"}})
+	if err != nil {
+		t.Fatalf("add placeholder doc: %v", err)
+	}
+	// Simulate the leftover state directly — AddPages requires at least
+	// one page, but AttachOrphanedImages from an earlier run could leave
+	// a document with none at all.
+	data, err := store.load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	emptyDoc := data.Documents[emptySummary.ID]
+	emptyDoc.Chunks = nil
+	data.Documents[emptySummary.ID] = emptyDoc
+	if err := store.save(data); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	summary, err := store.AttachOrphanedImages(ctx, 0.7)
+	if err != nil {
+		t.Fatalf("AttachOrphanedImages: %v", err)
+	}
+	if summary.EmptyDocumentsRemoved != 1 {
+		t.Errorf("summary = %+v, want 1 empty document removed", summary)
+	}
+
+	docs, err := store.load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, stillExists := docs.Documents[emptySummary.ID]; stillExists {
+		t.Error("the already-empty document should have been removed")
 	}
 }
