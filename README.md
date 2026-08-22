@@ -176,7 +176,7 @@ authentication is provided, so keep it on a trusted LAN.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `get_weather` | Current conditions and up to 16 forecast days | `location?`, `forecast_days?` (1–16) |
+| `get_weather` | Current conditions and up to 16 forecast days; `latitude`/`longitude` (e.g. from `get_gps`) skip geocoding entirely for "weather where I am" | `location?`, `latitude?`, `longitude?`, `forecast_days?` (1–16) |
 | `get_fridge_temp` | Refrigerator/freezer temperature | `zone?` (`fridge`\|`freezer`) |
 | `get_gps` | Coordinates, speed, altitude | — |
 | `get_system_info` | CPU (incl. temperature), RAM, disk, uptime | `include?` (`cpu`,`memory`,`disk`,`host`) |

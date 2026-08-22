@@ -38,7 +38,7 @@ func (t *WeatherTool) RequiresNetwork() bool {
 }
 
 func (t *WeatherTool) Description() string {
-	return "Get current conditions or a daily forecast for a city, postal code, or named landmark. For mountain weather, use a specific mountain, park, or pass; never substitute a nearby city."
+	return "Get current conditions or a daily forecast for a city, postal code, or named landmark. For mountain weather, use a specific mountain, park, or pass; never substitute a nearby city. For \"what's the weather here/where I am\", call get_gps first and pass its latitude/longitude directly instead of guessing a place name — exact and skips geocoding."
 }
 
 func (t *WeatherTool) InputSchema() map[string]any {
@@ -47,7 +47,19 @@ func (t *WeatherTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"location": map[string]any{
 				"type":        "string",
-				"description": "City, postal code, or specific named landmark with regional context, such as 'Rocky Mountain National Park Colorado' (optional; uses the configured default location when omitted)",
+				"description": "City, postal code, or specific named landmark with regional context, such as 'Rocky Mountain National Park Colorado' (optional; uses the configured default location when omitted). Ignored if latitude/longitude are given.",
+			},
+			"latitude": map[string]any{
+				"type":        "number",
+				"minimum":     -90,
+				"maximum":     90,
+				"description": "Exact latitude, e.g. from get_gps — use together with longitude instead of location when you already know exactly where you are.",
+			},
+			"longitude": map[string]any{
+				"type":        "number",
+				"minimum":     -180,
+				"maximum":     180,
+				"description": "Exact longitude, e.g. from get_gps — must be given together with latitude.",
 			},
 			"forecast_days": map[string]any{
 				"type":        "integer",
@@ -80,14 +92,25 @@ func (t *WeatherTool) Execute(ctx context.Context, args map[string]any) (any, er
 		}, nil
 	}
 	if t.config.Type == "open_meteo" {
-		if location == "" {
-			return nil, fmt.Errorf("weather location is required when default_location is not configured")
-		}
 		forecastDays, err := parseForecastDays(args["forecast_days"])
 		if err != nil {
 			return nil, err
 		}
-		return t.openMeteo(ctx, location, forecastDays)
+		place, hasCoordinates, err := coordinatesFromArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		if hasCoordinates {
+			return t.forecastForPlace(ctx, place, forecastDays)
+		}
+		if location == "" {
+			return nil, fmt.Errorf("weather location is required when default_location is not configured")
+		}
+		place, err = t.resolvePlace(ctx, location)
+		if err != nil {
+			return nil, err
+		}
+		return t.forecastForPlace(ctx, place, forecastDays)
 	}
 
 	// TODO: Implement MQTT, HTTP, 1-Wire backends
@@ -142,10 +165,14 @@ type openMeteoForecastResponse struct {
 	} `json:"daily"`
 }
 
-func (t *WeatherTool) openMeteo(ctx context.Context, location string, forecastDays int) (any, error) {
+// resolvePlace turns a free-text location into coordinates: Open-Meteo's
+// own geocoder first, falling back to Nominatim for named landmarks (parks,
+// passes, mountains) it doesn't cover. Skipped entirely when the caller
+// already has exact coordinates — see coordinatesFromArgs.
+func (t *WeatherTool) resolvePlace(ctx context.Context, location string) (weatherPlace, error) {
 	geocodingURL, err := url.Parse(t.config.GeocodingURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse Open-Meteo geocoding URL: %w", err)
+		return weatherPlace{}, fmt.Errorf("parse Open-Meteo geocoding URL: %w", err)
 	}
 	query := geocodingURL.Query()
 	query.Set("name", location)
@@ -156,23 +183,46 @@ func (t *WeatherTool) openMeteo(ctx context.Context, location string, forecastDa
 
 	var geocoding openMeteoGeocodingResponse
 	if err := t.getJSON(ctx, geocodingURL.String(), &geocoding); err != nil {
-		return nil, fmt.Errorf("geocode weather location %q: %w", location, err)
+		return weatherPlace{}, fmt.Errorf("geocode weather location %q: %w", location, err)
 	}
-	var place weatherPlace
 	if len(geocoding.Results) > 0 {
-		place = geocoding.Results[0]
-	} else {
-		place, err = t.resolveLandmark(ctx, location)
-		if err != nil {
-			return nil, err
-		}
+		return geocoding.Results[0], nil
 	}
+	return t.resolveLandmark(ctx, location)
+}
 
+// coordinatesFromArgs reads latitude/longitude from args, if both are
+// present — the caller (e.g. get_gps's own result) already knows exactly
+// where it is, so geocoding a place name back into coordinates would only
+// add a lossy round trip. Both must be given together; either alone is
+// almost certainly a mistake, not a valid position.
+func coordinatesFromArgs(args map[string]any) (weatherPlace, bool, error) {
+	latitude, hasLatitude := args["latitude"].(float64)
+	longitude, hasLongitude := args["longitude"].(float64)
+	if !hasLatitude && !hasLongitude {
+		return weatherPlace{}, false, nil
+	}
+	if !hasLatitude || !hasLongitude {
+		return weatherPlace{}, false, fmt.Errorf("latitude and longitude must both be given together")
+	}
+	if latitude < -90 || latitude > 90 {
+		return weatherPlace{}, false, fmt.Errorf("latitude %g is out of range", latitude)
+	}
+	if longitude < -180 || longitude > 180 {
+		return weatherPlace{}, false, fmt.Errorf("longitude %g is out of range", longitude)
+	}
+	return weatherPlace{Name: "current position", Latitude: latitude, Longitude: longitude}, true, nil
+}
+
+// forecastForPlace fetches current conditions and (for forecastDays > 1) a
+// daily forecast for an already-resolved place — shared by both the
+// geocoded-location path and the direct-coordinates path.
+func (t *WeatherTool) forecastForPlace(ctx context.Context, place weatherPlace, forecastDays int) (any, error) {
 	forecastURL, err := url.Parse(t.config.ForecastURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse Open-Meteo forecast URL: %w", err)
 	}
-	query = forecastURL.Query()
+	query := forecastURL.Query()
 	query.Set("latitude", fmt.Sprintf("%g", place.Latitude))
 	query.Set("longitude", fmt.Sprintf("%g", place.Longitude))
 	query.Set("current", "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m,uv_index")
@@ -183,7 +233,7 @@ func (t *WeatherTool) openMeteo(ctx context.Context, location string, forecastDa
 
 	var forecast openMeteoForecastResponse
 	if err := t.getJSON(ctx, forecastURL.String(), &forecast); err != nil {
-		return nil, fmt.Errorf("get weather for %q: %w", location, err)
+		return nil, fmt.Errorf("get weather for %q: %w", place.Name, err)
 	}
 
 	result := map[string]any{
