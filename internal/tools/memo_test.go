@@ -583,3 +583,92 @@ func TestMemoToolWriteReusingKnownMetricNameOmitsHint(t *testing.T) {
 		t.Errorf("existing_metric_names = %v, want absent — the name matches an existing one", view["existing_metric_names"])
 	}
 }
+
+func TestMemoToolWriteRejectsDueMetricValueWithoutMetricName(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil",
+		"due_metric_value": 65000.0,
+	}); err == nil {
+		t.Error("expected an error for due_metric_value with no metric_name — there's no counter to compare it against")
+	}
+}
+
+func TestMemoToolWriteAllowsDueMetricValueWhenMetricNameAlreadySet(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil",
+		"metric_name": "odometer_km", "metric_value": 55000.0,
+	}); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	// due_metric_value alone, on a later write to the same key — metric_name
+	// carries over from the existing record, so this must not be rejected.
+	if _, err := tool.Execute(ctx, map[string]any{
+		"action": "write", "key": "oil-change", "content": "Changed the oil, due noted",
+		"due_metric_value": 65000.0,
+	}); err != nil {
+		t.Errorf("write with due_metric_value only should succeed since metric_name was already set: %v", err)
+	}
+}
+
+func TestMemoToolMaintenanceIgnoresMalformedDueMetricValueRecord(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	// write rejects due_metric_value without metric_name, but maintenance
+	// must not surface a bare, unexplained "due" item for one anyway — e.g.
+	// a record written before that check existed, or edited by hand.
+	data := memoFile{Memos: map[string]memoRecord{
+		"malformed": {
+			Key: "malformed", Content: "no metric_name", Status: "active",
+			DueMetricValue: 65000, UpdatedAt: time.Now().Format(time.RFC3339),
+		},
+	}}
+	result, err := tool.maintenance(data, time.Now())
+	if err != nil {
+		t.Fatalf("maintenance: %v", err)
+	}
+	view := result.(map[string]any)
+	if view["count"] != 0 {
+		t.Errorf("count = %v, want 0 — a due_metric_value with no metric_name isn't a real due item", view["count"])
+	}
+}
+
+func TestMemoToolMaintenanceLatestReadingSurvivesUTCOffsetChange(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	// A naive string comparison of UpdatedAt breaks across a UTC offset
+	// change (e.g. a DST transition): "01:30:00-05:00" sorts after
+	// "01:15:00-06:00" lexicographically, even though -06:00 is the later
+	// moment in real time (07:15 UTC vs 06:30 UTC).
+	data := memoFile{Memos: map[string]memoRecord{
+		"oil-change": {
+			Key: "oil-change", Content: "changed the oil", Status: "active",
+			MetricName: "odometer_km", DueMetricValue: 65000,
+			UpdatedAt: "2026-01-01T00:00:00Z",
+		},
+		"reading-earlier-offset": {
+			Key: "reading-earlier-offset", Content: "current odometer", Status: "active",
+			MetricName: "odometer_km", MetricValue: 55000,
+			UpdatedAt: "2026-11-01T01:30:00-05:00", // 06:30 UTC
+		},
+		"reading-later-offset": {
+			Key: "reading-later-offset", Content: "current odometer", Status: "active",
+			MetricName: "odometer_km", MetricValue: 61000,
+			UpdatedAt: "2026-11-01T01:15:00-06:00", // 07:15 UTC — actually later
+		},
+	}}
+
+	result, err := tool.maintenance(data, time.Now())
+	if err != nil {
+		t.Fatalf("maintenance: %v", err)
+	}
+	view := result.(map[string]any)
+	items := view["items"].([]map[string]any)
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want exactly the 1 due-tracked memo", items)
+	}
+	if items[0]["latest_known_metric_value"] != 61000.0 {
+		t.Errorf("latest_known_metric_value = %v, want 61000 (the chronologically later reading, despite its lexicographically smaller UpdatedAt)", items[0]["latest_known_metric_value"])
+	}
+}

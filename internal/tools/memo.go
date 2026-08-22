@@ -96,7 +96,7 @@ func (t *MemoTool) Name() string {
 }
 
 func (t *MemoTool) Description() string {
-	return "Write, read, list, search, topics, maintenance, archive, or delete persistent local memos and uploaded reference documents. Listing exposes timestamps, status, and age_days so old notes can be reviewed. topics lists uploaded documents (title + document_id) with no search needed — check it when unsure whether something is covered, or to find the right document_id to scope a search to it instead of the whole store. Search finds memos and documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question a stored document might answer. A search result may include image_url when the source is a diagram — include it in your answer as a markdown image: ![description](image_url). When writing, add a few short lowercase tags describing the topic (e.g. \"purchases\", \"fuel_system\", \"oil\") — use list or search with tag to reliably find every memo on a topic, not just the closest-sounding ones. For equipment upkeep (odometer, engine-hour meters, etc.): write metric_name/metric_value for a reading or event, plus due_date and/or due_metric_value for when the next one is due — compute due_metric_value yourself from a stated interval (\"changed oil at 55000, next in 10000\" -> metric_value:55000, due_metric_value:65000), don't just restate the interval in content. maintenance reports what's due (it computes overdue itself, don't do date math) and lists known_metrics — reuse an existing name; if write's response includes existing_metric_names, your metric_name didn't match any of them, so re-write immediately with the right one instead of leaving two names for the same equipment."
+	return "Write, read, list, search, topics, maintenance, archive, or delete persistent local memos and uploaded reference documents. Listing exposes timestamps, status, and age_days so old notes can be reviewed. topics lists uploaded documents (title + document_id) with no search needed — check it when unsure whether something is covered, or to find the right document_id to scope a search to it instead of the whole store. Search finds memos and documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question a stored document might answer. A search result may include image_url when the source is a diagram — include it in your answer as a markdown image: ![description](image_url). When writing, add a few short lowercase tags describing the topic (e.g. \"purchases\", \"fuel_system\", \"oil\") — use list or search with tag to reliably find every memo on a topic, not just the closest-sounding ones. For equipment upkeep (odometer, engine-hour meters, etc.): write metric_name/metric_value for a reading or event, plus due_date and/or due_metric_value for when the next one is due — compute due_metric_value yourself from a stated interval (\"changed oil at 55000, next in 10000\" -> metric_value:55000, due_metric_value:65000), don't just restate the interval in content. maintenance reports what's due (it computes overdue itself, don't do date math) and lists known_metrics — reuse an existing name for the same equipment. write's response including existing_metric_names means your metric_name matched none of them: re-write immediately with the matching one if this is really the same equipment under a different spelling, but keep your new name if it's genuinely different equipment (a second vehicle, a different engine) — the hint is a check, not proof something's wrong."
 }
 
 func (t *MemoTool) InputSchema() map[string]any {
@@ -278,6 +278,9 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 		}
 		if rawDueMetricValue, ok := args["due_metric_value"].(float64); ok {
 			record.DueMetricValue = rawDueMetricValue
+		}
+		if record.DueMetricValue != 0 && record.MetricName == "" {
+			return nil, fmt.Errorf("due_metric_value requires metric_name — there's no counter to compare it against")
 		}
 		if t.embed != nil {
 			// Best-effort: a slow or unreachable embeddings server must
@@ -529,7 +532,7 @@ func parseFlexibleDate(raw string) (time.Time, error) {
 func (t *MemoTool) maintenance(data memoFile, now time.Time) (any, error) {
 	latestByMetric := make(map[string]struct {
 		value float64
-		at    string
+		at    time.Time
 	})
 	knownMetrics := make(map[string]bool)
 	for _, record := range data.Memos {
@@ -537,17 +540,26 @@ func (t *MemoTool) maintenance(data memoFile, now time.Time) (any, error) {
 			continue
 		}
 		knownMetrics[record.MetricName] = true
-		if current, ok := latestByMetric[record.MetricName]; !ok || record.UpdatedAt > current.at {
+		updatedAt, err := time.Parse(time.RFC3339, record.UpdatedAt)
+		if err != nil {
+			continue
+		}
+		if current, ok := latestByMetric[record.MetricName]; !ok || updatedAt.After(current.at) {
 			latestByMetric[record.MetricName] = struct {
 				value float64
-				at    string
-			}{record.MetricValue, record.UpdatedAt}
+				at    time.Time
+			}{record.MetricValue, updatedAt}
 		}
 	}
 
 	items := make([]map[string]any, 0)
 	for _, record := range data.Memos {
-		if record.Status == "archived" || (record.DueDate == "" && record.DueMetricValue == 0) {
+		// A due_metric_value with no metric_name is meaningless — no
+		// counter to compare it against — and write rejects that
+		// combination, but guard here too against a record from before
+		// that check existed, or one edited by hand.
+		hasDueMetricValue := record.DueMetricValue != 0 && record.MetricName != ""
+		if record.Status == "archived" || (record.DueDate == "" && !hasDueMetricValue) {
 			continue
 		}
 		item := map[string]any{"key": record.Key, "content": truncateForSearch(record.Content)}

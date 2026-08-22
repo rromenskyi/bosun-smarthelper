@@ -56,8 +56,16 @@ absent otherwise. That's timed to land in the same turn's next tool-call
 round (the agent loop supports more than one round per turn), so the model
 can catch and immediately correct a mismatch it just introduced rather than
 leaving two names live. Reusing a name that already exists (or writing the
-very first one) never triggers it — the hint only appears when there's a
-plausible chance of drift.
+very first one) never triggers it.
+
+The hint fires on *any* name that doesn't match an existing one, including a
+second piece of equipment's first-ever counter (a boat's `generator_hours`
+alongside a car's already-established `odometer_km`) — it can't tell "typo
+for an existing counter" apart from "legitimately new equipment" by itself.
+The tool description reflects that: it tells the model to re-write with the
+matching name only if this really is the same equipment under a different
+spelling, and to keep the new name otherwise. The hint is a nudge to check,
+not a claim that something's wrong.
 
 ## Worked example
 
