@@ -59,8 +59,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cpuTemp == nil {
 		t.Fatal("metrics.sources has no cpu_temp_c entry")
 	}
-	if cpuTemp.Tool != "get_system_info" || cpuTemp.Field != "cpu_temp_c" || cpuTemp.LabelRU != "Температура CPU" {
-		t.Errorf("cpu_temp_c source = %+v, want tool=get_system_info field=cpu_temp_c label_ru=Температура CPU", cpuTemp)
+	if cpuTemp.Tool != "get_system_info" || cpuTemp.Field != "cpu.temp_c" || cpuTemp.LabelRU != "Температура CPU" {
+		t.Errorf("cpu_temp_c source = %+v, want tool=get_system_info field=cpu.temp_c label_ru=Температура CPU", cpuTemp)
 	}
 	include, ok := cpuTemp.Args["include"].([]any)
 	if !ok || len(include) != 1 || include[0] != "cpu" {

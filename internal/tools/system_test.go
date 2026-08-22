@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"context"
 	"testing"
 
+	"github.com/roman220/ai-local-smarthelper/internal/config"
 	"github.com/shirou/gopsutil/v4/sensors"
 )
 
@@ -76,5 +78,43 @@ func TestAverageTemperatureFallsBackWhenNoCoreSensors(t *testing.T) {
 func TestAverageTemperatureNoSensorsReportsNotOK(t *testing.T) {
 	if _, ok := averageTemperature(nil); ok {
 		t.Error("averageTemperature(nil) ok = true, want false")
+	}
+}
+
+// TestSystemToolExecuteShape checks the result's structure, not exact
+// values (real hardware, no mock backend) — cpu is its own nested object
+// like memory/disk, cpu_percent is a plain number rather than a
+// single-element slice, and none of the Go-process internals
+// (go_version, goroutines, boot_time) that used to ride along are still
+// there — see the comments in Execute for why.
+func TestSystemToolExecuteShape(t *testing.T) {
+	tool := NewSystemTool(&config.SystemConfig{})
+	result, err := tool.Execute(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	data := result.(map[string]any)
+
+	for _, dropped := range []string{"go_version", "goroutines", "boot_time", "cpu_percent", "cpu_cores", "cpu_temp_c"} {
+		if _, ok := data[dropped]; ok {
+			t.Errorf("result still has top-level %q, want it gone", dropped)
+		}
+	}
+
+	cpuInfo, ok := data["cpu"].(map[string]any)
+	if !ok {
+		t.Fatalf("result[\"cpu\"] = %#v, want a nested object like memory/disk", data["cpu"])
+	}
+	if v, ok := cpuInfo["used_percent"]; ok {
+		if _, isFloat := v.(float64); !isFloat {
+			t.Errorf("cpu.used_percent = %#v (%T), want a plain float64, not a slice", v, v)
+		}
+	}
+	if _, ok := cpuInfo["cores"]; !ok {
+		t.Error("cpu.cores is missing")
+	}
+
+	if _, ok := data["uptime"]; !ok {
+		t.Error("uptime is missing")
 	}
 }

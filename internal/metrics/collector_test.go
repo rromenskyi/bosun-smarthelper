@@ -49,7 +49,7 @@ func systemTempSource() config.MetricSource {
 		Metric: "cpu_temp_c",
 		Tool:   "get_system_info",
 		Args:   map[string]any{"include": []any{"cpu"}},
-		Field:  "cpu_temp_c",
+		Field:  "cpu.temp_c",
 	}
 }
 
@@ -72,7 +72,7 @@ func TestSampleAllExtractsConfiguredFields(t *testing.T) {
 
 	sources := []config.MetricSource{
 		systemTempSource(),
-		{Metric: "cpu_percent", Tool: "get_system_info", Args: map[string]any{"include": []any{"cpu"}}, Field: "cpu_percent", Aggregate: "avg"},
+		{Metric: "cpu_percent", Tool: "get_system_info", Args: map[string]any{"include": []any{"cpu"}}, Field: "cpu.used_percent"},
 		{Metric: "fridge_c", Tool: "get_fridge_temp", Field: "fridge_c"},
 		{Metric: "freezer_c", Tool: "get_fridge_temp", Field: "freezer_c"},
 	}

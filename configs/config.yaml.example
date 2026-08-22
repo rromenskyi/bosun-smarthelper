@@ -244,15 +244,14 @@ metrics:
   #   - metric: cpu_temp_c                 # name stored/queried under
   #     tool: get_system_info              # a registered tool (internal/tools.Registry)
   #     args: { include: ["cpu"] }         # passed to the tool's Execute as-is
-  #     field: cpu_temp_c                  # dot path into the tool's result, e.g. "memory.used_percent"
+  #     field: cpu.temp_c                  # dot path into the tool's result, e.g. "memory.used_percent"
   #     label_ru: "Температура CPU"        # shown in the dashboard's metric picker
   #     label_en: "CPU temperature"
   #     unit: "°C"
   #   - metric: cpu_percent
   #     tool: get_system_info
   #     args: { include: ["cpu"] }
-  #     field: cpu_percent
-  #     aggregate: avg                     # field is a []float64 (per-core) — average it into one reading
+  #     field: cpu.used_percent
   #     label_ru: "Загрузка CPU"
   #     label_en: "CPU load"
   #     unit: "%"

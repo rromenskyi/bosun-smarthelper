@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"math"
-	"runtime"
 	"strings"
 	"time"
 
@@ -132,23 +131,29 @@ func (t *SystemTool) Execute(ctx context.Context, args map[string]any) (any, err
 			result["platform_version"] = info.PlatformVersion
 			// A human-readable duration, not raw seconds — the LLM was
 			// otherwise doing its own (inconsistent) "96512s ~ a day" math.
+			// The raw epoch boot_time this used to carry alongside it added
+			// nothing actionable on top of that and is dropped.
 			result["uptime"] = (time.Duration(info.Uptime) * time.Second).Round(time.Minute).String()
-			result["boot_time"] = info.BootTime
 		}
 	}
 
 	if include["cpu"] {
+		// percpu=false already collapses to exactly one aggregate reading;
+		// a single-element slice ("cpu_percent": [59]) reads like there
+		// might be more than one, so it's unwrapped to a plain number
+		// instead. Grouped under "cpu" (its own object) the same way
+		// memory/disk already are below, rather than flat top-level
+		// fields — one consistent shape instead of two.
 		percent, _ := cpu.PercentWithContext(ctx, 0, false)
 		counts, _ := cpu.CountsWithContext(ctx, true)
-		rounded := make([]float64, len(percent))
-		for i, p := range percent {
-			rounded[i] = roundPercent(p)
+		cpuInfo := map[string]any{"cores": counts}
+		if len(percent) > 0 {
+			cpuInfo["used_percent"] = roundPercent(percent[0])
 		}
-		result["cpu_percent"] = rounded
-		result["cpu_cores"] = counts
 		if temp, ok := averageCoreTemperature(); ok {
-			result["cpu_temp_c"] = temp
+			cpuInfo["temp_c"] = temp
 		}
+		result["cpu"] = cpuInfo
 	}
 
 	if include["memory"] {
@@ -170,10 +175,6 @@ func (t *SystemTool) Execute(ctx context.Context, args map[string]any) (any, err
 			"used_percent": roundPercent(usage.UsedPercent),
 		}
 	}
-
-	// Add Go runtime info
-	result["go_version"] = runtime.Version()
-	result["goroutines"] = runtime.NumGoroutine()
 
 	return result, nil
 }

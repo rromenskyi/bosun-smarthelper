@@ -40,8 +40,10 @@ for the full shape and defaults. `tool` is a name from the same
 `tools.Registry` the chat agent already uses, so a sensor is implemented
 once and reused for both chat answers and the dashboard; `field` is a
 dot-separated path into that tool's JSON-ish result (e.g.
-`"memory.used_percent"`); `aggregate: avg` handles a field that's a
-`[]float64` (e.g. per-core `cpu_percent`) by averaging it into one number.
+`"memory.used_percent"`, `"cpu.used_percent"`); `aggregate: avg` handles a
+field that's a `[]float64` (a genuinely per-core reading, not currently
+used by any shipped source — `get_system_info`'s own `cpu.used_percent` is
+already a single aggregate number) by averaging it into one.
 
 This means **adding a new sensor to the dashboard once its tool exists is a
 config.yaml edit, not a Go change** — e.g. once a battery or water-tank

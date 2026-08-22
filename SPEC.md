@@ -40,7 +40,7 @@ Exposed over stdio as an MCP server (`smarthelper mcp`):
 | `get_weather` | Current weather and 1–16 day forecast | `{"temperature_c": 22.5, "daily_forecast": [...]}` |
 | `get_fridge_temp` | Fridge/freezer temperature | `{"fridge_c": 4.0, "freezer_c": -18.0}` |
 | `get_gps` | Coordinates, speed, altitude | `{"latitude": 40.7608, "longitude": -111.891, "speed_kmh": 0}` |
-| `get_system_info` | CPU (incl. temperature), RAM, disk, uptime | `{"cpu_percent": [...], "cpu_temp_c": 67, "memory": {...}}` |
+| `get_system_info` | CPU (incl. temperature), RAM, disk, uptime | `{"cpu": {"used_percent": 15, "temp_c": 67}, "memory": {...}}` |
 | `memo` | Dated persistent local notes; `search` finds memos/documents by meaning; `topics` lists uploaded documents without searching; `maintenance` reports due equipment upkeep | `{"key":"shopping","updated_at":"...","age_days":2}` |
 | `web_search` | DuckDuckGo results | `{"query":"...","results":[...]}` |
 | `wikipedia` | Encyclopedia summary | `{"title":"...","extract":"...","url":"..."}` |

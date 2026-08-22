@@ -434,8 +434,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("metrics.interval", "30s")
 	v.SetDefault("metrics.retention_days", 30)
 	v.SetDefault("metrics.sources", []map[string]any{
-		{"metric": "cpu_temp_c", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu_temp_c", "label_ru": "Температура CPU", "label_en": "CPU temperature", "unit": "°C"},
-		{"metric": "cpu_percent", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu_percent", "aggregate": "avg", "label_ru": "Загрузка CPU", "label_en": "CPU load", "unit": "%"},
+		{"metric": "cpu_temp_c", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu.temp_c", "label_ru": "Температура CPU", "label_en": "CPU temperature", "unit": "°C"},
+		{"metric": "cpu_percent", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu.used_percent", "label_ru": "Загрузка CPU", "label_en": "CPU load", "unit": "%"},
 		{"metric": "mem_used_percent", "tool": "get_system_info", "args": map[string]any{"include": []any{"memory"}}, "field": "memory.used_percent", "label_ru": "Память", "label_en": "Memory", "unit": "%"},
 		{"metric": "disk_used_percent", "tool": "get_system_info", "args": map[string]any{"include": []any{"disk"}}, "field": "disk.used_percent", "label_ru": "Диск", "label_en": "Disk", "unit": "%"},
 		{"metric": "gps_speed_kmh", "tool": "get_gps", "field": "speed_kmh", "label_ru": "Скорость", "label_en": "Speed", "unit": "km/h"},
