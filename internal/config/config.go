@@ -24,6 +24,7 @@ type Config struct {
 	Voice     VoiceConfig     `mapstructure:"voice"`
 	Metrics   MetricsConfig   `mapstructure:"metrics"`
 	Backup    BackupConfig    `mapstructure:"backup"`
+	Alerts    AlertsConfig    `mapstructure:"alerts"`
 }
 
 // BackupConfig holds settings for the manual, on-demand `smarthelper
@@ -52,6 +53,70 @@ type BackupS3Config struct {
 	Bucket             string `mapstructure:"bucket"`
 	AccessKeyIDEnv     string `mapstructure:"access_key_id_env"`
 	SecretAccessKeyEnv string `mapstructure:"secret_access_key_env"`
+}
+
+// AlertsConfig is "something is wrong enough a human should hear about it
+// right now" (internal/alerts, docs/alerts.md): NOAA weather alerts for
+// the current position, and any internal/metrics-sampled metric crossing
+// a configured threshold — delivered through whichever channels below are
+// both configured here and enabled on the settings page (which toggle is
+// live, which is fixed at startup mirrors backup.s3/settings.BackupAutoEnabled).
+type AlertsConfig struct {
+	NOAA       AlertsNOAAConfig        `mapstructure:"noaa"`
+	Thresholds []AlertsThresholdConfig `mapstructure:"thresholds"`
+	Channels   AlertsChannelsConfig    `mapstructure:"channels"`
+}
+
+// AlertsNOAAConfig: either a fixed point (Latitude/Longitude), or UseGPS
+// to check whatever position the get_gps tool reports right now on every
+// tick instead — the point that actually matters for a vehicle that
+// moves, unlike a fixed config value that's only ever right by luck.
+// weather.gov has no coverage outside the US; a point outside it just
+// returns no active alerts, not an error.
+type AlertsNOAAConfig struct {
+	Latitude      float64 `mapstructure:"latitude"`
+	Longitude     float64 `mapstructure:"longitude"`
+	UseGPS        bool    `mapstructure:"use_gps"`
+	CheckInterval string  `mapstructure:"check_interval"`
+}
+
+// AlertsThresholdConfig is one configured limit — Metric must be a name
+// internal/metrics.Store already has samples for (see metrics.sources);
+// this has no idea what a metric physically represents, so a future
+// battery-charge or tank-level sensor needs no code change here, only a
+// new metrics.sources entry and a new threshold entry.
+type AlertsThresholdConfig struct {
+	Metric   string  `mapstructure:"metric"`
+	Operator string  `mapstructure:"operator"` // ">", "<", ">=", "<=", "=="
+	Value    float64 `mapstructure:"value"`
+	Title    string  `mapstructure:"title"`
+}
+
+type AlertsChannelsConfig struct {
+	Telegram AlertsTelegramConfig `mapstructure:"telegram"`
+	Webhook  AlertsWebhookConfig  `mapstructure:"webhook"`
+	Speaker  AlertsSpeakerConfig  `mapstructure:"speaker"`
+}
+
+// AlertsTelegramConfig: BotTokenEnv is an env var *name* (.env), the same
+// indirection as llm.remote.api_key_env — never written into config.yaml
+// itself.
+type AlertsTelegramConfig struct {
+	BotTokenEnv string `mapstructure:"bot_token_env"`
+	ChatID      string `mapstructure:"chat_id"`
+}
+
+type AlertsWebhookConfig struct {
+	URL string `mapstructure:"url"`
+}
+
+// AlertsSpeakerConfig: Enabled gates whether this channel is configured
+// at all (the settings page's own toggle then decides whether it's
+// actually used) — needs /dev/snd passed through to the container and
+// aplay installed; see docs/alerts.md.
+type AlertsSpeakerConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`
+	PlayerPath string `mapstructure:"player_path"`
 }
 
 // MetricsConfig holds the local monitoring dashboard's sampling and
@@ -464,6 +529,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("metrics.retention_days", 30)
 	v.SetDefault("backup.s3.access_key_id_env", "BACKUP_S3_ACCESS_KEY_ID")
 	v.SetDefault("backup.s3.secret_access_key_env", "BACKUP_S3_SECRET_ACCESS_KEY")
+
+	v.SetDefault("alerts.noaa.check_interval", "15m")
+	v.SetDefault("alerts.channels.telegram.bot_token_env", "ALERTS_TELEGRAM_BOT_TOKEN")
+	v.SetDefault("alerts.channels.speaker.player_path", "aplay")
 
 	v.SetDefault("metrics.sources", []map[string]any{
 		{"metric": "cpu_temp_c", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu.temp_c", "label_ru": "Температура CPU", "label_en": "CPU temperature", "unit": "°C"},

@@ -61,11 +61,20 @@ services:
       # cgroup rule is just a major:minor pattern with no existence check,
       # so it applies whether or not the GPS is plugged in yet.
       - "c 166:* rmw"
+      # Major 116 is this host's ALSA audio class (`ls -la /dev/snd` —
+      # "116, N") — needed for alerts.channels.speaker's aplay
+      # (internal/alerts/speaker.go, docs/alerts.md) to actually reach
+      # real hardware; the /dev bind mount above already makes the device
+      # nodes themselves visible, this only grants the syscalls on them.
+      - "c 116:* rmw"
     group_add:
       # Matches this host's "dialout" group (GID 20) so the container's
       # non-root bosun user can open /dev/ttyACM0 (owned root:dialout,
       # mode 660) without loosening the device's own permissions.
       - "20"
+      # Matches this host's "audio" group (GID 29) — /dev/snd/* is owned
+      # root:audio, mode 660; see docs/alerts.md.
+      - "29"
 
   # See deploy/llama/Dockerfile for why this is built from source (pinned
   # commit, matching this host's already-verified bare-metal CPU-backend

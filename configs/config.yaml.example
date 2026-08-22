@@ -278,10 +278,10 @@ metrics:
   #     label_en: "Charge"
   #     unit: "%"
 
-# Manual, on-demand backup (`smarthelper backup`) to any S3-compatible
-# bucket — AWS S3, Backblaze B2, MinIO, Wasabi, .... Deliberately no
-# scheduled/automatic variant: it only runs when you type the command, so
-# it never spends bandwidth you didn't ask to spend right now. See
+# Backup (`smarthelper backup`) to any S3-compatible bucket — AWS S3,
+# Backblaze B2, MinIO, Wasabi, .... Manual by default (only runs when you
+# type the command or click "back up now"); the settings page has an
+# opt-in toggle for an automatic interval-based schedule instead. See
 # docs/backup.md.
 # backup:
 #   data_dir: ""                            # Empty uses the same default as memo.path/documents.path.
@@ -294,6 +294,38 @@ metrics:
 #     bucket: "bosun-backups"
 #     access_key_id_env: "BACKUP_S3_ACCESS_KEY_ID"         # set in .env
 #     secret_access_key_env: "BACKUP_S3_SECRET_ACCESS_KEY" # set in .env
+
+# Alerts — "something is wrong enough a human should hear about it right
+# now": NOAA weather alerts for the current position, and any
+# metrics.sources metric crossing a configured threshold. Each channel
+# below only fires once it's also turned on from the settings page (off by
+# default there, same split as backup's auto-schedule). See docs/alerts.md.
+# alerts:
+#   noaa:
+#     use_gps: true                # re-checks the get_gps tool's position on every tick — the
+#                                   # right choice for anything that moves. Set latitude/longitude
+#                                   # instead for a fixed position and leave use_gps out.
+#     # latitude: 42.35
+#     # longitude: -71.05
+#     check_interval: "15m"
+#   thresholds:
+#     - metric: disk_used_percent  # any metrics.sources metric — a future tank-level or
+#       operator: ">"              # battery-charge sensor needs only a new metrics.sources entry
+#       value: 90                  # and a new threshold here, no code change.
+#       title: "Disk space"
+#     # - metric: battery_percent
+#     #   operator: "<"
+#     #   value: 20
+#     #   title: "Battery charge"
+#   channels:
+#     telegram:
+#       bot_token_env: "ALERTS_TELEGRAM_BOT_TOKEN"  # set in .env
+#       chat_id: "123456789"
+#     webhook:
+#       url: "https://example.com/bosun-alerts"
+#     speaker:
+#       enabled: true               # needs /dev/snd passed through to the container and aplay
+#       player_path: "aplay"        # installed — see docs/alerts.md — and voice.tts configured
 
 # Logging
 logging:

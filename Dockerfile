@@ -56,7 +56,10 @@ FROM alpine:edge
 # ffmpeg: converts whatever format the browser's MediaRecorder produced
 # (typically audio/webm;codecs=opus) into the 16kHz mono PCM WAV
 # whisper.cpp expects — see internal/webui/voice.go's convertToWAV.
-RUN apk add --no-cache ca-certificates poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-rus onnxruntime ffmpeg && \
+# alsa-utils: provides aplay, the default alerts.channels.speaker player
+# (internal/alerts/speaker.go) — needs the host's /dev/snd and "audio"
+# group passed through too, see docker-compose.yml and docs/alerts.md.
+RUN apk add --no-cache ca-certificates poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-rus onnxruntime ffmpeg alsa-utils && \
     addgroup -g 1000 bosun && adduser -S -u 1000 -G bosun -h /home/bosun -s /sbin/nologin bosun && \
     mkdir -p /home/bosun/.local/share/bosun && \
     chown -R bosun:bosun /home/bosun

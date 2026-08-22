@@ -84,6 +84,40 @@ func TestStoreQueryBucketsWhenExceedingMaxPoints(t *testing.T) {
 	}
 }
 
+func TestStoreLatestReturnsMostRecentRawSample(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	base := time.Now().Truncate(time.Second)
+	if err := store.Insert(ctx, base, "disk_used_percent", 40); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := store.Insert(ctx, base.Add(time.Minute), "disk_used_percent", 95); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	point, ok, err := store.Latest(ctx, "disk_used_percent")
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if point.Value != 95 {
+		t.Errorf("value = %v, want 95 (the most recent raw sample, not an average)", point.Value)
+	}
+}
+
+func TestStoreLatestUnknownMetricReportsNotOK(t *testing.T) {
+	store := openTestStore(t)
+	_, ok, err := store.Latest(context.Background(), "does_not_exist")
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
+	}
+	if ok {
+		t.Error("ok = true for a metric with no samples, want false")
+	}
+}
+
 func TestStoreQueryUnknownMetricReturnsEmpty(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

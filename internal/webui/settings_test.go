@@ -217,6 +217,47 @@ func TestServerCACertDownload(t *testing.T) {
 	}
 }
 
+func TestServerSettingsGetReportsAlertsConfigured(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetSettingsStore(mustLoadSettings(t))
+	server.SetAlertsConfigured(true, false, true)
+
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	var body struct {
+		Telegram bool `json:"alerts_telegram_configured"`
+		Webhook  bool `json:"alerts_webhook_configured"`
+		Speaker  bool `json:"alerts_speaker_configured"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Telegram || body.Webhook || !body.Speaker {
+		t.Errorf("configured = %+v, want {true, false, true}", body)
+	}
+}
+
+func TestServerSettingsUpdatePersistsAlertsToggles(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetSettingsStore(mustLoadSettings(t))
+
+	payload, _ := json.Marshal(map[string]any{"alerts_telegram_enabled": true, "alerts_speaker_enabled": true})
+	request := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(string(payload)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body settingsResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Settings.AlertsTelegramEnabled || body.Settings.AlertsWebhookEnabled || !body.Settings.AlertsSpeakerEnabled {
+		t.Errorf("settings = %+v, want telegram+speaker enabled, webhook not", body.Settings)
+	}
+}
+
 func mustLoadSettings(t *testing.T) *settings.Store {
 	t.Helper()
 	store, err := settings.Load(filepath.Join(t.TempDir(), "settings.json"), settings.Data{})

@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/roman220/bosun-smarthelper/internal/agent"
+	"github.com/roman220/bosun-smarthelper/internal/alerts"
 	"github.com/roman220/bosun-smarthelper/internal/backup"
 	"github.com/roman220/bosun-smarthelper/internal/config"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
@@ -179,12 +180,14 @@ func serveCmd() *cobra.Command {
 			server.SetTemperatureController(router)
 			server.SetProviderOverrideController(router)
 			server.SetCACertFile(cfg.Web.CACertFile)
+			var ttsEngine voice.TTSEngine
 			if cfg.Voice.TTS.ModelPath != "" {
-				server.SetTTSEngine(&voice.PiperTTS{
+				ttsEngine = &voice.PiperTTS{
 					BinaryPath:     cfg.Voice.TTS.BinaryPath,
 					ModelPath:      cfg.Voice.TTS.ModelPath,
 					EspeakDataPath: cfg.Voice.TTS.EspeakDataPath,
-				})
+				}
+				server.SetTTSEngine(ttsEngine)
 			}
 			if cfg.Voice.STT.BaseURL != "" {
 				server.SetSTTEngine(&voice.WhisperCppSTT{
@@ -214,6 +217,14 @@ func serveCmd() *cobra.Command {
 					}
 					collector := metrics.NewCollector(metricsStore, registry, cfg.Metrics.Sources, logger)
 					go collector.Run(cmd.Context(), interval, time.Duration(retentionDays)*24*time.Hour)
+
+					if len(cfg.Alerts.Thresholds) > 0 {
+						if alertsDataDir, err := resolveDataDir(""); err != nil {
+							logger.Warn("could not resolve data directory; threshold alerts disabled", "error", err)
+						} else {
+							go runThresholdChecker(cmd.Context(), cfg, settingsStore, metricsStore, ttsEngine, alertsDataDir, logger)
+						}
+					}
 				}
 			}
 
@@ -242,6 +253,21 @@ func serveCmd() *cobra.Command {
 			} else {
 				server.SetBackupConfig(&s3cfg, dataDir)
 				go runBackupScheduler(cmd.Context(), server, settingsStore, s3cfg, dataDir, logger)
+			}
+
+			server.SetAlertsConfigured(
+				cfg.Alerts.Channels.Telegram.ChatID != "" && os.Getenv(cfg.Alerts.Channels.Telegram.BotTokenEnv) != "",
+				cfg.Alerts.Channels.Webhook.URL != "",
+				cfg.Alerts.Channels.Speaker.Enabled,
+			)
+
+			noaaCfg := cfg.Alerts.NOAA
+			if noaaCfg.UseGPS || noaaCfg.Latitude != 0 || noaaCfg.Longitude != 0 {
+				if alertsDataDir, err := resolveDataDir(""); err != nil {
+					logger.Warn("could not resolve data directory; NOAA alerts disabled", "error", err)
+				} else {
+					go runNOAAChecker(cmd.Context(), cfg, registry, settingsStore, ttsEngine, alertsDataDir, logger)
+				}
 			}
 
 			scheme := "http"
@@ -654,6 +680,169 @@ func runBackupScheduler(
 				}
 				logger.Info("scheduled backup uploaded", "key", key, "size_bytes", archive.Len())
 			})
+		}
+	}
+}
+
+// activeAlertNotifiers assembles every alert channel that's both
+// configured (config.yaml/.env) and enabled (the settings page's live
+// toggle) — the same "config decides what exists, settings decides what's
+// on" split already used for backup.s3/settings.BackupAutoEnabled.
+// Re-read on every check rather than cached once, so flipping a settings
+// toggle takes effect on the very next tick, not after a restart.
+func activeAlertNotifiers(cfg *config.Config, settingsStore *settings.Store, ttsEngine voice.TTSEngine, logger *slog.Logger) []alerts.Notifier {
+	data := settingsStore.Get()
+	var notifiers []alerts.Notifier
+
+	tg := cfg.Alerts.Channels.Telegram
+	if tg.ChatID != "" && data.AlertsTelegramEnabled {
+		if botToken := os.Getenv(tg.BotTokenEnv); botToken == "" {
+			logger.Warn("telegram alerts enabled but bot token env var is empty", "env", tg.BotTokenEnv)
+		} else {
+			notifiers = append(notifiers, &alerts.TelegramNotifier{BotToken: botToken, ChatID: tg.ChatID})
+		}
+	}
+
+	wh := cfg.Alerts.Channels.Webhook
+	if wh.URL != "" && data.AlertsWebhookEnabled {
+		notifiers = append(notifiers, &alerts.WebhookNotifier{URL: wh.URL})
+	}
+
+	sp := cfg.Alerts.Channels.Speaker
+	if sp.Enabled && data.AlertsSpeakerEnabled {
+		if ttsEngine == nil {
+			logger.Warn("speaker alerts enabled but no TTS engine is configured (voice.tts.model_path)")
+		} else {
+			notifiers = append(notifiers, &alerts.SpeakerNotifier{TTS: ttsEngine, PlayerPath: sp.PlayerPath, Language: data.DefaultLanguage})
+		}
+	}
+
+	return notifiers
+}
+
+// currentPosition resolves the point NOAA alerts should watch: a fixed
+// config.yaml lat/lon, or — with use_gps — whatever the get_gps tool
+// reports right now, the point that actually matters for a vehicle that
+// moves rather than a fixed value that's only ever right by luck.
+func currentPosition(ctx context.Context, registry *tools.Registry, noaaCfg config.AlertsNOAAConfig) (float64, float64, error) {
+	if !noaaCfg.UseGPS {
+		return noaaCfg.Latitude, noaaCfg.Longitude, nil
+	}
+	gpsTool, ok := registry.Get("get_gps")
+	if !ok {
+		return 0, 0, fmt.Errorf("alerts.noaa.use_gps is set but no get_gps tool is registered")
+	}
+	result, err := gpsTool.Execute(ctx, map[string]any{})
+	if err != nil {
+		return 0, 0, fmt.Errorf("read GPS position: %w", err)
+	}
+	data, ok := result.(map[string]any)
+	if !ok {
+		return 0, 0, fmt.Errorf("unexpected get_gps result shape: %T", result)
+	}
+	lat, ok := data["latitude"].(float64)
+	if !ok {
+		return 0, 0, fmt.Errorf("get_gps result missing numeric latitude")
+	}
+	lon, ok := data["longitude"].(float64)
+	if !ok {
+		return 0, 0, fmt.Errorf("get_gps result missing numeric longitude")
+	}
+	return lat, lon, nil
+}
+
+// runThresholdChecker watches config.yaml's alerts.thresholds against
+// internal/metrics' latest samples, notifying only on a state transition
+// (see alerts.ThresholdChecker.Check) — every metric name here is exactly
+// whatever metrics.sources already samples, so a future custom sensor
+// (a tank level, battery charge) needs no change in this function, only a
+// new metrics.sources entry and a new thresholds entry in config.yaml.
+func runThresholdChecker(
+	ctx context.Context,
+	cfg *config.Config,
+	settingsStore *settings.Store,
+	metricsStore *metrics.Store,
+	ttsEngine voice.TTSEngine,
+	dataDir string,
+	logger *slog.Logger,
+) {
+	thresholds := make([]alerts.Threshold, 0, len(cfg.Alerts.Thresholds))
+	for _, t := range cfg.Alerts.Thresholds {
+		thresholds = append(thresholds, alerts.Threshold{Metric: t.Metric, Operator: t.Operator, Value: t.Value, Title: t.Title})
+	}
+
+	state, err := alerts.LoadThresholdState(dataDir)
+	if err != nil {
+		logger.Warn("load threshold alert state; starting fresh", "error", err)
+		state = map[string]bool{}
+	}
+
+	const checkInterval = 30 * time.Second
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			notifiers := activeAlertNotifiers(cfg, settingsStore, ttsEngine, logger)
+			checker := alerts.ThresholdChecker{Store: metricsStore, Thresholds: thresholds, Notifiers: notifiers}
+			next, errs := checker.Check(ctx, state)
+			for _, err := range errs {
+				logger.Warn("threshold alert check", "error", err)
+			}
+			state = next
+			if err := alerts.SaveThresholdState(dataDir, state); err != nil {
+				logger.Warn("save threshold alert state", "error", err)
+			}
+		}
+	}
+}
+
+// runNOAAChecker polls weather.gov for active alerts covering the current
+// position (see currentPosition) and notifies about every one not already
+// seen (alerts.CheckNOAA) — US coverage only; a point outside it just
+// means an empty result every tick, not an error.
+func runNOAAChecker(
+	ctx context.Context,
+	cfg *config.Config,
+	registry *tools.Registry,
+	settingsStore *settings.Store,
+	ttsEngine voice.TTSEngine,
+	dataDir string,
+	logger *slog.Logger,
+) {
+	seen, err := alerts.LoadNOAASeenIDs(dataDir)
+	if err != nil {
+		logger.Warn("load NOAA alert state; starting fresh", "error", err)
+		seen = map[string]bool{}
+	}
+
+	interval, err := time.ParseDuration(cfg.Alerts.NOAA.CheckInterval)
+	if err != nil || interval <= 0 {
+		interval = 15 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			lat, lon, err := currentPosition(ctx, registry, cfg.Alerts.NOAA)
+			if err != nil {
+				logger.Warn("resolve position for NOAA alerts", "error", err)
+				continue
+			}
+			notifiers := activeAlertNotifiers(cfg, settingsStore, ttsEngine, logger)
+			next, errs := alerts.CheckNOAA(ctx, lat, lon, seen, notifiers)
+			for _, err := range errs {
+				logger.Warn("NOAA alert check", "error", err)
+			}
+			seen = next
+			if err := alerts.SaveNOAASeenIDs(dataDir, seen); err != nil {
+				logger.Warn("save NOAA alert state", "error", err)
+			}
 		}
 	}
 }

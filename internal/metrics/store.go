@@ -112,6 +112,24 @@ func (s *Store) Metrics(ctx context.Context) ([]string, error) {
 	return names, rows.Err()
 }
 
+// Latest returns the single most recent raw sample for metric — used by
+// internal/alerts' threshold checker, which needs the actual last reading,
+// not Query's bucket-averaged view (right for charting a range, wrong for
+// "has this one value crossed a line right now"). ok is false if metric
+// has no samples at all yet.
+func (s *Store) Latest(ctx context.Context, metric string) (point Point, ok bool, err error) {
+	row := s.db.QueryRowContext(ctx, `SELECT ts, value FROM samples WHERE metric = ? ORDER BY ts DESC LIMIT 1`, metric)
+	var ts int64
+	if err := row.Scan(&ts, &point.Value); err != nil {
+		if err == sql.ErrNoRows {
+			return Point{}, false, nil
+		}
+		return Point{}, false, fmt.Errorf("query latest sample for %s: %w", metric, err)
+	}
+	point.Time = time.Unix(ts, 0)
+	return point, true, nil
+}
+
 // Query returns up to maxPoints points for metric since the given time,
 // averaging raw samples into evenly-spaced buckets when the raw resolution
 // would exceed maxPoints — a 30-day range at a 30s sample interval is ~86k

@@ -133,6 +133,16 @@ type Server struct {
 	toolRegistry      *tools.Registry
 	backupS3Cfg       *backup.S3Config
 	backupDataDir     string
+	alertsConfigured  alertsConfigured
+}
+
+// alertsConfigured tracks which alert channels config.yaml/.env actually
+// set up, so the settings page only offers a toggle for a channel that
+// would do something if enabled — see SetAlertsConfigured.
+type alertsConfigured struct {
+	Telegram bool
+	Webhook  bool
+	Speaker  bool
 }
 
 // SetDefaultLanguage changes the language used when a chat request doesn't

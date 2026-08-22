@@ -32,6 +32,13 @@ type Data struct {
 	// see webui's "backup_configured" status field.
 	BackupAutoEnabled   bool `json:"backup_auto_enabled,omitempty"`
 	BackupIntervalHours int  `json:"backup_interval_hours,omitempty"`
+	// AlertsXEnabled toggles a channel that's already configured
+	// (config.yaml's alerts.channels.*, docs/alerts.md) — off by default;
+	// meaningless (and hidden by the settings page) for a channel that
+	// isn't configured at all.
+	AlertsTelegramEnabled bool `json:"alerts_telegram_enabled,omitempty"`
+	AlertsWebhookEnabled  bool `json:"alerts_webhook_enabled,omitempty"`
+	AlertsSpeakerEnabled  bool `json:"alerts_speaker_enabled,omitempty"`
 }
 
 func (d *Data) normalize() {

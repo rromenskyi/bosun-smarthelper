@@ -45,6 +45,14 @@ func (s *Server) SetCACertFile(path string) {
 	s.caCertFile = path
 }
 
+// SetAlertsConfigured records which alert channels (docs/alerts.md) are
+// actually set up in config.yaml/.env, so the settings page only shows a
+// toggle for a channel that would do something if enabled. Each flag is
+// independent — e.g. Telegram configured, webhook and speaker not.
+func (s *Server) SetAlertsConfigured(telegram, webhook, speaker bool) {
+	s.alertsConfigured = alertsConfigured{Telegram: telegram, Webhook: webhook, Speaker: speaker}
+}
+
 func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	if s.settingsStore == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
@@ -52,10 +60,13 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	}
 	data := s.settingsStore.Get()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":           true,
-		"settings":          data,
-		"ca_cert_available": s.caCertFile != "",
-		"backup_configured": s.backupS3Cfg != nil,
+		"enabled":                    true,
+		"settings":                   data,
+		"ca_cert_available":          s.caCertFile != "",
+		"backup_configured":          s.backupS3Cfg != nil,
+		"alerts_telegram_configured": s.alertsConfigured.Telegram,
+		"alerts_webhook_configured":  s.alertsConfigured.Webhook,
+		"alerts_speaker_configured":  s.alertsConfigured.Speaker,
 	})
 }
 

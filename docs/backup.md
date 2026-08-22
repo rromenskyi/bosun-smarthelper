@@ -6,17 +6,22 @@ suggestions, the error log, and the monitoring dashboard's metrics) and
 uploads it to any S3-compatible bucket — AWS S3, Backblaze B2, MinIO,
 Wasabi, or anything else that speaks the same API.
 
-## Why manual, not scheduled
+## Manual by default, automatic if you turn it on
 
-There's deliberately no cron/timer variant. A backup means reading and
-uploading everything in the data directory — on a connection that isn't
-always fast or unmetered (a boat/RV on Starlink, say), that's real
-bandwidth you don't want spent automatically on someone else's schedule.
-Run it by hand, when it's actually a good time to:
+A backup means reading and uploading everything in the data directory —
+on a connection that isn't always fast or unmetered (a boat/RV on
+Starlink, say), that's real bandwidth you don't want spent without
+asking. So by default nothing runs on its own; run it by hand, when it's
+actually a good time to:
 
 ```bash
 smarthelper backup
 ```
+
+The settings page (once `backup.s3` is configured below) has an opt-in
+toggle for an interval-based automatic schedule (daily/weekly/monthly)
+instead, checked every 15 minutes and only actually run while the assistant
+is idle — see `docs/settings.md`.
 
 ## Config
 

@@ -61,6 +61,12 @@ top-level tour has room for. Grouped by what you're trying to do.
 - **[settings.md](settings.md)** — the gear-icon dialog for editing
   assistant name/style, default language, LLM temperatures, and the memo
   tag vocabulary live, without touching `config.yaml`.
+- **[alerts.md](alerts.md)** — NOAA weather alerts for the current
+  position and any `config.yaml`-defined metric threshold (disk space,
+  and — once the sensor exists — a battery charge or tank level, no code
+  change needed), delivered via Telegram, a webhook, or spoken through the
+  host's own speaker; each channel is on only once it's both configured
+  and enabled from the settings page.
 
 ## How it behaves, and why
 

@@ -66,7 +66,8 @@ In daily use, not just a prototype. Working today:
 - **Settings page** — the web UI's gear icon lets you edit the assistant's
   name/style prompt, default language, LLM temperatures, the memo tag
   auto-normalization vocabulary, and (once configured) an automatic backup
-  schedule, live, no restart needed — see `docs/settings.md`.
+  schedule and alert channel toggles, live, no restart needed — see
+  `docs/settings.md`.
 - **HTTPS via mkcert** — a LAN IP has no public CA to issue it a cert, so
   the web UI can serve TLS using an mkcert-issued cert/key instead, trusted
   with no browser warning once the CA is installed on a device — see
@@ -88,6 +89,12 @@ In daily use, not just a prototype. Working today:
   analog to MRTG/Grafana; which sensors it samples is a `config.yaml` list,
   not hardcoded, so a future sensor (battery, water tank) is a config edit
   once its tool exists — see `docs/monitoring.md`.
+- **Alerts** — NOAA weather alerts for the current position, and any
+  monitored metric (disk space today; a battery charge or water tank once
+  that sensor exists, no code change needed) crossing a configured
+  threshold, delivered via Telegram, a webhook, and/or spoken through the
+  host's own speaker — each channel is on only once it's both configured
+  and enabled from the settings page — see `docs/alerts.md`.
 
 Not yet built: real fridge sensor hardware, continuous voice conversation
 mode. See `SPEC.md` for the full roadmap, and

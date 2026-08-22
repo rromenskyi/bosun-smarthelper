@@ -12,6 +12,9 @@ restarting the service:
 - automatic backup: on/off and how often (see `docs/backup.md`) — only
   shown once `backup.s3` is configured in `config.yaml`; the manual
   `smarthelper backup`/"back up now" button work regardless
+- alert channels: on/off, one toggle per channel (see `docs/alerts.md`) —
+  a channel only appears once it's configured in `config.yaml`/`.env`; the
+  "Алерты"/"Alerts" tab itself is hidden if no channel is configured at all
 
 ## Why a separate store, not `config.yaml`
 
@@ -46,12 +49,19 @@ Every field applies immediately, without a restart:
   captured once at startup
 - backup schedule → `runBackupScheduler` (`cmd/smarthelper/main.go`) reads
   the current toggle/interval every tick the same way
+- alert channels → `activeAlertNotifiers` (`cmd/smarthelper/main.go`)
+  re-reads which toggles are on every time an alert is about to fire,
+  rather than a value captured once at startup
 
 ## API
 
 - `GET /api/settings` → `{"enabled": false}` if no settings store is
   configured (shouldn't happen in normal operation — `main.go` always
-  wires one up), otherwise `{"enabled": true, "settings": {...}}`.
+  wires one up), otherwise `{"enabled": true, "settings": {...},
+  "backup_configured": bool, "alerts_telegram_configured": bool,
+  "alerts_webhook_configured": bool, "alerts_speaker_configured": bool}` —
+  each `alerts_*_configured` flag is independent, matching whichever
+  channels `config.yaml`/`.env` actually set up.
 - `POST /api/settings` with a JSON body shaped like `Data`
   (`internal/settings/store.go`) **replaces** the stored settings wholesale
   — any field the body omits reverts to its Go zero value, since the
