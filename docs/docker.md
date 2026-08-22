@@ -40,6 +40,15 @@ make docker-up      # = docker compose build && docker compose up -d
 docker compose logs -f
 ```
 
+`docker-compose.yml` pins the Compose project name explicitly
+(`name: bosun-smarthelper`) rather than leaving it to Compose's own
+default — the checkout directory's basename. Without that, renaming or
+relocating the checkout would make a future `docker compose` invocation
+compute a different project name than the one already-running containers
+were created under, so it would fail to recognize them as its own stack
+at all — pinning it keeps `docker compose` working the same regardless of
+what the directory is called or where it lives.
+
 `.env` must set `LLAMA_HF_CACHE` (host path to the Hugging Face cache used
 by `-hf` downloads, e.g. `~/.cache/huggingface`) — see `.env.example`. The
 first `llama-chat`/`llama-embed` build compiles llama.cpp from source and

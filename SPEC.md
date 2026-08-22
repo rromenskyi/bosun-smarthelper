@@ -60,7 +60,7 @@ See `AGENTS.md`.
 ### 4. Project Structure
 
 ```
-ai-local-smarthelper/
+bosun-smarthelper/
 ├── AGENTS.md
 ├── SPEC.md
 ├── README.md

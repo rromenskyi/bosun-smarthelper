@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
-	"github.com/roman220/ai-local-smarthelper/internal/documents"
+	"github.com/roman220/bosun-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/documents"
 )
 
 func TestMemoToolWriteReadArchiveDelete(t *testing.T) {

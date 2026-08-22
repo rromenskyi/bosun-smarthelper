@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/config"
 )
 
 // FridgeTool provides refrigerator temperature data

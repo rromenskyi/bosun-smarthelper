@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/metrics"
+	"github.com/roman220/bosun-smarthelper/internal/metrics"
 )
 
 // MetricLabel is a metric's display info for the dashboard's metric picker

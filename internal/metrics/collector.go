@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
-	"github.com/roman220/ai-local-smarthelper/internal/tools"
+	"github.com/roman220/bosun-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/tools"
 )
 
 // sample is one metric reading taken at collection time.

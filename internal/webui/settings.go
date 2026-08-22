@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/roman220/ai-local-smarthelper/internal/settings"
+	"github.com/roman220/bosun-smarthelper/internal/settings"
 )
 
 // personaSetter matches *agent.Agent's SetPersona — checked via type

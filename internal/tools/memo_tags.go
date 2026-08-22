@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/llm"
+	"github.com/roman220/bosun-smarthelper/internal/llm"
 )
 
 // tagLineRE matches one line of NormalizeTags' expected response format:

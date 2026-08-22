@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/config"
 )
 
 func TestRegistryListIsStable(t *testing.T) {

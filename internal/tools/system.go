@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/config"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/host"

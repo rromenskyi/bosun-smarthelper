@@ -1,4 +1,4 @@
-module github.com/roman220/ai-local-smarthelper
+module github.com/roman220/bosun-smarthelper
 
 go 1.26.0
 

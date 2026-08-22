@@ -21,12 +21,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/roman220/ai-local-smarthelper/internal/agent"
-	"github.com/roman220/ai-local-smarthelper/internal/documents"
-	"github.com/roman220/ai-local-smarthelper/internal/metrics"
-	"github.com/roman220/ai-local-smarthelper/internal/settings"
-	"github.com/roman220/ai-local-smarthelper/internal/tools"
-	"github.com/roman220/ai-local-smarthelper/internal/voice"
+	"github.com/roman220/bosun-smarthelper/internal/agent"
+	"github.com/roman220/bosun-smarthelper/internal/documents"
+	"github.com/roman220/bosun-smarthelper/internal/metrics"
+	"github.com/roman220/bosun-smarthelper/internal/settings"
+	"github.com/roman220/bosun-smarthelper/internal/tools"
+	"github.com/roman220/bosun-smarthelper/internal/voice"
 )
 
 const maxRequestBody = 16 * 1024

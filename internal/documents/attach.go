@@ -3,7 +3,7 @@ package documents
 import (
 	"context"
 
-	"github.com/roman220/ai-local-smarthelper/internal/embeddings"
+	"github.com/roman220/bosun-smarthelper/internal/embeddings"
 )
 
 // AttachSummary reports what AttachOrphanedImages did.

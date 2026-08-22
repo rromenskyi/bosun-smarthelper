@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
-	"github.com/roman220/ai-local-smarthelper/internal/errlog"
-	"github.com/roman220/ai-local-smarthelper/internal/tools"
+	"github.com/roman220/bosun-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/errlog"
+	"github.com/roman220/bosun-smarthelper/internal/tools"
 )
 
 func newTestServer() *Server {

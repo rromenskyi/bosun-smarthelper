@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/roman220/ai-local-smarthelper/internal/errlog"
-	"github.com/roman220/ai-local-smarthelper/internal/llm"
-	"github.com/roman220/ai-local-smarthelper/internal/tools"
+	"github.com/roman220/bosun-smarthelper/internal/errlog"
+	"github.com/roman220/bosun-smarthelper/internal/llm"
+	"github.com/roman220/bosun-smarthelper/internal/tools"
 )
 
 const systemPrompt = `Be concise. Use available tools for live data, sensors, and memos. ` +

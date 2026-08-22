@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 
-	"github.com/roman220/ai-local-smarthelper/internal/llm"
+	"github.com/roman220/bosun-smarthelper/internal/llm"
 )
 
 // MetricMergeSuggestion is a pending (or already-decided) proposal from

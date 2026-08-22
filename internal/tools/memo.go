@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
-	"github.com/roman220/ai-local-smarthelper/internal/documents"
-	"github.com/roman220/ai-local-smarthelper/internal/embeddings"
+	"github.com/roman220/bosun-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/documents"
+	"github.com/roman220/bosun-smarthelper/internal/embeddings"
 )
 
 // MemoTool stores and retrieves dated notes in a local JSON file.

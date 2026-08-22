@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/voice"
+	"github.com/roman220/bosun-smarthelper/internal/voice"
 )
 
 // maxAudioUploadBytes bounds a push-to-talk recording — generous for a

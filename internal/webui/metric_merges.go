@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/roman220/ai-local-smarthelper/internal/tools"
+	"github.com/roman220/bosun-smarthelper/internal/tools"
 )
 
 // SetMemoTool wires in the memo tool so the web UI can surface its

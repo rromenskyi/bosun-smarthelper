@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/metrics"
+	"github.com/roman220/bosun-smarthelper/internal/metrics"
 )
 
 func openTestMetricsStore(t *testing.T) *metrics.Store {

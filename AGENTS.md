@@ -1,4 +1,4 @@
-# Agent Rules for ai-local-smarthelper
+# Agent Rules for bosun-smarthelper
 
 Instructions for any AI agent (or human) working in this repository.
 

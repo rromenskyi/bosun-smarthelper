@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
-	"github.com/roman220/ai-local-smarthelper/internal/embeddings"
+	"github.com/roman220/bosun-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/embeddings"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

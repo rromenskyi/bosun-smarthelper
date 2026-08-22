@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/settings"
+	"github.com/roman220/bosun-smarthelper/internal/settings"
 )
 
 // personaFakeAsker implements both Asker and personaSetter, so

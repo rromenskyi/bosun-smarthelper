@@ -1,3 +1,8 @@
+# Pinned explicitly (not left to Compose's directory-basename default) so
+# renaming the project directory can never make `docker compose` fail to
+# recognize the already-running stack as its own — see docs/docker.md.
+name: bosun-smarthelper
+
 services:
   bosun:
     build: .

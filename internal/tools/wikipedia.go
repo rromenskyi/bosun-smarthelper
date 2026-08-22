@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/config"
 )
 
 var wikipediaLanguagePattern = regexp.MustCompile(`^[a-z][a-z-]{1,11}$`)

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/config"
-	"github.com/roman220/ai-local-smarthelper/internal/llm"
-	"github.com/roman220/ai-local-smarthelper/internal/tools"
+	"github.com/roman220/bosun-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/llm"
+	"github.com/roman220/bosun-smarthelper/internal/tools"
 )
 
 func TestServerMetricMergesEmptyWithoutMemoTool(t *testing.T) {

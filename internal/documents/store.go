@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/embeddings"
+	"github.com/roman220/bosun-smarthelper/internal/embeddings"
 )
 
 // Chunk is one embedded piece of a document. ImageURL is optional — set

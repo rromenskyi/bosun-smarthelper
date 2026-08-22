@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/roman220/ai-local-smarthelper/internal/voice"
+	"github.com/roman220/bosun-smarthelper/internal/voice"
 )
 
 type fakeSTTEngine struct {
