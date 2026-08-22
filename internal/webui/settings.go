@@ -55,6 +55,7 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		"enabled":           true,
 		"settings":          data,
 		"ca_cert_available": s.caCertFile != "",
+		"backup_configured": s.backupS3Cfg != nil,
 	})
 }
 
@@ -102,6 +103,10 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if data.RemoteTemperature < 0 || data.RemoteTemperature > 2 || data.LocalTemperature < 0 || data.LocalTemperature > 2 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "temperatures must be between 0 and 2"})
+		return
+	}
+	if data.BackupAutoEnabled && data.BackupIntervalHours <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup_interval_hours must be positive when backup_auto_enabled is true"})
 		return
 	}
 

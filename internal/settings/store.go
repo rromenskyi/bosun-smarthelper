@@ -25,6 +25,13 @@ type Data struct {
 	RemoteTemperature float64  `json:"remote_temperature"`
 	LocalTemperature  float64  `json:"local_temperature"`
 	CanonicalTags     []string `json:"canonical_tags,omitempty"`
+	// BackupAutoEnabled/BackupIntervalHours turn on the otherwise-manual-only
+	// `smarthelper backup` (docs/backup.md) as a background schedule — off
+	// by default, same as every other opt-in background pass in this
+	// project. Meaningless without backup.s3 configured in config.yaml;
+	// see webui's "backup_configured" status field.
+	BackupAutoEnabled   bool `json:"backup_auto_enabled,omitempty"`
+	BackupIntervalHours int  `json:"backup_interval_hours,omitempty"`
 }
 
 func (d *Data) normalize() {

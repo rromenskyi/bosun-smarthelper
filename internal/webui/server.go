@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/roman220/bosun-smarthelper/internal/agent"
+	"github.com/roman220/bosun-smarthelper/internal/backup"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
@@ -130,6 +131,8 @@ type Server struct {
 	metricsLabels     map[string]MetricLabel
 	memoTool          *tools.MemoTool
 	toolRegistry      *tools.Registry
+	backupS3Cfg       *backup.S3Config
+	backupDataDir     string
 }
 
 // SetDefaultLanguage changes the language used when a chat request doesn't
@@ -337,6 +340,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/metric-merges", s.handleMetricMergesList)
 	mux.HandleFunc("POST /api/metric-merges/{id}/decide", s.handleMetricMergeDecide)
 	mux.HandleFunc("GET /api/quick/{tool}", s.handleQuickTool)
+	mux.HandleFunc("GET /api/backups", s.handleBackupsList)
+	mux.HandleFunc("POST /api/backups", s.handleBackupRun)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
 	}

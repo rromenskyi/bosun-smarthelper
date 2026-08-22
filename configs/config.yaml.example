@@ -284,7 +284,10 @@ metrics:
 # it never spends bandwidth you didn't ask to spend right now. See
 # docs/backup.md.
 # backup:
-#   data_dir: ""                            # Empty uses the same default as memo.path/documents.path
+#   data_dir: ""                            # Empty uses the same default as memo.path/documents.path.
+                                             # Docker: set this to /home/bosun/.local/share/bosun (the
+                                             # container's own path, not ./data/bosun on the host) and run
+                                             # `docker compose exec bosun smarthelper backup` — see docs/backup.md.
 #   s3:
 #     endpoint: "https://s3.us-west-002.backblazeb2.com"  # any S3-compatible endpoint
 #     region: "us-west-002"                 # some providers require a real region; others accept anything non-empty

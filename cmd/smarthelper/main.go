@@ -235,6 +235,15 @@ func serveCmd() *cobra.Command {
 				}
 			}
 
+			if s3cfg, err := resolveBackupS3(cfg); err != nil {
+				logger.Info("backup not configured", "reason", err)
+			} else if dataDir, err := resolveDataDir(cfg.Backup.DataDir); err != nil {
+				logger.Warn("could not resolve backup data directory; backup disabled", "error", err)
+			} else {
+				server.SetBackupConfig(&s3cfg, dataDir)
+				go runBackupScheduler(cmd.Context(), server, settingsStore, s3cfg, dataDir, logger)
+			}
+
 			scheme := "http"
 			if cfg.Web.TLSCertFile != "" && cfg.Web.TLSKeyFile != "" {
 				scheme = "https"
@@ -401,6 +410,13 @@ func backupCmd() *cobra.Command {
 			defer cancel()
 			if err := backup.PutObject(uploadCtx, s3cfg, key, archive.Bytes(), "application/gzip"); err != nil {
 				return fmt.Errorf("upload: %w", err)
+			}
+			// Any successful backup — CLI, web UI "back up now", or the
+			// automatic schedule — resets the schedule's countdown the
+			// same way, so they never fight over when the next automatic
+			// run is actually due.
+			if err := backup.RecordRun(dataDir, time.Now()); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not record backup schedule state: %v\n", err)
 			}
 
 			fmt.Printf("Uploaded %s (%.1f MB) to %s/%s\n", key, float64(archive.Len())/1e6, s3cfg.Bucket, key)
@@ -578,6 +594,65 @@ func runMetricMergeChecker(
 				} else if proposed > 0 {
 					logger.Info("proposed metric merges", "count", proposed)
 				}
+			})
+		}
+	}
+}
+
+// runBackupScheduler runs the same archive+upload logic as `smarthelper
+// backup`/the web UI's "back up now" button, but only when the settings
+// page's auto-backup toggle (internal/settings.Data.BackupAutoEnabled) is
+// on — off by default, same as every other opt-in background pass in
+// this project, and independent of whether backup.s3 is configured at
+// all (checked once at startup by the caller). Ticks every 15 minutes to
+// check whether a run is actually due (internal/backup.DueForRun) rather
+// than sleeping for the full configured interval, so flipping the
+// setting on mid-wait doesn't mean waiting out a stale timer.
+func runBackupScheduler(
+	ctx context.Context,
+	server *webui.Server,
+	settingsStore *settings.Store,
+	s3cfg backup.S3Config,
+	dataDir string,
+	logger *slog.Logger,
+) {
+	const checkInterval = 15 * time.Minute
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			data := settingsStore.Get()
+			if !data.BackupAutoEnabled || data.BackupIntervalHours <= 0 {
+				continue
+			}
+			due, err := backup.DueForRun(dataDir, data.BackupIntervalHours, time.Now())
+			if err != nil {
+				logger.Warn("check backup schedule", "error", err)
+				continue
+			}
+			if !due {
+				continue
+			}
+			server.TryIdleAfter(checkInterval, func() {
+				runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+				defer cancel()
+				var archive bytes.Buffer
+				if err := backup.BuildArchive(&archive, dataDir); err != nil {
+					logger.Error("build scheduled backup archive", "error", err)
+					return
+				}
+				key := fmt.Sprintf("bosun-backup-%s.tar.gz", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
+				if err := backup.PutObject(runCtx, s3cfg, key, archive.Bytes(), "application/gzip"); err != nil {
+					logger.Error("upload scheduled backup", "error", err)
+					return
+				}
+				if err := backup.RecordRun(dataDir, time.Now()); err != nil {
+					logger.Warn("record scheduled backup run", "error", err)
+				}
+				logger.Info("scheduled backup uploaded", "key", key, "size_bytes", archive.Len())
 			})
 		}
 	}

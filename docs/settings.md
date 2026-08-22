@@ -9,6 +9,9 @@ restarting the service:
 - LLM temperature, separately for the remote and local model
 - the canonical tag vocabulary memo tag auto-normalization maps free-form
   memo tags onto (see `docs/memo-search.md`)
+- automatic backup: on/off and how often (see `docs/backup.md`) — only
+  shown once `backup.s3` is configured in `config.yaml`; the manual
+  `smarthelper backup`/"back up now" button work regardless
 
 ## Why a separate store, not `config.yaml`
 
@@ -41,18 +44,31 @@ Every field applies immediately, without a restart:
 - canonical tags → `runTagNormalizer` (`cmd/smarthelper/main.go`) reads the
   current value from the settings store on every tick instead of a value
   captured once at startup
+- backup schedule → `runBackupScheduler` (`cmd/smarthelper/main.go`) reads
+  the current toggle/interval every tick the same way
 
 ## API
 
 - `GET /api/settings` → `{"enabled": false}` if no settings store is
   configured (shouldn't happen in normal operation — `main.go` always
   wires one up), otherwise `{"enabled": true, "settings": {...}}`.
-- `POST /api/settings` with a JSON body of any subset of the `Data` fields
-  (`internal/settings/store.go`) merges into and replaces the stored
-  settings, persists them, applies them live, and returns the saved
-  (normalized: trimmed, tags lowercased) result. Rejects out-of-range
-  temperatures (`0`–`2`) and unknown languages (must be `ru` or `en`) with
-  `400`.
+- `POST /api/settings` with a JSON body shaped like `Data`
+  (`internal/settings/store.go`) **replaces** the stored settings wholesale
+  — any field the body omits reverts to its Go zero value, since the
+  handler decodes straight into a fresh `Data{}` rather than merging onto
+  the existing one. The settings page's own form always resends every
+  field together for exactly this reason; a different API client sending
+  a partial body would zero out the rest. Persists, applies live, and
+  returns the saved (normalized: trimmed, tags lowercased) result. Rejects
+  out-of-range temperatures (`0`–`2`), unknown languages (must be `ru` or
+  `en`), and `backup_auto_enabled: true` with a non-positive
+  `backup_interval_hours`, all with `400`.
+- `GET /api/backups` → `{"configured": false, "backups": []}` if
+  `backup.s3` isn't set in `config.yaml`, otherwise
+  `{"configured": true, "backups": [{"key", "size_bytes", "last_modified"}, ...]}`.
+- `POST /api/backups` → runs one backup immediately (same as
+  `smarthelper backup`) and records it the same way an automatic run
+  would, resetting the schedule's countdown. `501` if unconfigured.
 
 If the settings page's gear icon doesn't appear, the frontend hid it
 because `GET /api/settings` reported `enabled: false` — the same pattern

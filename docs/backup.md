@@ -36,6 +36,25 @@ itself. `backup.data_dir` is optional; empty uses the same default
 directory every store (memos, documents, ...) already falls back to on
 its own.
 
+**Docker deployments**: the running `bosun` container and a bare
+`smarthelper` binary invoked directly on the host see the data directory
+at *different* paths — the container's is `/home/bosun/.local/share/bosun`
+(the bind mount target in `docker-compose.yml`), not the host-side
+`./data/bosun` the bind mount maps it from. Since `config.yaml` is shared
+between both (mounted read-only into the container), set `data_dir` to
+whichever one will actually read this exact file: the container's path if
+the web UI's "back up now" button or the automatic schedule should work
+(the common case), and run the CLI itself the same way, from inside the
+container, so it agrees:
+
+```bash
+docker compose exec bosun smarthelper backup
+docker compose exec bosun smarthelper restore
+```
+
+A bare-metal (non-Docker) install doesn't have this split — leave
+`data_dir` empty and it matches automatically.
+
 Each run uploads one new object, `bosun-backup-<UTC timestamp>.tar.gz` —
 nothing is overwritten or pruned automatically; that's a bucket lifecycle
 policy question for whichever provider you use, not something this
