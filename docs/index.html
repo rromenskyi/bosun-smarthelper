@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bosun — a local-first AI assistant</title>
+<meta name="description" content="Bosun (Старпом) is a local-first AI assistant: offline by default via a local LLM, prefers a remote one when online, sensor tools, voice, memo/document search, exposed over MCP.">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b1512;
+    --panel: rgba(22, 39, 33, .92);
+    --panel-2: #1c312a;
+    --line: rgba(196, 226, 211, .14);
+    --text: #f2f7f4;
+    --muted: #9fb5aa;
+    --accent: #8de0b7;
+    --accent-strong: #b8f1d2;
+    --danger: #ffb4a8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6;
+  }
+  a { color: var(--accent-strong); }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 20px; }
+  header.hero {
+    padding: 72px 0 48px;
+    background:
+      radial-gradient(600px 300px at 20% -10%, rgba(141, 224, 183, .12), transparent),
+      radial-gradient(500px 260px at 90% 0%, rgba(141, 224, 183, .08), transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
+  .mark {
+    width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
+    background: var(--accent); color: #0c2119; font-weight: 900; font-size: 22px; flex: 0 0 auto;
+  }
+  .brand-name { font-weight: 800; font-size: 18px; }
+  .brand-sub { color: var(--muted); font-size: 13px; }
+  h1 { font-size: clamp(32px, 5vw, 46px); line-height: 1.15; margin: 0 0 16px; letter-spacing: -0.01em; }
+  .lede { color: var(--muted); font-size: 18px; max-width: 640px; margin: 0 0 32px; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 999px;
+    font-weight: 700; font-size: 14px; text-decoration: none; border: 1px solid transparent;
+  }
+  .btn.primary { background: var(--accent); color: #0c2119; }
+  .btn.secondary { background: transparent; color: var(--text); border-color: var(--line); }
+  .btn:hover { filter: brightness(1.08); }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--line); font-size: 12px; color: var(--muted); margin-bottom: 20px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  section { padding: 48px 0; border-bottom: 1px solid var(--line); }
+  section:last-of-type { border-bottom: none; }
+  h2 { font-size: 24px; margin: 0 0 8px; }
+  .section-sub { color: var(--muted); margin: 0 0 28px; max-width: 640px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 16px; padding: 20px;
+  }
+  .card .emoji { font-size: 22px; margin-bottom: 10px; display: block; }
+  .card h3 { font-size: 15px; margin: 0 0 8px; }
+  .card p { color: var(--muted); font-size: 13.5px; margin: 0; }
+  .arch {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 16px; padding: 20px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px;
+    color: var(--muted); overflow-x: auto; white-space: pre;
+  }
+  .arch strong { color: var(--accent-strong); }
+  .steps { counter-reset: step; list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+  .steps li {
+    counter-increment: step; position: relative; padding: 14px 16px 14px 52px; border-radius: 14px;
+    background: var(--panel-2); border: 1px solid var(--line); font-size: 14px;
+  }
+  .steps li::before {
+    content: counter(step); position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+    width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #0c2119;
+    font-weight: 800; font-size: 13px; display: grid; place-items: center;
+  }
+  .steps code {
+    background: rgba(8, 18, 14, .5); padding: 2px 6px; border-radius: 6px; font-size: 12.5px;
+  }
+  footer { padding: 32px 0 56px; color: var(--muted); font-size: 13px; }
+  footer a { color: var(--muted); }
+  footer .links { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark">B</div>
+      <div>
+        <div class="brand-name">Bosun <span style="color: var(--muted); font-weight: 500;">· Старпом</span></div>
+        <div class="brand-sub">Local-first AI assistant</div>
+      </div>
+    </div>
+    <div class="status-pill"><span class="dot"></span> In daily use, not a prototype</div>
+    <h1>An assistant that works when the internet doesn't.</h1>
+    <p class="lede">
+      Offline by default with its own local LLM, automatically prefers a
+      remote model when online. Sensor tools, voice in and out, memo and
+      document search, a local monitoring dashboard — all running on
+      hardware you own, reachable over MCP from Claude Desktop or any
+      MCP-compatible client.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/rromenskyi/bosun-smarthelper/blob/main/INSTALL.md">Install it →</a>
+      <a class="btn secondary" href="https://github.com/rromenskyi/bosun-smarthelper">View on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="section-sub">Every one of these is real and running today, not a roadmap item.</p>
+    <div class="grid">
+      <div class="card">
+        <span class="emoji">🌐</span>
+        <h3>Hybrid online/offline</h3>
+        <p>A local model handles everything with no internet at all; a remote one steps in automatically when it's available, and steps back out the moment it fails.</p>
+      </div>
+      <div class="card">
+        <span class="emoji">🛰️</span>
+        <h3>Real sensor tools</h3>
+        <p>Weather (current + up to 16-day forecast, by place or exact coordinates), GPS, system status, fridge temperature — mock backends to start, real hardware when you have it.</p>
+      </div>
+      <div class="card">
+        <span class="emoji">📝</span>
+        <h3>Memos, documents &amp; maintenance tracking</h3>
+        <p>Semantic search over personal notes and uploaded manuals via local embeddings, plus counter/date-based equipment upkeep tracking — an oil change and a boat's engine-hour meter fit the same two fields.</p>
+      </div>
+      <div class="card">
+        <span class="emoji">🎙️</span>
+        <h3>Voice, both directions</h3>
+        <p>Press-and-hold speech input and spoken replies, fully offline via whisper.cpp and Piper — no cloud STT/TTS, no Python in the path.</p>
+      </div>
+      <div class="card">
+        <span class="emoji">📊</span>
+        <h3>Local monitoring dashboard</h3>
+        <p>A bounded-history SQLite time series for CPU, memory, disk, GPS, fridge — a personal, config-driven analog to MRTG/Grafana with zero external dependency.</p>
+      </div>
+      <div class="card">
+        <span class="emoji">🔌</span>
+        <h3>MCP-native</h3>
+        <p>Every tool is exposed over the Model Context Protocol — point Claude Desktop or any MCP client at it and it's immediately usable there too.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>How it's put together</h2>
+    <p class="section-sub">One Go binary, plus two small local model servers <code>docker compose</code> builds and runs for you.</p>
+    <div class="arch">docker compose up
+  ├── <strong>bosun</strong>         the web UI + chat API + every tool (this repo)
+  ├── <strong>llama-chat</strong>    a local LLM (llama.cpp, built from source)
+  ├── <strong>llama-embed</strong>   a small local embeddings model, for memo/document search
+  └── <strong>whisper-stt</strong>   speech-to-text for the 🎤 button</div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Get started</h2>
+    <p class="section-sub">The full, tested walkthrough is in <a href="https://github.com/rromenskyi/bosun-smarthelper/blob/main/INSTALL.md">INSTALL.md</a> — this is the short version.</p>
+    <ol class="steps">
+      <li>Install Docker Engine + the Compose plugin (official <code>docker.com</code> repo).</li>
+      <li>Clone the repo: <code>git clone https://github.com/rromenskyi/bosun-smarthelper.git</code></li>
+      <li>Copy the example configs: <code>cp .env.example .env &amp;&amp; cp configs/config.yaml.example config.yaml</code> — no edits needed for a local-only test drive.</li>
+      <li>Build and run: <code>make docker-up</code></li>
+      <li>Open <code>http://localhost:8080</code></li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/rromenskyi/bosun-smarthelper">GitHub</a>
+      <a href="https://github.com/rromenskyi/bosun-smarthelper/blob/main/INSTALL.md">Install guide</a>
+      <a href="https://github.com/rromenskyi/bosun-smarthelper/tree/main/docs">Documentation</a>
+      <a href="https://github.com/rromenskyi/bosun-smarthelper/blob/main/SPEC.md">Roadmap</a>
+      <a href="https://github.com/rromenskyi/bosun-smarthelper/blob/main/LICENSE">MIT License</a>
+    </div>
+    <div>Bosun (Старпом) — an open-source, local-first AI assistant.</div>
+  </div>
+</footer>
+
+</body>
+</html>
