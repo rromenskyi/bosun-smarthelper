@@ -357,7 +357,7 @@
     </dialog>
 
     <nav class="quick" aria-label="Быстрые запросы">
-      <button class="chip" data-tool="get_weather" data-ru="Какая сейчас погода?" data-en="What is the weather now?" data-label-ru="Погода" data-label-en="Weather">Погода</button>
+      <button class="chip" data-tool="get_weather" data-ru="Какая погода на ближайшие дни по моим текущим координатам?" data-en="What's the weather for the next few days at my current coordinates?" data-label-ru="Погода" data-label-en="Weather">Погода</button>
       <button class="chip" data-tool="get_fridge_temp" data-ru="Какая температура в холодильнике и морозилке?" data-en="What are the fridge and freezer temperatures?" data-label-ru="Холодильник" data-label-en="Fridge">Холодильник</button>
       <button class="chip" data-tool="get_gps" data-ru="Где я сейчас и с какой скоростью двигаюсь?" data-en="Where am I and how fast am I moving?" data-label-ru="GPS" data-label-en="GPS">GPS</button>
       <button class="chip" data-tool="get_system_info" data-ru="Покажи состояние системы." data-en="Show system status." data-label-ru="Система" data-label-en="System">Система</button>
@@ -590,15 +590,24 @@
     }
 
     function startEditingMessage(bubble, originalValue) {
-      const previousHTML = bubble.innerHTML;
-      bubble.innerHTML = '';
+      // Hide (via inline style, not bubble.innerHTML = '') rather than
+      // rebuild the original content/actions nodes: setting innerHTML
+      // re-parses fresh elements, silently dropping every event listener
+      // already attached to them — including the ✏️ button's own, which
+      // made it permanently unclickable after a single cancel.
+      const previousChildren = Array.from(bubble.children);
+      previousChildren.forEach(node => { node.style.display = 'none'; });
 
+      const editContainer = document.createElement('div');
       const textarea = document.createElement('textarea');
       textarea.className = 'edit-textarea';
       textarea.value = originalValue;
       textarea.rows = Math.min(8, Math.max(2, originalValue.split('\n').length));
 
-      const restore = () => { bubble.innerHTML = previousHTML; };
+      const restore = () => {
+        editContainer.remove();
+        previousChildren.forEach(node => { node.style.display = ''; });
+      };
 
       const controls = document.createElement('div');
       controls.className = 'edit-controls';
@@ -621,8 +630,9 @@
         if (event.key === 'Escape') { event.preventDefault(); restore(); }
       });
       controls.append(sendButton, cancelButton);
+      editContainer.append(textarea, controls);
 
-      bubble.append(textarea, controls);
+      bubble.appendChild(editContainer);
       textarea.focus();
       textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
     }
@@ -633,7 +643,10 @@
       row.className = `message ${role} ${extra}`;
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
-      bubble.innerHTML = renderMessageHTML(value);
+      const content = document.createElement('div');
+      content.className = 'message-content';
+      content.innerHTML = renderMessageHTML(value);
+      bubble.appendChild(content);
       if (role === 'assistant' && !extra.includes('thinking') && !extra.includes('error')) {
         addMessageActions(bubble, value, userText, autoSpeak);
       }
