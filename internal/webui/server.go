@@ -129,6 +129,7 @@ type Server struct {
 	metricsStore      *metrics.Store
 	metricsLabels     map[string]MetricLabel
 	memoTool          *tools.MemoTool
+	toolRegistry      *tools.Registry
 }
 
 // SetDefaultLanguage changes the language used when a chat request doesn't
@@ -335,6 +336,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/metrics", s.handleMetricsQuery)
 	mux.HandleFunc("GET /api/metric-merges", s.handleMetricMergesList)
 	mux.HandleFunc("POST /api/metric-merges/{id}/decide", s.handleMetricMergeDecide)
+	mux.HandleFunc("GET /api/quick/{tool}", s.handleQuickTool)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
 	}

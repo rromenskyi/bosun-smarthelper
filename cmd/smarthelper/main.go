@@ -171,6 +171,7 @@ func serveCmd() *cobra.Command {
 				StorePath:   storePath,
 			})
 			server.SetDocumentStore(docStore)
+			server.SetToolRegistry(registry)
 			server.SetSettingsStore(settingsStore)
 			server.SetTemperatureController(router)
 			server.SetProviderOverrideController(router)
