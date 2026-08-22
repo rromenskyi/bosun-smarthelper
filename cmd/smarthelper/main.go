@@ -1,4 +1,4 @@
-// Command smarthelper is the entry point for ai-local-smarthelper.
+// Command smarthelper is the entry point for bosun-smarthelper.
 package main
 
 import (

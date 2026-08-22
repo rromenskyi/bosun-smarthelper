@@ -362,7 +362,7 @@ func (t *WeatherTool) getJSON(ctx context.Context, endpoint string, target any) 
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("User-Agent", "ai-local-smarthelper/1.0")
+	req.Header.Set("User-Agent", "bosun-smarthelper/1.0")
 	resp, err := t.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)

@@ -6,8 +6,8 @@ Wants=network-online.target llama-server.service
 [Service]
 Type=simple
 User=roman220
-WorkingDirectory=/home/roman220/ai-local-smarthelper
-ExecStart=/home/roman220/ai-local-smarthelper/bin/smarthelper serve
+WorkingDirectory=/home/roman220/bosun-smarthelper
+ExecStart=/home/roman220/bosun-smarthelper/bin/smarthelper serve
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
