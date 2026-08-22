@@ -132,6 +132,17 @@
     .message-actions button:disabled { opacity: .5; cursor: wait; }
     .message-actions button.feedback-chosen { opacity: .4; cursor: default; }
     .message-actions button.feedback-chosen:hover { border-color: var(--line); }
+    .edit-textarea {
+      width: 100%; min-width: 220px; resize: vertical; font: inherit; color: var(--text);
+      background: rgba(8, 18, 14, .35); border: 1px solid var(--line); border-radius: 10px;
+      padding: 8px 10px; line-height: 1.5;
+    }
+    .edit-controls { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
+    .edit-controls button {
+      padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line);
+      background: transparent; color: var(--text); font-size: 12px; cursor: pointer;
+    }
+    .edit-controls button.edit-send { border-color: var(--accent); color: var(--accent-strong); }
     .bubble details pre {
       margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere;
       color: var(--muted); font-family: ui-monospace, monospace; font-size: 11px;
@@ -412,8 +423,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть', mergesToggleTitle: 'Слияние счётчиков', mergesTitle: 'Слияние счётчиков', mergesHint: 'Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.', mergesEmpty: 'Пока нечего проверять.', mergesClose: 'Закрыть', mergesApprove: 'Слить', mergesReject: 'Не сливать' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close', mergesToggleTitle: 'Metric merges', mergesTitle: 'Metric merges', mergesHint: 'The bosun noticed similar maintenance counters — confirm if this is really the same counter under two different names.', mergesEmpty: 'Nothing to review right now.', mergesClose: 'Close', mergesApprove: 'Merge', mergesReject: "Don't merge" }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть', mergesToggleTitle: 'Слияние счётчиков', mergesTitle: 'Слияние счётчиков', mergesHint: 'Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.', mergesEmpty: 'Пока нечего проверять.', mergesClose: 'Закрыть', mergesApprove: 'Слить', mergesReject: 'Не сливать', editTitle: 'Изменить', editSend: 'Отправить', editCancel: 'Отмена' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close', mergesToggleTitle: 'Metric merges', mergesTitle: 'Metric merges', mergesHint: 'The bosun noticed similar maintenance counters — confirm if this is really the same counter under two different names.', mergesEmpty: 'Nothing to review right now.', mergesClose: 'Close', mergesApprove: 'Merge', mergesReject: "Don't merge", editTitle: 'Edit', editSend: 'Send', editCancel: 'Cancel' }
     };
 
     function escapeHTML(value) {
@@ -560,6 +571,62 @@
       bubble.appendChild(actions);
     }
 
+    // Editing a sent message doesn't rewrite history (the server-side
+    // session transcript is untouched, same as the 🔄 regenerate button
+    // above) — it reverts the bubble back to its original text and simply
+    // asks the edited one as a new turn, appended below like any other
+    // message. Simple, and consistent with how regenerate already works.
+    function addUserMessageActions(bubble, value) {
+      const actions = document.createElement('div');
+      actions.className = 'message-actions';
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.textContent = '✏️';
+      editButton.title = text[language.value].editTitle;
+      editButton.setAttribute('aria-label', text[language.value].editTitle);
+      editButton.addEventListener('click', () => { if (!busy) startEditingMessage(bubble, value); });
+      actions.appendChild(editButton);
+      bubble.appendChild(actions);
+    }
+
+    function startEditingMessage(bubble, originalValue) {
+      const previousHTML = bubble.innerHTML;
+      bubble.innerHTML = '';
+
+      const textarea = document.createElement('textarea');
+      textarea.className = 'edit-textarea';
+      textarea.value = originalValue;
+      textarea.rows = Math.min(8, Math.max(2, originalValue.split('\n').length));
+
+      const restore = () => { bubble.innerHTML = previousHTML; };
+
+      const controls = document.createElement('div');
+      controls.className = 'edit-controls';
+      const sendButton = document.createElement('button');
+      sendButton.type = 'button';
+      sendButton.className = 'edit-send';
+      sendButton.textContent = text[language.value].editSend;
+      const cancelButton = document.createElement('button');
+      cancelButton.type = 'button';
+      cancelButton.textContent = text[language.value].editCancel;
+      cancelButton.addEventListener('click', restore);
+      const submitEdit = () => {
+        const edited = textarea.value.trim();
+        restore();
+        if (edited) ask(edited);
+      };
+      sendButton.addEventListener('click', submitEdit);
+      textarea.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); submitEdit(); }
+        if (event.key === 'Escape') { event.preventDefault(); restore(); }
+      });
+      controls.append(sendButton, cancelButton);
+
+      bubble.append(textarea, controls);
+      textarea.focus();
+      textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+    }
+
     function addMessage(role, value, extra = '', userText = '', autoSpeak = false) {
       empty.hidden = true;
       const row = document.createElement('div');
@@ -569,6 +636,9 @@
       bubble.innerHTML = renderMessageHTML(value);
       if (role === 'assistant' && !extra.includes('thinking') && !extra.includes('error')) {
         addMessageActions(bubble, value, userText, autoSpeak);
+      }
+      if (role === 'user') {
+        addUserMessageActions(bubble, value);
       }
       row.appendChild(bubble);
       messages.appendChild(row);
