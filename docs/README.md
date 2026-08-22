@@ -8,11 +8,13 @@ top-level tour has room for. Grouped by what you're trying to do.
 - **[../INSTALL.md](../INSTALL.md)** — complete, tested, from-zero install
   walkthrough (fresh Ubuntu → running web UI), Docker-based. Start here if
   you're setting this up for the first time.
-- **[backup.md](backup.md)** — `smarthelper backup`: archives persistent
-  data (memos, documents, sessions, metrics — dumped to SQL, not copied
-  raw) to any S3-compatible bucket. Manual only, no scheduled variant, so
-  it never spends bandwidth uninvited; a hand-rolled SigV4 signer instead
-  of the AWS SDK for one PUT request.
+- **[backup.md](backup.md)** — `smarthelper backup`/`restore`: archives
+  persistent data (memos, documents, sessions, metrics — dumped to SQL,
+  not copied raw) to any S3-compatible bucket, and restores it into a
+  fresh directory. Manual by default (a settings-page toggle can turn on
+  an interval-based schedule instead — off unless you opt in, so nothing
+  spends bandwidth uninvited by default); a hand-rolled SigV4 signer
+  (Put/Get/List) instead of the AWS SDK.
 - **[docker.md](docker.md)** — the actual way this project runs today:
   `bosun` + `llama-chat`/`llama-embed` (built from source) + `whisper-stt`
   under `docker compose`, networking, volumes, one-off commands.

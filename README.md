@@ -64,9 +64,9 @@ In daily use, not just a prototype. Working today:
 - **Online knowledge tools** — DuckDuckGo web search and Wikipedia summaries,
   automatically hidden while offline.
 - **Settings page** — the web UI's gear icon lets you edit the assistant's
-  name/style prompt, default language, LLM temperatures, and the memo tag
-  auto-normalization vocabulary live, no restart needed — see
-  `docs/settings.md`.
+  name/style prompt, default language, LLM temperatures, the memo tag
+  auto-normalization vocabulary, and (once configured) an automatic backup
+  schedule, live, no restart needed — see `docs/settings.md`.
 - **HTTPS via mkcert** — a LAN IP has no public CA to issue it a cert, so
   the web UI can serve TLS using an mkcert-issued cert/key instead, trusted
   with no browser warning once the CA is installed on a device — see
@@ -167,7 +167,8 @@ zero edits for local-only testing.
 ./bin/smarthelper errors
 
 # Archive persistent data and upload it to an S3-compatible bucket —
-# manual only, no scheduled variant (docs/backup.md)
+# manual by default; the settings page can turn on an automatic
+# schedule instead (docs/backup.md)
 ./bin/smarthelper backup
 
 # Download the most recent (or --key <name>) backup and extract it into

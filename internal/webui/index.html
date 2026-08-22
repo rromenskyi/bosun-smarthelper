@@ -212,6 +212,14 @@
     }
     dialog#settings-dialog::backdrop { background: rgba(0, 0, 0, .5); }
     dialog#settings-dialog h2 { margin: 0 0 10px; font-size: 16px; }
+    .settings-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+    .settings-tab {
+      padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
+      background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; font: inherit;
+    }
+    .settings-tab.active { background: var(--accent); color: #10251c; border-color: transparent; font-weight: 700; }
+    .settings-panel { display: flex; flex-direction: column; gap: 6px; }
+    .settings-panel[hidden] { display: none; }
     #settings-form { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
     .settings-label { color: var(--muted); font-size: 12px; margin-top: 8px; }
     #settings-form input[type="text"], #settings-form input[type="number"],
@@ -316,47 +324,55 @@
 
     <dialog id="settings-dialog">
       <h2 id="settings-title">Настройки</h2>
+      <div class="settings-tabs" id="settings-tabs" role="tablist">
+        <button type="button" class="settings-tab active" data-tab="general" id="settings-tab-general">Общие</button>
+        <button type="button" class="settings-tab" data-tab="backup" id="settings-tab-backup">Бэкап</button>
+      </div>
       <form id="settings-form">
-        <label class="settings-label" id="settings-label-name-ru">Имя (русский)</label>
-        <input type="text" id="settings-name-ru">
-        <label class="settings-label" id="settings-label-name-en">Имя (английский)</label>
-        <input type="text" id="settings-name-en">
-        <label class="settings-label" id="settings-label-prompt">Системный промпт</label>
-        <textarea id="settings-style-prompt" rows="3"></textarea>
-        <label class="settings-label" id="settings-label-language">Язык по умолчанию</label>
-        <select id="settings-default-language"><option value="ru">Русский</option><option value="en">English</option></select>
-        <label class="settings-label" id="settings-label-remote-temp">Температура (удалённая модель)</label>
-        <input type="number" id="settings-remote-temp" min="0" max="2" step="0.05">
-        <label class="settings-label" id="settings-label-local-temp">Температура (локальная модель)</label>
-        <input type="number" id="settings-local-temp" min="0" max="2" step="0.05">
-        <label class="settings-label" id="settings-label-tags">Теги для автонормализации памяти (через запятую)</label>
-        <input type="text" id="settings-canonical-tags" placeholder="purchases, fuel_system, oil">
-        <p class="docs-hint" id="settings-tags-hint">Пусто — автонормализация тегов выключена.</p>
-        <label class="settings-label" id="settings-label-backup-auto">Резервное копирование</label>
-        <label class="settings-checkbox">
-          <input type="checkbox" id="settings-backup-auto">
-          <span id="settings-backup-auto-label">Автоматически, по расписанию</span>
-        </label>
-        <select id="settings-backup-interval">
-          <option value="24" id="settings-backup-interval-daily">Каждый день</option>
-          <option value="168" id="settings-backup-interval-weekly">Раз в неделю</option>
-          <option value="720" id="settings-backup-interval-monthly">Раз в месяц</option>
-        </select>
+        <div class="settings-panel" data-panel="general">
+          <label class="settings-label" id="settings-label-name-ru">Имя (русский)</label>
+          <input type="text" id="settings-name-ru">
+          <label class="settings-label" id="settings-label-name-en">Имя (английский)</label>
+          <input type="text" id="settings-name-en">
+          <label class="settings-label" id="settings-label-prompt">Системный промпт</label>
+          <textarea id="settings-style-prompt" rows="3"></textarea>
+          <label class="settings-label" id="settings-label-language">Язык по умолчанию</label>
+          <select id="settings-default-language"><option value="ru">Русский</option><option value="en">English</option></select>
+          <label class="settings-label" id="settings-label-remote-temp">Температура (удалённая модель)</label>
+          <input type="number" id="settings-remote-temp" min="0" max="2" step="0.05">
+          <label class="settings-label" id="settings-label-local-temp">Температура (локальная модель)</label>
+          <input type="number" id="settings-local-temp" min="0" max="2" step="0.05">
+          <label class="settings-label" id="settings-label-tags">Теги для автонормализации памяти (через запятую)</label>
+          <input type="text" id="settings-canonical-tags" placeholder="purchases, fuel_system, oil">
+          <p class="docs-hint" id="settings-tags-hint">Пусто — автонормализация тегов выключена.</p>
+          <p class="docs-hint" id="settings-ca-cert-hint" hidden>
+            <a href="/ca.pem" id="settings-ca-cert-link" download="bosun-ca.pem">Скачать сертификат для HTTPS</a>
+          </p>
+        </div>
+        <div class="settings-panel" data-panel="backup" hidden>
+          <label class="settings-label" id="settings-label-backup-auto">Автоматическое копирование</label>
+          <label class="settings-checkbox">
+            <input type="checkbox" id="settings-backup-auto">
+            <span id="settings-backup-auto-label">Автоматически, по расписанию</span>
+          </label>
+          <select id="settings-backup-interval">
+            <option value="24" id="settings-backup-interval-daily">Каждый день</option>
+            <option value="168" id="settings-backup-interval-weekly">Раз в неделю</option>
+            <option value="720" id="settings-backup-interval-monthly">Раз в месяц</option>
+          </select>
+          <p class="docs-hint" id="settings-backup-unconfigured-hint" hidden>Резервное копирование не настроено — задайте backup.s3 в config.yaml.</p>
+          <div id="settings-backup-panel" hidden>
+            <div class="settings-backup-header">
+              <span class="settings-label" id="settings-label-backup-list">Бэкапы</span>
+              <button type="button" class="clear" id="settings-backup-run">Сделать бэкап сейчас</button>
+            </div>
+            <p class="docs-hint" id="settings-backup-empty" hidden>Бэкапов ещё нет.</p>
+            <ul class="docs-list" id="settings-backup-list"></ul>
+          </div>
+        </div>
         <button type="submit" id="settings-save-button">Сохранить</button>
         <p class="docs-hint" id="settings-saved-hint" hidden>Сохранено.</p>
       </form>
-      <p class="docs-hint" id="settings-ca-cert-hint" hidden>
-        <a href="/ca.pem" id="settings-ca-cert-link" download="bosun-ca.pem">Скачать сертификат для HTTPS</a>
-      </p>
-      <div id="settings-backup-panel" hidden>
-        <div class="settings-backup-header">
-          <span class="settings-label" id="settings-label-backup-list">Бэкапы</span>
-          <button type="button" class="clear" id="settings-backup-run">Сделать бэкап сейчас</button>
-        </div>
-        <p class="docs-hint" id="settings-backup-empty" hidden>Бэкапов ещё нет.</p>
-        <ul class="docs-list" id="settings-backup-list"></ul>
-      </div>
-      <p class="docs-hint" id="settings-backup-unconfigured-hint" hidden>Резервное копирование не настроено — задайте backup.s3 в config.yaml.</p>
       <button type="button" class="clear" id="settings-close">Закрыть</button>
     </dialog>
 
@@ -449,8 +465,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть', mergesToggleTitle: 'Слияние счётчиков', mergesTitle: 'Слияние счётчиков', mergesHint: 'Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.', mergesEmpty: 'Пока нечего проверять.', mergesClose: 'Закрыть', mergesApprove: 'Слить', mergesReject: 'Не сливать', editTitle: 'Изменить', editSend: 'Отправить', editCancel: 'Отмена', quickToolWaiting: 'Читаю датчик…', settingsLabelBackupAuto: 'Резервное копирование', settingsBackupAutoLabel: 'Автоматически, по расписанию', settingsBackupIntervalDaily: 'Каждый день', settingsBackupIntervalWeekly: 'Раз в неделю', settingsBackupIntervalMonthly: 'Раз в месяц', settingsLabelBackupList: 'Бэкапы', settingsBackupRun: 'Сделать бэкап сейчас', settingsBackupEmpty: 'Бэкапов ещё нет.', settingsBackupUnconfigured: 'Резервное копирование не настроено — задайте backup.s3 в config.yaml.' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close', mergesToggleTitle: 'Metric merges', mergesTitle: 'Metric merges', mergesHint: 'The bosun noticed similar maintenance counters — confirm if this is really the same counter under two different names.', mergesEmpty: 'Nothing to review right now.', mergesClose: 'Close', mergesApprove: 'Merge', mergesReject: "Don't merge", editTitle: 'Edit', editSend: 'Send', editCancel: 'Cancel', quickToolWaiting: 'Reading sensor…', settingsLabelBackupAuto: 'Backup', settingsBackupAutoLabel: 'Automatic, on a schedule', settingsBackupIntervalDaily: 'Every day', settingsBackupIntervalWeekly: 'Once a week', settingsBackupIntervalMonthly: 'Once a month', settingsLabelBackupList: 'Backups', settingsBackupRun: 'Back up now', settingsBackupEmpty: 'No backups yet.', settingsBackupUnconfigured: 'Backup is not configured — set backup.s3 in config.yaml.' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть', mergesToggleTitle: 'Слияние счётчиков', mergesTitle: 'Слияние счётчиков', mergesHint: 'Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.', mergesEmpty: 'Пока нечего проверять.', mergesClose: 'Закрыть', mergesApprove: 'Слить', mergesReject: 'Не сливать', editTitle: 'Изменить', editSend: 'Отправить', editCancel: 'Отмена', quickToolWaiting: 'Читаю датчик…', settingsLabelBackupAuto: 'Резервное копирование', settingsBackupAutoLabel: 'Автоматически, по расписанию', settingsBackupIntervalDaily: 'Каждый день', settingsBackupIntervalWeekly: 'Раз в неделю', settingsBackupIntervalMonthly: 'Раз в месяц', settingsLabelBackupList: 'Бэкапы', settingsBackupRun: 'Сделать бэкап сейчас', settingsBackupEmpty: 'Бэкапов ещё нет.', settingsBackupUnconfigured: 'Резервное копирование не настроено — задайте backup.s3 в config.yaml.', settingsTabGeneral: 'Общие', settingsTabBackup: 'Бэкап' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close', mergesToggleTitle: 'Metric merges', mergesTitle: 'Metric merges', mergesHint: 'The bosun noticed similar maintenance counters — confirm if this is really the same counter under two different names.', mergesEmpty: 'Nothing to review right now.', mergesClose: 'Close', mergesApprove: 'Merge', mergesReject: "Don't merge", editTitle: 'Edit', editSend: 'Send', editCancel: 'Cancel', quickToolWaiting: 'Reading sensor…', settingsLabelBackupAuto: 'Backup', settingsBackupAutoLabel: 'Automatic, on a schedule', settingsBackupIntervalDaily: 'Every day', settingsBackupIntervalWeekly: 'Once a week', settingsBackupIntervalMonthly: 'Once a month', settingsLabelBackupList: 'Backups', settingsBackupRun: 'Back up now', settingsBackupEmpty: 'No backups yet.', settingsBackupUnconfigured: 'Backup is not configured — set backup.s3 in config.yaml.', settingsTabGeneral: 'General', settingsTabBackup: 'Backup' }
     };
 
     function escapeHTML(value) {
@@ -915,6 +931,8 @@
       document.querySelector('#settings-backup-run').textContent = text[locale].settingsBackupRun;
       document.querySelector('#settings-backup-empty').textContent = text[locale].settingsBackupEmpty;
       document.querySelector('#settings-backup-unconfigured-hint').textContent = text[locale].settingsBackupUnconfigured;
+      document.querySelector('#settings-tab-general').textContent = text[locale].settingsTabGeneral;
+      document.querySelector('#settings-tab-backup').textContent = text[locale].settingsTabBackup;
       mic.title = text[locale].micTitle;
       mic.setAttribute('aria-label', text[locale].micTitle);
       metricsToggle.title = text[locale].metricsToggleTitle;
@@ -1231,6 +1249,15 @@
       } finally {
         button.disabled = false;
       }
+    });
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        document.querySelectorAll('.settings-panel').forEach(panel => {
+          panel.hidden = panel.dataset.panel !== tab.dataset.tab;
+        });
+      });
     });
     settingsToggle.addEventListener('click', () => { loadSettings(); settingsDialog.showModal(); });
     document.querySelector('#settings-close').addEventListener('click', () => settingsDialog.close());
