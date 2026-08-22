@@ -170,6 +170,10 @@ zero edits for local-only testing.
 # manual only, no scheduled variant (docs/backup.md)
 ./bin/smarthelper backup
 
+# Download the most recent (or --key <name>) backup and extract it into
+# a fresh directory, ready to review before you copy it into place
+./bin/smarthelper restore
+
 # Print version
 ./bin/smarthelper version
 ```

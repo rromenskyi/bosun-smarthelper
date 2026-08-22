@@ -42,7 +42,7 @@ func main() {
 		Use:   "smarthelper",
 		Short: "Bosun (Starpom), a local-first assistant with hybrid LLM routing and MCP tools",
 	}
-	root.AddCommand(versionCmd(), mcpCmd(), chatCmd(), serveCmd(), errorsCmd(), documentsCmd(), backupCmd())
+	root.AddCommand(versionCmd(), mcpCmd(), chatCmd(), serveCmd(), errorsCmd(), documentsCmd(), backupCmd(), restoreCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
@@ -337,6 +337,42 @@ func documentsCmd() *cobra.Command {
 // is deliberately no scheduled/automatic variant: this only ever runs
 // when a human types it, so it never spends bandwidth uninvited — see
 // docs/backup.md.
+// resolveBackupS3 turns config.yaml's backup.s3 section plus the env vars
+// it names into a ready-to-use backup.S3Config, shared by backupCmd and
+// restoreCmd so the same validation/error messages apply to both.
+func resolveBackupS3(cfg *config.Config) (backup.S3Config, error) {
+	s3cfg := cfg.Backup.S3
+	if s3cfg.Endpoint == "" || s3cfg.Bucket == "" {
+		return backup.S3Config{}, fmt.Errorf("backup.s3.endpoint and backup.s3.bucket must be set in config.yaml")
+	}
+	accessKeyID := os.Getenv(s3cfg.AccessKeyIDEnv)
+	secretAccessKey := os.Getenv(s3cfg.SecretAccessKeyEnv)
+	if accessKeyID == "" || secretAccessKey == "" {
+		return backup.S3Config{}, fmt.Errorf("%s and %s must be set (in .env)", s3cfg.AccessKeyIDEnv, s3cfg.SecretAccessKeyEnv)
+	}
+	return backup.S3Config{
+		Endpoint:        s3cfg.Endpoint,
+		Region:          s3cfg.Region,
+		Bucket:          s3cfg.Bucket,
+		AccessKeyID:     accessKeyID,
+		SecretAccessKey: secretAccessKey,
+	}, nil
+}
+
+// resolveDataDir mirrors every store's own default (see e.g.
+// tools.NewMemoTool) so backup/restore agree with the running service on
+// where its data actually lives unless backup.data_dir overrides it.
+func resolveDataDir(configuredDir string) (string, error) {
+	if configuredDir != "" {
+		return configuredDir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return filepath.Join(home, ".local", "share", "bosun"), nil
+}
+
 func backupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
@@ -346,23 +382,13 @@ func backupCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
-			s3cfg := cfg.Backup.S3
-			if s3cfg.Endpoint == "" || s3cfg.Bucket == "" {
-				return fmt.Errorf("backup.s3.endpoint and backup.s3.bucket must be set in config.yaml")
+			s3cfg, err := resolveBackupS3(cfg)
+			if err != nil {
+				return err
 			}
-			accessKeyID := os.Getenv(s3cfg.AccessKeyIDEnv)
-			secretAccessKey := os.Getenv(s3cfg.SecretAccessKeyEnv)
-			if accessKeyID == "" || secretAccessKey == "" {
-				return fmt.Errorf("%s and %s must be set (in .env)", s3cfg.AccessKeyIDEnv, s3cfg.SecretAccessKeyEnv)
-			}
-
-			dataDir := cfg.Backup.DataDir
-			if dataDir == "" {
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return fmt.Errorf("resolve home directory: %w", err)
-				}
-				dataDir = filepath.Join(home, ".local", "share", "bosun")
+			dataDir, err := resolveDataDir(cfg.Backup.DataDir)
+			if err != nil {
+				return err
 			}
 
 			var archive bytes.Buffer
@@ -373,13 +399,7 @@ func backupCmd() *cobra.Command {
 			key := fmt.Sprintf("bosun-backup-%s.tar.gz", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
 			uploadCtx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
 			defer cancel()
-			if err := backup.PutObject(uploadCtx, backup.S3Config{
-				Endpoint:        s3cfg.Endpoint,
-				Region:          s3cfg.Region,
-				Bucket:          s3cfg.Bucket,
-				AccessKeyID:     accessKeyID,
-				SecretAccessKey: secretAccessKey,
-			}, key, archive.Bytes(), "application/gzip"); err != nil {
+			if err := backup.PutObject(uploadCtx, s3cfg, key, archive.Bytes(), "application/gzip"); err != nil {
 				return fmt.Errorf("upload: %w", err)
 			}
 
@@ -387,6 +407,71 @@ func backupCmd() *cobra.Command {
 			return nil
 		},
 	}
+	return cmd
+}
+
+// restoreCmd downloads a backup (the most recent one by default) and
+// extracts it into --to, which defaults to a fresh, clearly-named
+// directory rather than the live data directory — an in-place restore
+// over real data is something to opt into explicitly (--to
+// ~/.local/share/bosun or wherever backup.data_dir points), not something
+// this command risks doing by accident.
+func restoreCmd() *cobra.Command {
+	var key, to string
+	cmd := &cobra.Command{
+		Use:   "restore",
+		Short: "Download a backup from the S3-compatible bucket and extract it",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			s3cfg, err := resolveBackupS3(cfg)
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
+			defer cancel()
+
+			if key == "" {
+				objects, err := backup.ListObjects(ctx, s3cfg, "bosun-backup-")
+				if err != nil {
+					return fmt.Errorf("list backups: %w", err)
+				}
+				if len(objects) == 0 {
+					return fmt.Errorf("no backups found in %s", s3cfg.Bucket)
+				}
+				latest := objects[0]
+				for _, o := range objects[1:] {
+					if o.LastModified.After(latest.LastModified) {
+						latest = o
+					}
+				}
+				key = latest.Key
+				fmt.Printf("No --key given; using the most recent backup: %s (%s)\n", key, latest.LastModified.Format(time.RFC3339))
+			}
+
+			if to == "" {
+				to = fmt.Sprintf("./bosun-restore-%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
+			}
+
+			body, err := backup.GetObject(ctx, s3cfg, key)
+			if err != nil {
+				return fmt.Errorf("download %s: %w", key, err)
+			}
+			if err := backup.ExtractArchive(bytes.NewReader(body), to); err != nil {
+				return fmt.Errorf("extract archive: %w", err)
+			}
+
+			fmt.Printf("Restored %s into %s\n", key, to)
+			fmt.Println("Review it, then move/copy its contents into your real data directory")
+			fmt.Println("(config.yaml's backup.data_dir, or ~/.local/share/bosun by default) when ready.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&key, "key", "", "Backup object key to restore (default: the most recent one)")
+	cmd.Flags().StringVar(&to, "to", "", "Directory to extract into (default: a new ./bosun-restore-<timestamp> directory)")
 	return cmd
 }
 

@@ -43,23 +43,28 @@ command manages.
 
 ## No AWS SDK
 
-Uploading is a single PUT request, signed with AWS Signature Version 4
-(`internal/backup/s3.go`) by hand — no SDK dependency. The SDK is built to
-cover the entire S3 API surface (multipart uploads, pagination, dozens of
-services sharing the same signing code); this project needs exactly one
-operation on one already-fully-buffered payload, and SigV4 for that case
-is a short, self-contained, well-documented algorithm — pulling in a
-dependency tree many times the size of the feature it would serve wasn't
-worth it for what's ultimately a `hmac.New(sha256.New, ...)` chain.
+Every S3 operation this needs — `PutObject`, `GetObject`, `ListObjects`
+(all of `internal/backup/s3.go`) — is signed with AWS Signature Version 4
+by hand, no SDK dependency. The SDK is built to cover the entire S3 API
+surface (multipart uploads, pagination, dozens of services sharing the
+same signing code, STS/SSO for cross-account auth); this project needs
+three operations on already-fully-buffered payloads or plain query
+strings, and SigV4 for that case is a short, self-contained,
+well-documented algorithm — pulling in a dependency tree many times the
+size of the feature it would serve wasn't worth it for what's ultimately
+one shared `hmac.New(sha256.New, ...)` chain reused across all three.
 
 Verified against a real server, not just checked against a remembered
-reference signature: a local MinIO container, `PutObject` against it, and
-`mc cat` confirming the uploaded object's bytes matched exactly.
-`internal/backup/s3_test.go`'s own tests use `httptest` instead (no Docker
-dependency for `go test ./...` itself) to check the same request shape —
-method, path-style URL, `Authorization` header format, payload hash — a
-real server isn't needed to catch a regression in how the request is
-built, only to have first confirmed the algorithm itself is correct.
+reference signature: a local MinIO container for `PutObject`+`mc cat`
+(confirming the uploaded object's bytes matched exactly) during
+development, and every operation — `backup`, `restore`, `ListObjects`,
+`GetObject` — additionally confirmed live against a real Backblaze B2
+bucket. `internal/backup/s3_test.go`'s own tests use `httptest` instead
+(no network dependency for `go test ./...` itself) to check the same
+request shapes — method, path-style URL, query-string signing for the
+list call, `Authorization` header format, payload hash — a real server
+isn't needed to catch a regression in how a request is built, only to
+have first confirmed the algorithm itself is correct.
 
 ## Why metrics.db becomes metrics.sql
 
@@ -77,9 +82,30 @@ ever grows.
 ## Restoring
 
 ```bash
-tar xzf bosun-backup-2026-01-01T00-00-00Z.tar.gz -C /path/to/restore
-sqlite3 /path/to/restore/metrics.db < /path/to/restore/metrics.sql
+smarthelper restore
 ```
 
-(`metrics.sql` itself isn't picked up by `internal/metrics.Store` — replay
-it into a fresh `metrics.db` first, as above.)
+With no flags: lists the bucket, picks the most recently modified backup,
+downloads it, and extracts it into a fresh `./bosun-restore-<timestamp>`
+directory — never the live data directory, so a restore can never
+accidentally clobber real data. `metrics.sql` (if present) is
+automatically replayed into a fresh `metrics.db` in that same directory
+and then removed, so the restored directory is laid out exactly like a
+normal live data directory, ready to use, with no separate manual SQL step.
+
+```bash
+smarthelper restore --key bosun-backup-2026-01-01T00-00-00Z.tar.gz  # a specific backup instead of the latest
+smarthelper restore --to /path/to/restore                           # extract somewhere specific
+```
+
+Review the restored directory, then move or copy its contents into the
+real data directory (`config.yaml`'s `backup.data_dir`, or
+`~/.local/share/bosun` by default) once you're satisfied — `restore`
+itself deliberately stops short of that last step rather than guessing
+you want it to overwrite anything.
+
+Verified live end-to-end against a real Backblaze B2 bucket: `backup`
+uploaded the production data directory, `restore` downloaded and
+extracted it, and the result was diffed against the original —
+`memos.json`'s memo count, `documents.json`'s exact byte size, and the
+metrics row count all matched.
