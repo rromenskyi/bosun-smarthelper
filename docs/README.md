@@ -5,6 +5,9 @@ top-level tour has room for. Grouped by what you're trying to do.
 
 ## Deploying and running it
 
+- **[../INSTALL.md](../INSTALL.md)** — complete, tested, from-zero install
+  walkthrough (fresh Ubuntu → running web UI), Docker-based. Start here if
+  you're setting this up for the first time.
 - **[docker.md](docker.md)** — the actual way this project runs today:
   `bosun` + `llama-chat`/`llama-embed` (built from source) + `whisper-stt`
   under `docker compose`, networking, volumes, one-off commands.

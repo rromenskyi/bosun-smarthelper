@@ -6,6 +6,12 @@ and automatically prefers a remote LLM (OpenAI-compatible) when the internet
 is available. Exposes sensor data through MCP (Model Context Protocol) so any
 MCP-compatible client (Claude Desktop, custom agents, etc.) can query it.
 
+**New here?** [INSTALL.md](INSTALL.md) is a complete, tested, from-zero
+walkthrough (fresh Ubuntu → running web UI) using Docker — the fastest
+path to a working assistant with no manual model setup. The Quick Start
+below is the bare-metal/MCP-client path instead, for an existing Go +
+Ollama setup.
+
 ## Status
 
 In daily use, not just a prototype. Working today:

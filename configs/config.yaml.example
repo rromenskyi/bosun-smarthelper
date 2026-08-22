@@ -21,21 +21,34 @@ llm:
     max_retries: 5                         # Retry network, 429, and 5xx failures
     retry_backoff: 500ms                   # Exponential delay between attempts
 
-  # Local LLM (Ollama)
+  # Local LLM. These defaults match the llama-chat service docker-compose.yml
+  # already builds and runs for you (deploy/llama/Dockerfile, port 1234,
+  # OpenAI-compatible) — the Docker path (docs/docker.md) needs zero edits
+  # here to get a fully working, fully offline local model. See INSTALL.md.
   local:
-    base_url: "http://localhost:11434"      # Ollama API endpoint
-    model: "llama3.1:8b"                    # Model name (must be pulled)
-    api_format: "ollama"                     # ollama, or openai for LM Studio
-    # api_key_env: "LOCAL_LLM_API_KEY"       # Optional; used by openai format
-    supports_tools: true                     # false enables prompt-based fallback
+    base_url: "http://localhost:1234/v1"
+    model: "default"                        # Matches llama-chat's --alias default
+    api_format: "openai"                    # ollama, or openai for llama.cpp/LM Studio
+    api_key_env: "LOCAL_LLM_API_KEY"        # Set in .env; llama-chat rejects requests without it
+    # mradermacher/gemma-4-E2B-it-GGUF (docker-compose.yml's bundled model)
+    # doesn't emit tool calls in the Qwen-style XML this app parses
+    # natively — supports_tools: false switches to a model-agnostic
+    # prompted-JSON fallback instead. Set true if you swap in a model
+    # whose native tool-calling this app's parser understands.
+    supports_tools: false
     temperature: 0.55                      # Lower than remote: a weak local model is already
                                             # shakier on tool-call format; less randomness helps
-    # stream: false                          # Default true. Some llama.cpp builds/models corrupt
-                                              # multi-byte UTF-8 (e.g. Cyrillic) specifically in
-                                              # streaming mode; set false as an escape hatch if a
-                                              # local server exhibits this. See docs/streaming.md.
-    # timeout: 300s                         # Weak hardware may need several minutes; at ~6 tok/s
-                                             # a single long tool-using answer can take that long
+    stream: false                          # This model/build corrupts multi-byte UTF-8 (e.g.
+                                            # Cyrillic) specifically in streaming mode, confirmed
+                                            # absent in buffered mode — see docs/streaming.md.
+                                            # Try true first if you swap in a different model.
+    timeout: 300s                         # Weak hardware may need several minutes; at ~3-6 tok/s
+                                           # a single long tool-using answer can take that long
+    # Not using the bundled llama-chat? Point base_url/model/api_format at
+    # Ollama instead, e.g.:
+    #   base_url: "http://localhost:11434"
+    #   model: "llama3.1:8b"                # must already be pulled: ollama pull llama3.1:8b
+    #   api_format: "ollama"
 
   # Router settings
   router:
@@ -47,11 +60,13 @@ llm:
   # OpenAI-compatible /embeddings endpoint for memo/document semantic
   # search (see docs/memo-search.md). Empty base_url (the default) disables
   # the feature: memos and documents still save fine, search just falls
-  # back to plain substring matching.
-  # embeddings:
-  #   base_url: "http://localhost:1235/v1"  # e.g. a llama-server started with --embeddings
-  #   model: "embed"
-  #   timeout: 10s
+  # back to plain substring matching. Matches the bundled llama-embed
+  # service (port 1235) — comment out if you're not using Docker and have
+  # no embeddings server of your own.
+  embeddings:
+    base_url: "http://localhost:1235/v1"
+    model: "embed"
+    timeout: 10s
 
 # MCP Server Configuration
 mcp:
