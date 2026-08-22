@@ -251,7 +251,14 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 		if len([]rune(content)) > 10000 {
 			return nil, fmt.Errorf("memo content must not exceed 10000 characters")
 		}
-		now := time.Now().Format(time.RFC3339)
+		// Nanosecond precision, not just RFC3339's default whole seconds —
+		// maintenance()'s "latest reading for this metric_name" picks
+		// between records by comparing UpdatedAt; two writes landing in
+		// the same second (trivially possible in a fast test, and not
+		// impossible for two quick real writes either) would otherwise
+		// tie, leaving the choice to Go's randomized map iteration order
+		// instead of which one actually happened later.
+		now := time.Now().Format(time.RFC3339Nano)
 		record, exists := data.Memos[key]
 		if !exists {
 			record = memoRecord{Key: key, CreatedAt: now}
@@ -333,7 +340,14 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 		if !ok {
 			return nil, fmt.Errorf("memo %q was not found", key)
 		}
-		now := time.Now().Format(time.RFC3339)
+		// Nanosecond precision, not just RFC3339's default whole seconds —
+		// maintenance()'s "latest reading for this metric_name" picks
+		// between records by comparing UpdatedAt; two writes landing in
+		// the same second (trivially possible in a fast test, and not
+		// impossible for two quick real writes either) would otherwise
+		// tie, leaving the choice to Go's randomized map iteration order
+		// instead of which one actually happened later.
+		now := time.Now().Format(time.RFC3339Nano)
 		record.Status = "archived"
 		record.ArchivedAt = now
 		record.UpdatedAt = now

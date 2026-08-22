@@ -50,6 +50,13 @@ func (t *MemoTool) NormalizeTags(ctx context.Context, client chatClient, canonic
 		if len(record.Tags) == 0 {
 			continue
 		}
+		// A plain string comparison, so both timestamps must share the
+		// same precision — UpdatedAt is RFC3339Nano (see memo.go), so
+		// TagsNormalizedAt is stamped the same way below; whole-second
+		// RFC3339 sorts before an otherwise-identical-second RFC3339Nano
+		// string (".123..." > "-06:00"'s leading "-"), which would make
+		// an up-to-date memo look perpetually stale and get re-normalized
+		// forever.
 		if record.TagsNormalizedAt != "" && record.TagsNormalizedAt >= record.UpdatedAt {
 			continue
 		}
@@ -113,7 +120,7 @@ func (t *MemoTool) NormalizeTags(ctx context.Context, client chatClient, canonic
 	if err != nil {
 		return 0, err
 	}
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now().Format(time.RFC3339Nano)
 	updated := 0
 	for index, tags := range updates {
 		key := candidates[index].key
