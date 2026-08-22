@@ -142,6 +142,12 @@ memo:
                                              # merging an image onto the wrong chunk across two
                                              # unrelated documents isn't safe at the same bar as
                                              # min_search_relevance. See docs/memo-search.md.
+  # metric_merge_check_interval: 24h        # How often the background pass looks for equipment-upkeep
+                                             # counters that might be the same physical counter under two
+                                             # different names (see maintenance's known_metrics). Only ever
+                                             # proposes a merge for a human to approve/reject in the web
+                                             # UI — nothing renames automatically. See
+                                             # docs/maintenance-tracking.md.
 
 # Uploaded reference documents (manuals, how-tos) for semantic search —
 # uploaded only via the web UI, never an LLM-callable action. Empty path

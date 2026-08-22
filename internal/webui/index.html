@@ -69,13 +69,18 @@
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
     .status.override .dot { background: #f5c563; box-shadow: 0 0 12px #f5c563; }
     .bell {
-      width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto;
+      width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto; position: relative;
       border: 1px solid var(--line); background: var(--panel); cursor: pointer;
       font-size: 18px; display: grid; place-items: center; transform-origin: 50% 15%;
     }
     .bell:hover { border-color: rgba(141, 224, 183, .45); }
     .bell:active { transform: scale(.92); }
     .bell.ringing { animation: bell-ring .5s ease-in-out; }
+    .badge {
+      position: absolute; top: -3px; right: -3px; min-width: 16px; height: 16px;
+      padding: 0 3px; border-radius: 999px; background: var(--danger); color: #3a0f0a;
+      font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
+    }
     @keyframes bell-ring {
       0%, 100% { transform: rotate(0deg); }
       20% { transform: rotate(-18deg); }
@@ -234,6 +239,20 @@
     }
     .metric-chart-sort button:disabled { opacity: .25; cursor: default; }
     .metric-chart canvas { width: 100%; height: 140px; display: block; }
+    dialog#merges-dialog {
+      border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
+      color: var(--text); width: min(90vw, 460px); max-height: 85vh; overflow-y: auto; padding: 18px;
+    }
+    dialog#merges-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+    dialog#merges-dialog h2 { margin: 0 0 6px; font-size: 16px; }
+    .merges-list li { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .merges-list-actions { display: flex; gap: 8px; align-self: flex-end; }
+    .merges-list-actions button {
+      border: 1px solid var(--line); background: transparent; color: var(--text);
+      border-radius: 999px; padding: 4px 12px; font-size: 12px; cursor: pointer;
+    }
+    .merges-list-actions button.approve { border-color: var(--accent); color: var(--accent-strong); }
+    .merges-list-actions button.reject { border-color: var(--danger); color: var(--danger); }
     @media (max-width: 560px) {
       .app { padding-left: 12px; padding-right: 12px; }
       header { padding-top: 15px; }
@@ -254,6 +273,7 @@
         <button class="bell" id="settings-toggle" type="button" aria-label="Настройки" title="Настройки">⚙️</button>
         <button class="bell" id="docs-toggle" type="button" aria-label="Документы" title="Документы">📄</button>
         <button class="bell" id="metrics-toggle" type="button" aria-label="Мониторинг" title="Мониторинг" hidden>📊</button>
+        <button class="bell" id="merges-toggle" type="button" aria-label="Слияние счётчиков" title="Слияние счётчиков">🔗<span class="badge" id="merges-badge" hidden>0</span></button>
         <button class="bell" id="bell" type="button" aria-label="Позвать старпома" title="Позвать старпома">🔔</button>
         <button type="button" class="status" id="status" title="Онлайн/оффлайн: авто"><span class="dot"></span><span>Подключение…</span></button>
       </div>
@@ -317,6 +337,14 @@
       <button type="button" class="clear" id="metrics-close">Закрыть</button>
     </dialog>
 
+    <dialog id="merges-dialog">
+      <h2 id="merges-title">Слияние счётчиков</h2>
+      <p class="docs-hint" id="merges-hint">Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.</p>
+      <p class="docs-hint" id="merges-empty" hidden>Пока нечего проверять.</p>
+      <ul class="docs-list merges-list" id="merges-list"></ul>
+      <button type="button" class="clear" id="merges-close">Закрыть</button>
+    </dialog>
+
     <nav class="quick" aria-label="Быстрые запросы">
       <button class="chip" data-tool="get_weather" data-ru="Какая сейчас погода?" data-en="What is the weather now?" data-label-ru="Погода" data-label-en="Weather">Погода</button>
       <button class="chip" data-tool="get_fridge_temp" data-ru="Какая температура в холодильнике и морозилке?" data-en="What are the fridge and freezer temperatures?" data-label-ru="Холодильник" data-label-en="Fridge">Холодильник</button>
@@ -367,6 +395,11 @@
     const metricsToggle = document.querySelector('#metrics-toggle');
     const metricsDialog = document.querySelector('#metrics-dialog');
     const metricsChecklist = document.querySelector('#metrics-checklist');
+    const mergesToggle = document.querySelector('#merges-toggle');
+    const mergesBadge = document.querySelector('#merges-badge');
+    const mergesDialog = document.querySelector('#merges-dialog');
+    const mergesList = document.querySelector('#merges-list');
+    const mergesEmpty = document.querySelector('#merges-empty');
     const metricsCharts = document.querySelector('#metrics-charts');
     const metricsEmpty = document.querySelector('#metrics-empty');
     let busy = false;
@@ -379,8 +412,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть', mergesToggleTitle: 'Слияние счётчиков', mergesTitle: 'Слияние счётчиков', mergesHint: 'Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.', mergesEmpty: 'Пока нечего проверять.', mergesClose: 'Закрыть', mergesApprove: 'Слить', mergesReject: 'Не сливать' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close', mergesToggleTitle: 'Metric merges', mergesTitle: 'Metric merges', mergesHint: 'The bosun noticed similar maintenance counters — confirm if this is really the same counter under two different names.', mergesEmpty: 'Nothing to review right now.', mergesClose: 'Close', mergesApprove: 'Merge', mergesReject: "Don't merge" }
     };
 
     function escapeHTML(value) {
@@ -771,6 +804,13 @@
       document.querySelector('#metrics-title').textContent = text[locale].metricsTitle;
       document.querySelector('#metrics-empty').textContent = text[locale].metricsEmpty;
       document.querySelector('#metrics-close').textContent = text[locale].metricsClose;
+      mergesToggle.title = text[locale].mergesToggleTitle;
+      mergesToggle.setAttribute('aria-label', text[locale].mergesToggleTitle);
+      document.querySelector('#merges-title').textContent = text[locale].mergesTitle;
+      document.querySelector('#merges-hint').textContent = text[locale].mergesHint;
+      mergesEmpty.textContent = text[locale].mergesEmpty;
+      document.querySelector('#merges-close').textContent = text[locale].mergesClose;
+      renderMerges(mergesCache);
     }
 
     form.addEventListener('submit', event => { event.preventDefault(); ask(input.value); });
@@ -1217,6 +1257,72 @@
     metricsDialog.addEventListener('close', () => {
       if (metricsRefreshTimer) { clearInterval(metricsRefreshTimer); metricsRefreshTimer = null; }
     });
+
+    // Metric-merge approval queue (docs/maintenance-tracking.md) — the
+    // background checker only ever proposes; a merge only actually happens
+    // once approved here. mergesCache lets renderMerges redraw with the
+    // right button labels after a language switch, without a round trip.
+    let mergesCache = [];
+
+    async function refreshMergesBadge() {
+      try {
+        const response = await fetch('/api/metric-merges');
+        const data = await response.json();
+        mergesCache = Array.isArray(data.suggestions) ? data.suggestions : [];
+      } catch (error) {
+        mergesCache = [];
+      }
+      mergesBadge.hidden = mergesCache.length === 0;
+      mergesBadge.textContent = String(mergesCache.length);
+      return mergesCache;
+    }
+
+    function renderMerges(suggestions) {
+      mergesList.innerHTML = '';
+      mergesEmpty.hidden = suggestions.length > 0;
+      suggestions.forEach(suggestion => {
+        const li = document.createElement('li');
+        const label = document.createElement('span');
+        label.textContent = `${suggestion.names.join(' + ')} → ${suggestion.canonical}`;
+        const actions = document.createElement('span');
+        actions.className = 'merges-list-actions';
+        const approve = document.createElement('button');
+        approve.type = 'button';
+        approve.className = 'approve';
+        approve.textContent = text[locale].mergesApprove;
+        approve.addEventListener('click', () => decideMerge(suggestion.id, true));
+        const reject = document.createElement('button');
+        reject.type = 'button';
+        reject.className = 'reject';
+        reject.textContent = text[locale].mergesReject;
+        reject.addEventListener('click', () => decideMerge(suggestion.id, false));
+        actions.append(approve, reject);
+        li.append(label, actions);
+        mergesList.appendChild(li);
+      });
+    }
+
+    async function decideMerge(id, approve) {
+      try {
+        await fetch(`/api/metric-merges/${encodeURIComponent(id)}/decide`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approve })
+        });
+      } catch (error) {}
+      renderMerges(await refreshMergesBadge());
+    }
+
+    mergesToggle.addEventListener('click', async () => {
+      renderMerges(await refreshMergesBadge());
+      mergesDialog.showModal();
+    });
+    document.querySelector('#merges-close').addEventListener('click', () => mergesDialog.close());
+    // Cheap poll — the background checker itself runs at most once a day
+    // (memo.metric_merge_check_interval), this just notices a new item
+    // without needing the page reloaded.
+    refreshMergesBadge();
+    setInterval(refreshMergesBadge, 5 * 60 * 1000);
 
     document.querySelector('#clear').addEventListener('click', () => {
       const previousSessionId = sessionId;

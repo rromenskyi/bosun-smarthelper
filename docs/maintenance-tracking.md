@@ -89,9 +89,49 @@ maintenance ->
   }]
 ```
 
+## Fixing a fragmented counter after the fact
+
+`write`'s `existing_metric_names` hint (above) catches drift at write time,
+but a weak local model doesn't always act on it, and older data can predate
+the check entirely. `internal/tools/memo_metric_merge.go`'s
+`CheckMetricMerges` looks for this after the fact: periodically (see
+Config below), it takes every pair of `known_metrics` that hasn't already
+been proposed or decided, and asks the LLM — one batched plain-text call,
+not a tool call, so it doesn't depend on the local model's tool-calling
+reliability — whether each pair is plausibly the same physical counter
+under two different spellings (e.g. `odometer_miles` and
+`oil_change_odometer`, both tracking a car's mileage) rather than two
+different pieces of equipment. Each pair the model calls a real match
+becomes a **pending suggestion**, including a canonical name it also
+proposes.
+
+Nothing merges automatically. A pending suggestion just sits in a small
+approval queue (`metric_merges.json`, next to `memos.json`) until a human
+looks at it in the web UI (the 🔗 icon, badged with the pending count) and
+either:
+
+- **Approves** — every memo (active or archived) carrying either of the
+  two names gets renamed to the proposed canonical name, atomically, the
+  same write path everything else in `memo.go` uses.
+- **Rejects** — nothing changes, but the decision is remembered (by an
+  order-independent id derived from the two names) so this exact pair is
+  never proposed again, even though it's invisible in every other view —
+  `list`, `search`, and the model itself never see rejected (or pending)
+  suggestions at all, only the web UI's approval queue does.
+
+This keeps the model's judgment low-stakes: a wrong guess only ever costs
+a human one extra item to dismiss, never lost or silently conflated data —
+the actual rename only happens on an explicit human decision.
+
 ## Config
 
-No dedicated config — these fields live on the same memo store as
-everything else in `docs/memo-search.md`, and `write`'s field validation
-(due-date parsing, the 10000-character content cap) is the same code path
-regardless of whether maintenance fields are present.
+```yaml
+memo:
+  metric_merge_check_interval: 24h  # 0 disables the background merge checker
+```
+
+Beyond that, no dedicated config — the maintenance fields themselves live
+on the same memo store as everything else in `docs/memo-search.md`, and
+`write`'s field validation (due-date parsing, the 10000-character content
+cap) is the same code path regardless of whether maintenance fields are
+present.

@@ -660,37 +660,45 @@ func (t *MemoTool) load() (memoFile, error) {
 }
 
 func (t *MemoTool) save(data memoFile) error {
-	directory := filepath.Dir(t.path)
+	return atomicWriteJSON(t.path, data)
+}
+
+// atomicWriteJSON writes v to path as indented JSON via a temp file plus
+// rename, so a reader (or a crash mid-write) never sees a partially-written
+// file — shared by memoFile and metricMergeFile, the two JSON stores
+// MemoTool owns.
+func atomicWriteJSON(path string, v any) error {
+	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return fmt.Errorf("create memo directory: %w", err)
+		return fmt.Errorf("create directory: %w", err)
 	}
-	payload, err := json.MarshalIndent(data, "", "  ")
+	payload, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode memo store: %w", err)
+		return fmt.Errorf("encode: %w", err)
 	}
-	temporary, err := os.CreateTemp(directory, ".memos-*.tmp")
+	temporary, err := os.CreateTemp(directory, ".tmp-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create temporary memo store: %w", err)
+		return fmt.Errorf("create temporary file: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err := temporary.Chmod(0o600); err != nil {
 		temporary.Close()
-		return fmt.Errorf("set memo store permissions: %w", err)
+		return fmt.Errorf("set permissions: %w", err)
 	}
 	if _, err := temporary.Write(payload); err != nil {
 		temporary.Close()
-		return fmt.Errorf("write memo store: %w", err)
+		return fmt.Errorf("write: %w", err)
 	}
 	if err := temporary.Sync(); err != nil {
 		temporary.Close()
-		return fmt.Errorf("sync memo store: %w", err)
+		return fmt.Errorf("sync: %w", err)
 	}
 	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close memo store: %w", err)
+		return fmt.Errorf("close: %w", err)
 	}
-	if err := os.Rename(temporaryPath, t.path); err != nil {
-		return fmt.Errorf("replace memo store: %w", err)
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace: %w", err)
 	}
 	return nil
 }

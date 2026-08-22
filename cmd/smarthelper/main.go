@@ -215,11 +215,19 @@ func serveCmd() *cobra.Command {
 
 			if memoTool, ok := registry.Get("memo"); ok {
 				if mt, ok := memoTool.(*tools.MemoTool); ok {
+					server.SetMemoTool(mt)
+
 					interval, err := time.ParseDuration(cfg.Memo.TagNormalizeInterval)
 					if err != nil || interval <= 0 {
 						interval = 5 * time.Minute
 					}
 					go runTagNormalizer(cmd.Context(), server, mt, router, settingsStore, interval, logger)
+
+					mergeInterval, err := time.ParseDuration(cfg.Memo.MetricMergeCheckInterval)
+					if err != nil || mergeInterval <= 0 {
+						mergeInterval = 24 * time.Hour
+					}
+					go runMetricMergeChecker(cmd.Context(), server, mt, router, mergeInterval, logger)
 				}
 			}
 
@@ -385,6 +393,41 @@ func runTagNormalizer(
 					logger.Warn("memo tag normalization failed", "error", err)
 				} else if updated > 0 {
 					logger.Info("normalized memo tags", "count", updated)
+				}
+			})
+		}
+	}
+}
+
+// runMetricMergeChecker periodically looks for known_metrics pairs (see
+// internal/tools/memo_metric_merge.go's CheckMetricMerges) that might be
+// the same physical counter under two different spellings, same idle-tick
+// discipline as runTagNormalizer. It only ever proposes a merge for a
+// human to approve or reject via the web UI's approval queue — nothing is
+// renamed on its own. Stops when ctx is cancelled (process shutdown).
+func runMetricMergeChecker(
+	ctx context.Context,
+	server *webui.Server,
+	memoTool *tools.MemoTool,
+	client *llm.Router,
+	interval time.Duration,
+	logger *slog.Logger,
+) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			server.TryIdleAfter(interval, func() {
+				checkCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				defer cancel()
+				proposed, err := memoTool.CheckMetricMerges(checkCtx, client, 10)
+				if err != nil {
+					logger.Warn("metric merge check failed", "error", err)
+				} else if proposed > 0 {
+					logger.Info("proposed metric merges", "count", proposed)
 				}
 			})
 		}

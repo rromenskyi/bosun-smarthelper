@@ -112,6 +112,15 @@ type MemoConfig struct {
 	// onto an unrelated Valvoline product sheet's chunk at 0.41. See
 	// docs/memo-search.md.
 	AttachImageMinRelevance float64 `mapstructure:"attach_image_min_relevance"`
+	// MetricMergeCheckInterval is how often the background pass checks
+	// known_metrics (see internal/tools/memo.go's maintenance) for pairs
+	// that might be the same physical counter under two different names —
+	// e.g. "odometer_miles" and "oil_change_odometer" both tracking a car's
+	// mileage. It only ever proposes a merge for a human to approve or
+	// reject in the web UI; nothing is renamed automatically. Defaults to
+	// 24h — metric names change far less often than tags. See
+	// docs/maintenance-tracking.md.
+	MetricMergeCheckInterval string `mapstructure:"metric_merge_check_interval"`
 }
 
 // DocumentsConfig holds settings for uploaded reference documents (see
@@ -414,6 +423,7 @@ func setDefaults(v *viper.Viper) {
 	// See docs/memo-search.md.
 	v.SetDefault("memo.min_search_relevance", 0.4)
 	v.SetDefault("memo.attach_image_min_relevance", 0.6)
+	v.SetDefault("memo.metric_merge_check_interval", "24h")
 
 	// Metrics defaults — see docs/monitoring.md. This default source list
 	// covers every sensor this project ships with today; a deployment

@@ -37,7 +37,10 @@ top-level tour has room for. Grouped by what you're trying to do.
   anything with a due date) as optional fields on a regular memo, and the
   `maintenance` action that reports what's due — domain-neutral by design,
   so a car's odometer and a boat's main-engine hours both fit without a
-  schema change.
+  schema change. Also covers the metric-merge approval queue: a periodic
+  LLM check proposes merging counters that look like the same equipment
+  under two names, but a human always approves or rejects before anything
+  actually renames.
 - **[voice.md](voice.md)** — push-to-talk speech input (whisper.cpp) and
   spoken replies (Piper TTS), fully offline, no Python in the path; the
   Alpine/musl-vs-glibc onnxruntime saga that shaped how it's built.

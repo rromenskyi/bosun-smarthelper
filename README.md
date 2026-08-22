@@ -50,7 +50,10 @@ In daily use, not just a prototype. Working today:
   oil change, an engine-hour reading, anything with a due date; `maintenance`
   reports what's due and how much of a counter is left, computed in Go
   against the real clock, not the model. Domain-neutral by design — a car's
-  odometer and a boat's main-engine hours both fit the same two fields — see
+  odometer and a boat's main-engine hours both fit the same two fields. A
+  background pass also proposes merging two counter names that look like
+  the same equipment (🔗 icon, badge count) — a human approves or rejects
+  each one in the web UI; nothing renames itself automatically — see
   `docs/maintenance-tracking.md`.
 - **Online knowledge tools** — DuckDuckGo web search and Wikipedia summaries,
   automatically hidden while offline.

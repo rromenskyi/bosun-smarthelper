@@ -25,6 +25,7 @@ import (
 	"github.com/roman220/ai-local-smarthelper/internal/documents"
 	"github.com/roman220/ai-local-smarthelper/internal/metrics"
 	"github.com/roman220/ai-local-smarthelper/internal/settings"
+	"github.com/roman220/ai-local-smarthelper/internal/tools"
 	"github.com/roman220/ai-local-smarthelper/internal/voice"
 )
 
@@ -127,6 +128,7 @@ type Server struct {
 	providerOverride  providerOverrideController
 	metricsStore      *metrics.Store
 	metricsLabels     map[string]MetricLabel
+	memoTool          *tools.MemoTool
 }
 
 // SetDefaultLanguage changes the language used when a chat request doesn't
@@ -331,6 +333,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/provider-override", s.handleProviderOverride)
 	mux.HandleFunc("GET /api/metrics/list", s.handleMetricsList)
 	mux.HandleFunc("GET /api/metrics", s.handleMetricsQuery)
+	mux.HandleFunc("GET /api/metric-merges", s.handleMetricMergesList)
+	mux.HandleFunc("POST /api/metric-merges/{id}/decide", s.handleMetricMergeDecide)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
 	}
