@@ -233,6 +233,7 @@
     }
     #settings-form button:disabled { opacity: .5; cursor: wait; }
     .settings-checkbox { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin-top: 4px; }
+    .settings-checkbox input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
     #settings-backup-panel { margin-top: 10px; }
     .settings-backup-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
     .settings-backup-header .settings-label { margin-top: 0; }
@@ -299,7 +300,7 @@
         <button class="bell" id="settings-toggle" type="button" aria-label="Настройки" title="Настройки">⚙️</button>
         <button class="bell" id="docs-toggle" type="button" aria-label="Документы" title="Документы">📄</button>
         <button class="bell" id="metrics-toggle" type="button" aria-label="Мониторинг" title="Мониторинг" hidden>📊</button>
-        <button class="bell" id="merges-toggle" type="button" aria-label="Слияние счётчиков" title="Слияние счётчиков">🔗<span class="badge" id="merges-badge" hidden>0</span></button>
+        <button class="bell" id="merges-toggle" type="button" aria-label="Слияние счётчиков" title="Слияние счётчиков" hidden>🔗<span class="badge" id="merges-badge" hidden>0</span></button>
         <button class="bell" id="bell" type="button" aria-label="Позвать старпома" title="Позвать старпома">🔔</button>
         <button type="button" class="status" id="status" title="Онлайн/оффлайн: авто"><span class="dot"></span><span>Подключение…</span></button>
       </div>
@@ -404,8 +405,8 @@
       <button class="chip" data-tool="get_gps" data-ru="Где я сейчас и с какой скоростью двигаюсь?" data-en="Where am I and how fast am I moving?" data-label-ru="GPS" data-label-en="GPS">GPS</button>
       <button class="chip" data-tool="get_system_info" data-ru="Покажи состояние системы." data-en="Show system status." data-label-ru="Система" data-label-en="System">Система</button>
       <button class="chip" data-tool="memo" data-ru="Покажи мои активные заметки." data-en="Show my active memos." data-label-ru="Заметки" data-label-en="Memos">Заметки</button>
-      <button class="chip" data-tool="web_search" data-ru="Найди в интернете свежую информацию." data-en="Search the web for current information." data-label-ru="Поиск" data-label-en="Search">Поиск</button>
-      <button class="chip" data-tool="wikipedia" data-ru="Найди справку в Википедии." data-en="Look up a topic on Wikipedia." data-label-ru="Википедия" data-label-en="Wikipedia">Википедия</button>
+      <button class="chip" data-tool="web_search" data-ru="Найди в интернете: " data-en="Search the web for: " data-label-ru="Поиск" data-label-en="Search">Поиск</button>
+      <button class="chip" data-tool="wikipedia" data-ru="Найди в Википедии: " data-en="Look up on Wikipedia: " data-label-ru="Википедия" data-label-en="Wikipedia">Википедия</button>
     </nav>
 
     <section class="messages" id="messages" aria-live="polite">
@@ -962,10 +963,23 @@
     // of calling it again. Never written to session history either, so
     // there's nothing here for a later chat turn to get confused by.
     const quickChipTools = new Set(['get_system_info', 'get_gps']);
+    // web_search/wikipedia need an actual topic — sending their canned
+    // text as-is asked the model to "search the web"/"look something up"
+    // with nothing to search for, a chip that did nothing useful. Prefill
+    // the input with a language-appropriate prefix and let the user type
+    // the topic themselves, instead of guessing one.
+    const prefillChipTools = new Set(['web_search', 'wikipedia']);
     document.querySelectorAll('.chip').forEach(button => {
       button.addEventListener('click', () => {
-        if (quickChipTools.has(button.dataset.tool)) askQuickTool(button);
-        else ask(button.dataset[language.value]);
+        if (quickChipTools.has(button.dataset.tool)) { askQuickTool(button); return; }
+        if (prefillChipTools.has(button.dataset.tool)) {
+          input.value = button.dataset[language.value];
+          input.focus();
+          resizeInput();
+          input.setSelectionRange(input.value.length, input.value.length);
+          return;
+        }
+        ask(button.dataset[language.value]);
       });
     });
 
@@ -1499,6 +1513,9 @@
       } catch (error) {
         mergesCache = [];
       }
+      // Nothing to review is the common case — the icon only earns its
+      // place in the header when there's actually a decision waiting.
+      mergesToggle.hidden = mergesCache.length === 0;
       mergesBadge.hidden = mergesCache.length === 0;
       mergesBadge.textContent = String(mergesCache.length);
       return mergesCache;
@@ -1605,6 +1622,16 @@
         // No stored history yet, or the server is unreachable — start with an empty transcript.
       }
     }
+
+    // Clicking the backdrop closes any <dialog> — a click on the dialog's
+    // own padding/margin area still fires with event.target === dialog
+    // (only a click on an actual child element inside it bubbles up with
+    // a more specific target), so this needs no per-dialog wiring.
+    document.querySelectorAll('dialog').forEach(dialog => {
+      dialog.addEventListener('click', event => {
+        if (event.target === dialog) dialog.close();
+      });
+    });
 
     hydrateHistory();
     refreshStatus();
