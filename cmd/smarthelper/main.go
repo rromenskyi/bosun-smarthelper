@@ -2,11 +2,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/roman220/bosun-smarthelper/internal/agent"
+	"github.com/roman220/bosun-smarthelper/internal/backup"
 	"github.com/roman220/bosun-smarthelper/internal/config"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/embeddings"
@@ -39,7 +42,7 @@ func main() {
 		Use:   "smarthelper",
 		Short: "Bosun (Starpom), a local-first assistant with hybrid LLM routing and MCP tools",
 	}
-	root.AddCommand(versionCmd(), mcpCmd(), chatCmd(), serveCmd(), errorsCmd(), documentsCmd())
+	root.AddCommand(versionCmd(), mcpCmd(), chatCmd(), serveCmd(), errorsCmd(), documentsCmd(), backupCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
@@ -324,6 +327,66 @@ func documentsCmd() *cobra.Command {
 		Short: "Maintenance operations on uploaded reference documents",
 	}
 	cmd.AddCommand(attachImagesCmd())
+	return cmd
+}
+
+// backupCmd builds a tar.gz snapshot of the persistent data directory
+// (memos, documents, sessions, settings, the error log, and metrics —
+// dumped to SQL rather than copied raw, see internal/backup.DumpSQL) and
+// uploads it to an S3-compatible bucket (config.yaml's backup.s3). There
+// is deliberately no scheduled/automatic variant: this only ever runs
+// when a human types it, so it never spends bandwidth uninvited — see
+// docs/backup.md.
+func backupCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "backup",
+		Short: "Archive persistent data and upload it to an S3-compatible bucket",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			s3cfg := cfg.Backup.S3
+			if s3cfg.Endpoint == "" || s3cfg.Bucket == "" {
+				return fmt.Errorf("backup.s3.endpoint and backup.s3.bucket must be set in config.yaml")
+			}
+			accessKeyID := os.Getenv(s3cfg.AccessKeyIDEnv)
+			secretAccessKey := os.Getenv(s3cfg.SecretAccessKeyEnv)
+			if accessKeyID == "" || secretAccessKey == "" {
+				return fmt.Errorf("%s and %s must be set (in .env)", s3cfg.AccessKeyIDEnv, s3cfg.SecretAccessKeyEnv)
+			}
+
+			dataDir := cfg.Backup.DataDir
+			if dataDir == "" {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("resolve home directory: %w", err)
+				}
+				dataDir = filepath.Join(home, ".local", "share", "bosun")
+			}
+
+			var archive bytes.Buffer
+			if err := backup.BuildArchive(&archive, dataDir); err != nil {
+				return fmt.Errorf("build archive: %w", err)
+			}
+
+			key := fmt.Sprintf("bosun-backup-%s.tar.gz", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
+			uploadCtx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
+			defer cancel()
+			if err := backup.PutObject(uploadCtx, backup.S3Config{
+				Endpoint:        s3cfg.Endpoint,
+				Region:          s3cfg.Region,
+				Bucket:          s3cfg.Bucket,
+				AccessKeyID:     accessKeyID,
+				SecretAccessKey: secretAccessKey,
+			}, key, archive.Bytes(), "application/gzip"); err != nil {
+				return fmt.Errorf("upload: %w", err)
+			}
+
+			fmt.Printf("Uploaded %s (%.1f MB) to %s/%s\n", key, float64(archive.Len())/1e6, s3cfg.Bucket, key)
+			return nil
+		},
+	}
 	return cmd
 }
 

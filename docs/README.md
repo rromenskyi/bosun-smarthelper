@@ -8,6 +8,11 @@ top-level tour has room for. Grouped by what you're trying to do.
 - **[../INSTALL.md](../INSTALL.md)** — complete, tested, from-zero install
   walkthrough (fresh Ubuntu → running web UI), Docker-based. Start here if
   you're setting this up for the first time.
+- **[backup.md](backup.md)** — `smarthelper backup`: archives persistent
+  data (memos, documents, sessions, metrics — dumped to SQL, not copied
+  raw) to any S3-compatible bucket. Manual only, no scheduled variant, so
+  it never spends bandwidth uninvited; a hand-rolled SigV4 signer instead
+  of the AWS SDK for one PUT request.
 - **[docker.md](docker.md)** — the actual way this project runs today:
   `bosun` + `llama-chat`/`llama-embed` (built from source) + `whisper-stt`
   under `docker compose`, networking, volumes, one-off commands.

@@ -166,6 +166,10 @@ zero edits for local-only testing.
 # Review recent tool/LLM failures (see internal/errlog)
 ./bin/smarthelper errors
 
+# Archive persistent data and upload it to an S3-compatible bucket —
+# manual only, no scheduled variant (docs/backup.md)
+./bin/smarthelper backup
+
 # Print version
 ./bin/smarthelper version
 ```

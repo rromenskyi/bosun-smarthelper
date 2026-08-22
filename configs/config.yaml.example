@@ -278,6 +278,20 @@ metrics:
   #     label_en: "Charge"
   #     unit: "%"
 
+# Manual, on-demand backup (`smarthelper backup`) to any S3-compatible
+# bucket — AWS S3, Backblaze B2, MinIO, Wasabi, .... Deliberately no
+# scheduled/automatic variant: it only runs when you type the command, so
+# it never spends bandwidth you didn't ask to spend right now. See
+# docs/backup.md.
+# backup:
+#   data_dir: ""                            # Empty uses the same default as memo.path/documents.path
+#   s3:
+#     endpoint: "https://s3.us-west-002.backblazeb2.com"  # any S3-compatible endpoint
+#     region: "us-west-002"                 # some providers require a real region; others accept anything non-empty
+#     bucket: "bosun-backups"
+#     access_key_id_env: "BACKUP_S3_ACCESS_KEY_ID"         # set in .env
+#     secret_access_key_env: "BACKUP_S3_SECRET_ACCESS_KEY" # set in .env
+
 # Logging
 logging:
   level: "info"                             # debug, info, warn, error

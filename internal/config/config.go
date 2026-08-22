@@ -23,6 +23,35 @@ type Config struct {
 	Logging   LoggingConfig   `mapstructure:"logging"`
 	Voice     VoiceConfig     `mapstructure:"voice"`
 	Metrics   MetricsConfig   `mapstructure:"metrics"`
+	Backup    BackupConfig    `mapstructure:"backup"`
+}
+
+// BackupConfig holds settings for the manual, on-demand `smarthelper
+// backup` command (internal/backup) — there's no scheduled/automatic
+// backup, deliberately: it only ever runs when explicitly invoked, so it
+// never spends bandwidth the user didn't ask to spend right now.
+type BackupConfig struct {
+	// DataDir is the directory to archive — memos.json, documents.json,
+	// sessions.json, settings.json, metric_merges.json, errors.jsonl,
+	// document-images/, metrics.db (dumped to SQL, not copied raw). Empty
+	// (the default) uses the same ~/.local/share/bosun every store already
+	// defaults to on its own (see e.g. tools.NewMemoTool) — override only
+	// if memo.path/documents.path/etc. were pointed somewhere nonstandard.
+	DataDir string         `mapstructure:"data_dir"`
+	S3      BackupS3Config `mapstructure:"s3"`
+}
+
+// BackupS3Config is the destination for `smarthelper backup` — any
+// S3-compatible object store (AWS S3, Backblaze B2, MinIO, Wasabi, ...),
+// path-style requests only (see internal/backup.S3Config). Credentials are
+// env var *names* (same indirection as llm.remote.api_key_env), resolved
+// at backup time, never written to config.yaml itself.
+type BackupS3Config struct {
+	Endpoint           string `mapstructure:"endpoint"`
+	Region             string `mapstructure:"region"`
+	Bucket             string `mapstructure:"bucket"`
+	AccessKeyIDEnv     string `mapstructure:"access_key_id_env"`
+	SecretAccessKeyEnv string `mapstructure:"secret_access_key_env"`
 }
 
 // MetricsConfig holds the local monitoring dashboard's sampling and
@@ -433,6 +462,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("metrics.enabled", true)
 	v.SetDefault("metrics.interval", "30s")
 	v.SetDefault("metrics.retention_days", 30)
+	v.SetDefault("backup.s3.access_key_id_env", "BACKUP_S3_ACCESS_KEY_ID")
+	v.SetDefault("backup.s3.secret_access_key_env", "BACKUP_S3_SECRET_ACCESS_KEY")
+
 	v.SetDefault("metrics.sources", []map[string]any{
 		{"metric": "cpu_temp_c", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu.temp_c", "label_ru": "Температура CPU", "label_en": "CPU temperature", "unit": "°C"},
 		{"metric": "cpu_percent", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu.used_percent", "label_ru": "Загрузка CPU", "label_en": "CPU load", "unit": "%"},
