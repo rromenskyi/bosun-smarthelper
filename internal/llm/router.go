@@ -206,18 +206,6 @@ func (r *Router) SetProviderOverride(mode string) error {
 	return nil
 }
 
-// LastProvider returns the provider used for the latest request attempt. It
-// changes to local as soon as a remote failure triggers fallback.
-func (r *Router) LastProvider() string {
-	r.stateMu.RLock()
-	provider := r.lastProvider
-	r.stateMu.RUnlock()
-	if provider != "" {
-		return provider
-	}
-	return r.CurrentProvider()
-}
-
 // ActiveProvider returns the provider serving an in-flight request, or the
 // provider that would be selected for the next request when idle.
 func (r *Router) ActiveProvider() string {
@@ -439,12 +427,6 @@ func isRetryableRemoteError(err error) bool {
 	}
 	var netErr net.Error
 	return errors.As(err, &netErr)
-}
-
-func (r *Router) setLastProvider(provider string) {
-	r.stateMu.Lock()
-	r.lastProvider = provider
-	r.stateMu.Unlock()
 }
 
 func (r *Router) setActiveProvider(provider string) {

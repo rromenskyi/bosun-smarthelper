@@ -1,8 +1,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -679,10 +677,4 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("logging.format", "text")
 	v.SetDefault("logging.output", "stderr")
-}
-
-// GetConfigPath returns the path to the config file
-func GetConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "smarthelper", "config.yaml")
 }

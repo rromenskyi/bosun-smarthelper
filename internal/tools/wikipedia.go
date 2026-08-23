@@ -60,7 +60,7 @@ func (t *WikipediaTool) Execute(ctx context.Context, args map[string]any) (any, 
 	title, _ := args["title"].(string)
 	title = strings.TrimSpace(title)
 	if title == "" {
-		return nil, fmt.Errorf("Wikipedia title is required")
+		return nil, fmt.Errorf("wikipedia title is required")
 	}
 	preferred, _ := args["lang"].(string)
 	preferred = strings.ToLower(strings.TrimSpace(preferred))
@@ -79,7 +79,7 @@ func (t *WikipediaTool) Execute(ctx context.Context, args map[string]any) (any, 
 		req.Header.Set("User-Agent", "Bosun/0.1")
 		resp, err := t.client.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("Wikipedia request failed: %w", err)
+			return nil, fmt.Errorf("wikipedia request failed: %w", err)
 		}
 		if resp.StatusCode == http.StatusNotFound {
 			resp.Body.Close()
@@ -87,7 +87,7 @@ func (t *WikipediaTool) Execute(ctx context.Context, args map[string]any) (any, 
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
-			return nil, fmt.Errorf("Wikipedia returned HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("wikipedia returned HTTP %d", resp.StatusCode)
 		}
 		var article wikipediaResponse
 		err = json.NewDecoder(resp.Body).Decode(&article)
@@ -101,7 +101,7 @@ func (t *WikipediaTool) Execute(ctx context.Context, args map[string]any) (any, 
 			"lang": language, "lang_chain_tried": languages,
 		}, nil
 	}
-	return nil, fmt.Errorf("Wikipedia article %q was not found in languages %s", title, strings.Join(languages, ", "))
+	return nil, fmt.Errorf("wikipedia article %q was not found in languages %s", title, strings.Join(languages, ", "))
 }
 
 func wikipediaLanguages(title, preferred string) []string {

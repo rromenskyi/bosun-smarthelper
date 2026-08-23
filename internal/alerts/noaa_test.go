@@ -114,7 +114,7 @@ func TestCheckNOAANotifiesOnlyNewAlerts(t *testing.T) {
 	}
 
 	// Second check, same still-active alert — must not notify again.
-	seen, errs = CheckNOAA(context.Background(), 35.2, -90.05, seen, []Notifier{notifier})
+	_, errs = CheckNOAA(context.Background(), 35.2, -90.05, seen, []Notifier{notifier})
 	if len(errs) != 0 {
 		t.Fatalf("errs = %v", errs)
 	}

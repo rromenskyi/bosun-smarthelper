@@ -55,7 +55,7 @@ func TestThresholdCheckerFiresOnceOnCrossing(t *testing.T) {
 	}
 
 	// Second check, still crossed, same state passed in — must not fire again.
-	state, errs = checker.Check(ctx, state)
+	_, errs = checker.Check(ctx, state)
 	if len(errs) != 0 {
 		t.Fatalf("errs = %v", errs)
 	}

@@ -11,17 +11,10 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/config"
 )
 
-func TestRouterLastProvider(t *testing.T) {
+func TestRouterActiveProvider(t *testing.T) {
 	router := &Router{
 		localClient: NewLocalClient("", "", 0.5, time.Second, true),
 		config:      &config.LLMConfig{},
-	}
-	if got := router.LastProvider(); got != "local" {
-		t.Errorf("initial provider = %q, want local", got)
-	}
-	router.setLastProvider("remote")
-	if got := router.LastProvider(); got != "remote" {
-		t.Errorf("last provider = %q, want remote", got)
 	}
 	if got := router.ActiveProvider(); got != "local" {
 		t.Errorf("idle provider = %q, want local", got)

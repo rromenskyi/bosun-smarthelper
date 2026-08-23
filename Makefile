@@ -9,6 +9,7 @@ test:
 lint:
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
 	go vet ./...
+	go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
 
 check: lint test build
 
