@@ -30,6 +30,30 @@ old single-JSON response; the client checks `Content-Type` and handles
 either — but never sees a `queued` event, since the buffered protocol has
 no way to send anything before the final response (see below).
 
+## Heartbeats: surviving a stall an intermediary can't see the reason for
+
+A remote generation can legitimately go quiet for a while mid-answer —
+observed directly on this deployment's own remote provider (an
+AirLLM-style backend, judging by the domain and its literal model name
+`"text"`, which streams model layers in from disk rather than keeping
+everything resident, and so can stall unevenly between tokens). `bosun`'s
+own `web.request_timeout` (600s) tolerates that fine — but an
+intermediary in front of it (this deployment sits behind a Cloudflare
+tunnel, see `docs/cloudflare.md`) enforces its *own*, shorter,
+non-configurable idle-between-chunks timeout that has nothing to do with
+total request duration. A stall past that threshold gets the connection
+killed at the edge, with nothing logged anywhere in `bosun` itself —
+exactly what happened to a real phone request that failed with a generic
+error after "thinking" for a while.
+
+`handleChatStreaming` (`internal/webui/server.go`) runs a ticker
+alongside the actual generation call: if `heartbeatInterval` (15s) passes
+with no real event written, it sends `{"type":"ping"}`. This needs no
+frontend change — the client's NDJSON parser only recognizes specific
+`type` values and silently ignores anything else — so it's purely
+connection upkeep, invisible to the user, that resets any intermediary's
+idle timer without affecting the actual answer.
+
 ## Only the local model queues
 
 `handleChat` used to serialize *every* chat request through one slot

@@ -636,13 +636,31 @@ func (s *Server) newNDJSONWriter(w http.ResponseWriter) func(streamEvent) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	flusher, _ := w.(http.Flusher)
 	encoder := json.NewEncoder(w)
+	var mu sync.Mutex
 	return func(event streamEvent) {
+		mu.Lock()
+		defer mu.Unlock()
 		_ = encoder.Encode(event)
 		if flusher != nil {
 			flusher.Flush()
 		}
 	}
 }
+
+// heartbeatInterval is how long handleChatStreaming lets the connection sit
+// idle (no real event written) before sending a "ping" line. It exists
+// because a remote generation can legitimately stall for a while
+// mid-answer (see docs/streaming.md), and unlike bosun's own
+// web.request_timeout, an intermediary like Cloudflare's tunnel enforces
+// its own, shorter, non-configurable idle-between-chunks timeout — one
+// that has nothing to do with total request duration and would otherwise
+// kill the connection while bosun is still working. index.html's NDJSON
+// parser already ignores unrecognized event types, so this needs no
+// frontend change. Comfortably below a Cloudflare tunnel's ~100s idle
+// budget, and comfortably above normal per-token latency so it never
+// fires during healthy fast generation. A var, not a const, so tests can
+// shrink it instead of running real-time for 15s.
+var heartbeatInterval = 15 * time.Second
 
 // handleChatStreaming writes one JSON object per line as the answer is
 // generated. Once the first line is flushed the HTTP status is locked in as
@@ -664,7 +682,43 @@ func (s *Server) handleChatStreaming(
 		write = s.newNDJSONWriter(w)
 	}
 
+	var lastActivityMu sync.Mutex
+	lastActivity := time.Now()
+	touch := func() {
+		lastActivityMu.Lock()
+		lastActivity = time.Now()
+		lastActivityMu.Unlock()
+	}
+
+	// Captured here, synchronously, rather than read from inside the
+	// goroutine below: heartbeatInterval is a var (not a const) so tests
+	// can shrink it, and a stray goroutine from a finished test reading
+	// the package var directly could otherwise race a later test's write
+	// to it.
+	interval := heartbeatInterval
+
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+	defer cancelHeartbeat()
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				lastActivityMu.Lock()
+				idle := time.Since(lastActivity)
+				lastActivityMu.Unlock()
+				if idle >= interval {
+					write(streamEvent{Type: "ping"})
+				}
+			}
+		}
+	}()
+
 	answer, err := asker.AskWithHistoryStreaming(ctx, message, history, language, func(e agent.StepEvent) {
+		touch()
 		switch e.Type {
 		case "step_start":
 			write(streamEvent{Type: "step_start"})

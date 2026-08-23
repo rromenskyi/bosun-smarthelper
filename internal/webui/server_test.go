@@ -179,6 +179,94 @@ func TestServerChatStreamingErrorEvent(t *testing.T) {
 	}
 }
 
+// slowStreamingAsker sleeps before each delta, long enough to trigger the
+// heartbeat ticker at least once per gap.
+type slowStreamingAsker struct {
+	answer string
+	gap    time.Duration
+}
+
+func (f *slowStreamingAsker) Ask(_ context.Context, _ string) (string, error) {
+	return f.answer, nil
+}
+
+func (f *slowStreamingAsker) AskWithHistoryStreaming(
+	_ context.Context,
+	_ string,
+	_ []agent.HistoryMessage,
+	_ string,
+	onEvent func(agent.StepEvent),
+) (string, error) {
+	onEvent(agent.StepEvent{Type: "step_start"})
+	time.Sleep(f.gap)
+	onEvent(agent.StepEvent{Type: "delta", Delta: llm.StreamDelta{Kind: "prose", Text: "ответ"}})
+	time.Sleep(f.gap)
+	return f.answer, nil
+}
+
+// TestServerChatStreamingSendsHeartbeatDuringSlowGeneration is a regression
+// test for a real incident: a remote generation stalling mid-answer got
+// silently killed by an intermediary (Cloudflare tunnel) enforcing its own
+// idle-between-chunks timeout, well short of bosun's own request timeout,
+// with nothing logged anywhere in bosun itself. A "ping" line during a gap
+// keeps the connection visibly alive without needing any frontend change,
+// since index.html's NDJSON parser already ignores unrecognized event
+// types.
+func TestServerChatStreamingSendsHeartbeatDuringSlowGeneration(t *testing.T) {
+	original := heartbeatInterval
+	heartbeatInterval = 20 * time.Millisecond
+	defer func() { heartbeatInterval = original }()
+
+	asker := &slowStreamingAsker{answer: "ответ", gap: 120 * time.Millisecond}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"привет","session_id":"heartbeat-test"}`))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	decoder := json.NewDecoder(response.Body)
+	var events []streamEvent
+	for {
+		var event streamEvent
+		if err := decoder.Decode(&event); err != nil {
+			break
+		}
+		events = append(events, event)
+	}
+
+	var pings, deltas, dones int
+	for _, event := range events {
+		switch event.Type {
+		case "ping":
+			pings++
+		case "delta":
+			deltas++
+		case "done":
+			dones++
+			if event.SessionID != "heartbeat-test" {
+				t.Errorf("done event session_id = %q", event.SessionID)
+			}
+		}
+	}
+	if pings == 0 {
+		t.Errorf("events = %#v, want at least one ping event during the slow gap", events)
+	}
+	if deltas != 1 {
+		t.Errorf("delta events = %d, want 1", deltas)
+	}
+	if dones != 1 {
+		t.Errorf("done events = %d, want 1", dones)
+	}
+
+	history := server.loadHistory("heartbeat-test")
+	if len(history) != 2 || history[1].Content != "ответ" {
+		t.Errorf("saved history = %#v, want the real answer unaffected by heartbeat lines", history)
+	}
+}
+
 type streamingErrorAsker struct{}
 
 func (streamingErrorAsker) Ask(_ context.Context, _ string) (string, error) {
