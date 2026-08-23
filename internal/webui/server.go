@@ -5,12 +5,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	_ "embed"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -40,6 +41,28 @@ const maxDocumentUploadBytes = 2 << 20
 
 //go:embed index.html
 var indexHTML []byte
+
+// staticFS backs index.html's growing set of ES modules (static/shared.js,
+// static/cameras.js, ...) — pulled out of the single inline <script> one
+// feature at a time, same one-file-per-feature split internal/webui's own
+// Go code already uses. fs.Sub strips the "static/" prefix embed.FS keeps
+// baked in, so a request for /static/cameras.js resolves to cameras.js
+// inside this FS, matching how http.FileServer expects paths.
+//
+//go:embed static
+var rawStaticFS embed.FS
+
+var staticFS = mustSubFS(rawStaticFS, "static")
+
+func mustSubFS(fsys embed.FS, dir string) fs.FS {
+	sub, err := fs.Sub(fsys, dir)
+	if err != nil {
+		// Can't happen: dir is a compile-time embed path, guaranteed to
+		// exist by go:embed itself failing the build otherwise.
+		panic(err)
+	}
+	return sub
+}
 
 // ValidateBind permits loopback, explicit private LAN addresses, and the
 // IPv4/IPv6 wildcard (0.0.0.0, ::) — the wildcard is allowed deliberately so
@@ -396,6 +419,7 @@ func (s *Server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleIndex)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
