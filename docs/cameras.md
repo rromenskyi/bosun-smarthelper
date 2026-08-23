@@ -97,9 +97,23 @@ Closing the dialog clears the `<img>`'s `src`, releasing that browser
 tab's relay subscription immediately rather than leaving a live
 connection open to a dialog nobody's looking at.
 
+A per-camera online/offline dot (`Relay.Connected`, set the moment its
+upstream multipart reader is established and cleared the instant that
+connection drops) shows next to the camera picker and above the live
+view — a dead or unreachable camera used to just leave the live view
+silently frozen with no explanation. The dialog re-polls
+`GET /api/cameras/list` every 5s while it's open, so a camera going
+down or coming back up shows up without needing to close and reopen it;
+switching to (or discovering) an offline camera also clears the `<img>`'s
+`src` rather than leaving whichever camera was viewed previously frozen
+on screen looking like it's still live — an `<img>` only updates its
+rendered bitmap on a successful load, so a pending request to a camera
+that's never going to send a frame would otherwise just leave the old
+one showing indefinitely.
+
 ## API
 
-- `GET /api/cameras/list` → `{"cameras": [{"name", "label_ru", "label_en"}, ...]}`
+- `GET /api/cameras/list` → `{"cameras": [{"name", "label_ru", "label_en", "connected"}, ...]}`
   — empty if no cameras are configured.
 - `GET /api/cameras/{name}/stream` → live MJPG, multipart/x-mixed-replace,
   as many simultaneous clients as want it.

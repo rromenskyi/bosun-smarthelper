@@ -264,6 +264,11 @@
     .threshold-channels .settings-checkbox { margin-top: 0; }
     .threshold-siren-row { margin-left: 16px; }
     .threshold-remove { align-self: flex-end; }
+    .camera-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+    .camera-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex: 0 0 auto; }
+    .camera-status-dot.online { background: var(--accent); }
+    #cameras-picker .camera-picker-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); display: inline-block; margin-right: 5px; }
+    #cameras-picker .camera-picker-dot.online { background: var(--accent); }
     #cameras-live { width: 100%; border-radius: 10px; margin-bottom: 10px; background: #000; display: block; }
     #cameras-archive-player { width: 100%; border-radius: 10px; margin-bottom: 10px; background: #000; }
     #cameras-archive-label { margin-top: 4px; }
@@ -487,6 +492,7 @@
     <dialog id="cameras-dialog">
       <h2 id="cameras-title">Камеры</h2>
       <div class="metrics-range" id="cameras-picker"></div>
+      <p class="camera-status" id="cameras-status"><span class="camera-status-dot" id="cameras-status-dot"></span><span id="cameras-status-text"></span></p>
       <img id="cameras-live" alt="">
       <p class="settings-label" id="cameras-archive-label">Архив</p>
       <p class="docs-hint" id="cameras-archive-empty" hidden>Пока нет записей.</p>

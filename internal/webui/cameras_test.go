@@ -1,7 +1,9 @@
 package webui
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -53,6 +55,55 @@ func TestHandleCamerasListReturnsConfigured(t *testing.T) {
 	}
 	if len(body.Cameras) != 1 || body.Cameras[0].Name != "front" || body.Cameras[0].LabelRU != "Нос" {
 		t.Errorf("cameras = %+v", body.Cameras)
+	}
+	if body.Cameras[0].Connected {
+		t.Error("connected = true, want false — this camera's relay was never started")
+	}
+}
+
+// TestHandleCamerasListReportsConnectedStatus is a regression test for a
+// real gap: a dead camera's live view just sat frozen with no indication
+// why (docs/cameras.md) — GET /api/cameras/list now reports each relay's
+// live connection state.
+func TestHandleCamerasListReportsConnectedStatus(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher := w.(http.Flusher)
+		w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=fake")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "--fake\r\nContent-Type: image/jpeg\r\n\r\nframe\r\n")
+		flusher.Flush()
+		<-r.Context().Done() // stay connected until the test ends
+	}))
+	defer upstream.Close()
+
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	manager := cameras.NewManager([]cameras.Config{
+		{Name: "front", StreamURL: upstream.URL},
+	}, discardLogger())
+	server.SetCameraManager(manager, t.TempDir())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	manager.Start(ctx)
+
+	relay, _ := manager.Relay("front")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !relay.Connected() {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/cameras/list", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+
+	var body struct {
+		Cameras []cameraInfo `json:"cameras"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Cameras) != 1 || !body.Cameras[0].Connected {
+		t.Errorf("cameras = %+v, want front reported as connected", body.Cameras)
 	}
 }
 

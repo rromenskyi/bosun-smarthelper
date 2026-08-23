@@ -224,3 +224,53 @@ func TestRelayReconnectsAfterUpstreamDrop(t *testing.T) {
 		t.Errorf("frames = %q, %q, want both to be the upstream's frame (proves a real reconnect happened)", first[0], second[0])
 	}
 }
+
+// TestRelayConnectedTracksUpstreamState is a regression test for a real
+// gap: a dead camera's live view just sat frozen with zero indication of
+// why (docs/cameras.md) — Relay.Connected now gives the web UI something
+// to actually show for that.
+func TestRelayConnectedTracksUpstreamState(t *testing.T) {
+	// Many frames, 5ms apart (see fakeCameraServer) — long enough that
+	// reading just a few of them still leaves the upstream connection
+	// open, giving a reliable window to observe Connected() == true
+	// before the stream naturally ends.
+	frames := make([][]byte, 20)
+	for i := range frames {
+		frames[i] = []byte(fmt.Sprintf("frame-%d", i))
+	}
+	upstream := fakeCameraServer(t, frames, nil)
+	relay := NewRelay("test", upstream.URL, discardLogger())
+	// Long enough that the "disconnected in between" check below can't
+	// flake by a reconnect already having happened by the time it runs.
+	relay.ReconnectDelay = 300 * time.Millisecond
+
+	if relay.Connected() {
+		t.Fatal("a relay that hasn't started yet must not report connected")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go relay.Run(ctx)
+
+	relayServer := httptest.NewServer(http.HandlerFunc(relay.ServeHTTP))
+	defer relayServer.Close()
+
+	// Reading a few frames only succeeds once the relay has actually
+	// connected, and the other ~15 still-pending frames (5ms apart) keep
+	// the upstream connection open well past this check.
+	readFrames(t, relayServer.URL, 3, nil)
+	if !relay.Connected() {
+		t.Error("want Connected() true while frames are still actively flowing from the upstream")
+	}
+
+	// The fake server exhausts its frame list and drops the connection
+	// after ~100ms total — Connected() must flip back to false well
+	// before the next reconnect attempt (300ms away) could succeed.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && relay.Connected() {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if relay.Connected() {
+		t.Error("want Connected() false after the upstream drops, before the next reconnect")
+	}
+}

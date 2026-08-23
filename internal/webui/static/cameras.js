@@ -14,6 +14,11 @@ const language = document.querySelector('#language');
 // button, don't error" idiom the 📊/🔗 buttons already use.
 let camerasKnown = [];
 let activeCamera = null;
+// Refreshed while the dialog is open (see the toggle/close listeners
+// below) so a camera going offline — or coming back — shows up without
+// needing to close and reopen the dialog. A dead camera otherwise left
+// its live view frozen with no explanation at all (docs/cameras.md).
+let camerasStatusTimer = null;
 
 async function loadCamerasAvailability() {
   try {
@@ -33,21 +38,57 @@ function renderCameraPicker() {
   camerasKnown.forEach(camera => {
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = camera[language.value === 'en' ? 'label_en' : 'label_ru'] || camera.name;
-    button.className = camera.name === activeCamera ? 'active' : '';
+    const dot = document.createElement('span');
+    dot.className = camera.connected ? 'camera-picker-dot online' : 'camera-picker-dot';
+    button.appendChild(dot);
+    button.appendChild(document.createTextNode(camera[language.value === 'en' ? 'label_en' : 'label_ru'] || camera.name));
+    button.className += camera.name === activeCamera ? ' active' : '';
     button.addEventListener('click', () => selectCamera(camera.name));
     picker.appendChild(button);
   });
 }
 
+function updateCameraStatus() {
+  const camera = camerasKnown.find(c => c.name === activeCamera);
+  const dot = document.querySelector('#cameras-status-dot');
+  const label = document.querySelector('#cameras-status-text');
+  const online = !!(camera && camera.connected);
+  dot.className = online ? 'camera-status-dot online' : 'camera-status-dot';
+  label.textContent = online ? text[language.value].camerasOnline : text[language.value].camerasOffline;
+}
+
+// Tracks what refreshLiveView last actually set the <img> to (null right
+// after selecting a new camera, so the very next call always decides
+// fresh) — an <img> keeps showing its last successfully-loaded bitmap
+// while a new src is still pending, so switching to an offline camera
+// without this would silently leave the *previous* camera's frame on
+// screen looking like it's still live. Re-evaluated on every periodic
+// refresh tick too, so a camera coming back online while the dialog is
+// still open picks the live view back up without needing to reselect it.
+let liveViewConnected = null;
+
+function refreshLiveView() {
+  const live = document.querySelector('#cameras-live');
+  const camera = camerasKnown.find(c => c.name === activeCamera);
+  const online = !!(camera && camera.connected);
+  if (online === liveViewConnected) return;
+  liveViewConnected = online;
+  if (online) {
+    // A fresh src (rather than reusing the same URL) makes the browser
+    // actually open a new connection to the relay endpoint instead of
+    // assuming nothing changed.
+    live.src = `/api/cameras/${encodeURIComponent(activeCamera)}/stream?_=${Date.now()}`;
+  } else {
+    live.removeAttribute('src');
+  }
+}
+
 function selectCamera(name) {
   activeCamera = name;
+  liveViewConnected = null;
   renderCameraPicker();
-  const live = document.querySelector('#cameras-live');
-  // Setting a fresh src (rather than reusing the same URL) makes the
-  // browser actually open a new connection to the new camera's
-  // relay endpoint instead of assuming nothing changed.
-  live.src = `/api/cameras/${encodeURIComponent(name)}/stream?_=${Date.now()}`;
+  updateCameraStatus();
+  refreshLiveView();
   const player = document.querySelector('#cameras-archive-player');
   player.hidden = true;
   player.removeAttribute('src');
@@ -84,11 +125,20 @@ async function loadCameraArchive(name) {
 camerasToggle.addEventListener('click', () => {
   if (!activeCamera && camerasKnown.length > 0) activeCamera = camerasKnown[0].name;
   renderCameraPicker();
+  updateCameraStatus();
   if (activeCamera) selectCamera(activeCamera);
   camerasDialog.showModal();
+  if (camerasStatusTimer) clearInterval(camerasStatusTimer);
+  camerasStatusTimer = setInterval(async () => {
+    await loadCamerasAvailability();
+    renderCameraPicker();
+    updateCameraStatus();
+    refreshLiveView();
+  }, 5000);
 });
 document.querySelector('#cameras-close').addEventListener('click', () => camerasDialog.close());
 camerasDialog.addEventListener('close', () => {
+  if (camerasStatusTimer) { clearInterval(camerasStatusTimer); camerasStatusTimer = null; }
   // Stop consuming the relay's single-buffer subscriber slot the
   // moment nobody's actually looking — clearing src closes the
   // browser's connection to /stream.
@@ -107,6 +157,7 @@ export function updateCamerasLanguage(locale) {
   document.querySelector('#cameras-archive-empty').textContent = text[locale].camerasArchiveEmpty;
   document.querySelector('#cameras-close').textContent = text[locale].camerasClose;
   renderCameraPicker();
+  updateCameraStatus();
 }
 
 // Called once from the main script's bootstrap sequence — see index.html.

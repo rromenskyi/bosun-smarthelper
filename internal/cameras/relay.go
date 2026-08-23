@@ -41,6 +41,11 @@ type Relay struct {
 
 	mu          sync.Mutex
 	subscribers map[chan []byte]struct{}
+	// connected reports whether frames are actively flowing from the
+	// camera right now — surfaced to the web UI (GET /api/cameras/list,
+	// docs/cameras.md) so a dead/unreachable camera shows as such instead
+	// of just silently never updating its live view.
+	connected bool
 }
 
 // NewRelay builds a Relay for one camera. Run must be called (typically
@@ -60,7 +65,9 @@ func NewRelay(name, streamURL string, logger *slog.Logger) *Relay {
 // backoff on any error.
 func (r *Relay) Run(ctx context.Context) {
 	for ctx.Err() == nil {
-		if err := r.connectOnce(ctx); err != nil && ctx.Err() == nil {
+		err := r.connectOnce(ctx)
+		r.setConnected(false)
+		if err != nil && ctx.Err() == nil {
 			r.Logger.Warn("camera relay disconnected", "camera", r.Name, "error", err)
 		}
 		select {
@@ -69,6 +76,20 @@ func (r *Relay) Run(ctx context.Context) {
 		case <-time.After(r.ReconnectDelay):
 		}
 	}
+}
+
+func (r *Relay) setConnected(connected bool) {
+	r.mu.Lock()
+	r.connected = connected
+	r.mu.Unlock()
+}
+
+// Connected reports whether the relay is actively receiving frames from
+// the camera right now.
+func (r *Relay) Connected() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.connected
 }
 
 func (r *Relay) connectOnce(ctx context.Context) error {
@@ -96,6 +117,7 @@ func (r *Relay) connectOnce(ctx context.Context) error {
 	}
 
 	reader := multipart.NewReader(resp.Body, boundary)
+	r.setConnected(true)
 	for {
 		part, err := reader.NextPart()
 		if err != nil {

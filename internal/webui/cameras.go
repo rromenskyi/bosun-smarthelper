@@ -25,6 +25,12 @@ type cameraInfo struct {
 	Name    string `json:"name"`
 	LabelRU string `json:"label_ru"`
 	LabelEN string `json:"label_en"`
+	// Connected reports whether the relay is actively receiving frames
+	// from this camera right now (internal/cameras.Relay.Connected) — the
+	// web UI uses this to show an online/offline indicator instead of
+	// leaving a dead camera's live view silently frozen with no
+	// explanation.
+	Connected bool `json:"connected"`
 }
 
 func (s *Server) handleCamerasList(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +41,11 @@ func (s *Server) handleCamerasList(w http.ResponseWriter, r *http.Request) {
 	list := s.cameraManager.List()
 	infos := make([]cameraInfo, 0, len(list))
 	for _, c := range list {
-		infos = append(infos, cameraInfo{Name: c.Name, LabelRU: c.LabelRU, LabelEN: c.LabelEN})
+		connected := false
+		if relay, ok := s.cameraManager.Relay(c.Name); ok {
+			connected = relay.Connected()
+		}
+		infos = append(infos, cameraInfo{Name: c.Name, LabelRU: c.LabelRU, LabelEN: c.LabelEN, Connected: connected})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cameras": infos})
 }
