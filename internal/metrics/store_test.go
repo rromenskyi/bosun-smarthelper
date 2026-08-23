@@ -118,6 +118,36 @@ func TestStoreLatestUnknownMetricReportsNotOK(t *testing.T) {
 	}
 }
 
+func TestStoreRecentValuesReturnsNewestFirstUpToN(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	base := time.Now().Truncate(time.Second)
+	for i, v := range []float64{10, 20, 30, 40} {
+		if err := store.Insert(ctx, base.Add(time.Duration(i)*time.Minute), "cpu_percent", v); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+	}
+
+	values, err := store.RecentValues(ctx, "cpu_percent", 2)
+	if err != nil {
+		t.Fatalf("RecentValues: %v", err)
+	}
+	if len(values) != 2 || values[0] != 40 || values[1] != 30 {
+		t.Errorf("values = %v, want [40, 30] (newest first, limited to n=2)", values)
+	}
+}
+
+func TestStoreRecentValuesUnknownMetricReturnsEmpty(t *testing.T) {
+	store := openTestStore(t)
+	values, err := store.RecentValues(context.Background(), "does_not_exist", 5)
+	if err != nil {
+		t.Fatalf("RecentValues: %v", err)
+	}
+	if len(values) != 0 {
+		t.Errorf("values = %v, want empty", values)
+	}
+}
+
 func TestStoreQueryUnknownMetricReturnsEmpty(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

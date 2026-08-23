@@ -6,6 +6,8 @@
 package settings
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -39,6 +41,40 @@ type Data struct {
 	AlertsTelegramEnabled bool `json:"alerts_telegram_enabled,omitempty"`
 	AlertsWebhookEnabled  bool `json:"alerts_webhook_enabled,omitempty"`
 	AlertsSpeakerEnabled  bool `json:"alerts_speaker_enabled,omitempty"`
+	// AlertsThresholds are web-managed metric threshold rules (see
+	// docs/alerts.md) — config.yaml's alerts.thresholds only ever seeds
+	// this list once (see main.go); after that this is authoritative,
+	// added/edited/removed entirely from the settings page. Unlike
+	// AlertsXEnabled above (which gate NOAA weather alerts, the one
+	// global source), each rule here picks its own channels — there's no
+	// single "enabled" toggle for thresholds as a whole.
+	AlertsThresholds []AlertsThresholdRule `json:"alerts_thresholds,omitempty"`
+}
+
+// AlertsThresholdRule is one web-managed metric threshold — see
+// docs/alerts.md. A channel checkbox only does something if that channel
+// is also configured in config.yaml/.env (config decides what channels
+// exist at all; this decides which of them this one rule uses).
+type AlertsThresholdRule struct {
+	ID       string  `json:"id"`
+	Metric   string  `json:"metric"`
+	Operator string  `json:"operator"`
+	Value    float64 `json:"value"`
+	Title    string  `json:"title,omitempty"`
+	// SmoothingSamples > 1 compares a moving average of the last N raw
+	// samples instead of the single latest reading — reduces false
+	// alarms from a noisy sensor. <= 1 means no smoothing.
+	SmoothingSamples int  `json:"smoothing_samples,omitempty"`
+	Telegram         bool `json:"telegram,omitempty"`
+	Webhook          bool `json:"webhook,omitempty"`
+	Speaker          bool `json:"speaker,omitempty"`
+	// Siren only means something alongside Speaker — plays a short
+	// built-in sound before the spoken alert.
+	Siren bool `json:"siren,omitempty"`
+	// CustomText, if set, replaces the auto-generated alarm message sent
+	// to every channel this rule has enabled (never the "back to normal"
+	// message) — see internal/alerts.Threshold.CustomText.
+	CustomText string `json:"custom_text,omitempty"`
 }
 
 func (d *Data) normalize() {
@@ -54,6 +90,35 @@ func (d *Data) normalize() {
 		}
 	}
 	d.CanonicalTags = tags
+
+	for i := range d.AlertsThresholds {
+		rule := &d.AlertsThresholds[i]
+		rule.Metric = strings.TrimSpace(rule.Metric)
+		rule.Title = strings.TrimSpace(rule.Title)
+		rule.CustomText = strings.TrimSpace(rule.CustomText)
+		if rule.SmoothingSamples < 1 {
+			rule.SmoothingSamples = 1
+		}
+		if rule.ID == "" {
+			rule.ID = randomID()
+		}
+	}
+}
+
+// randomID generates a short opaque identifier for a threshold rule
+// created either by seeding from config.yaml or by the settings page —
+// crypto/rand + hex, the same idea as internal/webui's own
+// newSessionID, kept package-local since settings doesn't import webui.
+func randomID() string {
+	buffer := make([]byte, 8)
+	if _, err := rand.Read(buffer); err != nil {
+		// crypto/rand failing is effectively unrecoverable on any real
+		// system; a fixed fallback still keeps normalize() from panicking,
+		// worst case two rules briefly share an ID until the process
+		// (and its broken entropy source) is fixed.
+		return "fallback-id"
+	}
+	return hex.EncodeToString(buffer)
 }
 
 // Store persists Data atomically, the same pattern as memo/documents

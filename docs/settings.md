@@ -12,9 +12,12 @@ restarting the service:
 - automatic backup: on/off and how often (see `docs/backup.md`) — only
   shown once `backup.s3` is configured in `config.yaml`; the manual
   `smarthelper backup`/"back up now" button work regardless
-- alert channels: on/off, one toggle per channel (see `docs/alerts.md`) —
-  a channel only appears once it's configured in `config.yaml`/`.env`; the
-  "Алерты"/"Alerts" tab itself is hidden if no channel is configured at all
+- alert channels: a global on/off per channel for NOAA weather alerts,
+  plus a full add/edit/remove list of metric threshold rules — bound,
+  smoothing, its own per-rule channel selection, optional custom text and
+  siren (see `docs/alerts.md`). A channel only appears once it's
+  configured in `config.yaml`/`.env`; the "Алерты"/"Alerts" tab itself is
+  hidden if no channel is configured at all
 
 ## Why a separate store, not `config.yaml`
 
@@ -49,9 +52,13 @@ Every field applies immediately, without a restart:
   captured once at startup
 - backup schedule → `runBackupScheduler` (`cmd/smarthelper/main.go`) reads
   the current toggle/interval every tick the same way
-- alert channels → `activeAlertNotifiers` (`cmd/smarthelper/main.go`)
+- NOAA alert channels → `noaaAlertNotifiers` (`cmd/smarthelper/main.go`)
   re-reads which toggles are on every time an alert is about to fire,
   rather than a value captured once at startup
+- threshold rules → `runThresholdChecker` (`cmd/smarthelper/main.go`)
+  reads `settings.Data.AlertsThresholds` fresh on every 30s tick, so
+  adding, editing, or removing a rule from the settings page takes effect
+  on the very next tick
 
 ## API
 
@@ -71,8 +78,15 @@ Every field applies immediately, without a restart:
   a partial body would zero out the rest. Persists, applies live, and
   returns the saved (normalized: trimmed, tags lowercased) result. Rejects
   out-of-range temperatures (`0`–`2`), unknown languages (must be `ru` or
-  `en`), and `backup_auto_enabled: true` with a non-positive
-  `backup_interval_hours`, all with `400`.
+  `en`), `backup_auto_enabled: true` with a non-positive
+  `backup_interval_hours`, and an `alerts_thresholds` entry missing a
+  `metric` or with an operator other than `>`, `<`, `>=`, `<=`, `==`, all
+  with `400`. A threshold rule with no `id` gets one assigned server-side
+  on save (`internal/settings.AlertsThresholdRule`) — the settings page
+  never invents one itself, and the LLM never sees or sets it at all
+  (`internal/tools.CodeExecTool`'s sibling, `run_code`'s `session_id`,
+  follows the same "never let the caller supply an identity used for
+  storage/state" rule).
 - `GET /api/backups` → `{"configured": false, "backups": []}` if
   `backup.s3` isn't set in `config.yaml`, otherwise
   `{"configured": true, "backups": [{"key", "size_bytes", "last_modified"}, ...]}`.

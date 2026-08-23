@@ -239,6 +239,20 @@
     .settings-backup-header .settings-label { margin-top: 0; }
     #settings-backup-list li { flex-direction: column; align-items: flex-start; gap: 2px; }
     #settings-backup-list .backup-key { font-size: 12.5px; overflow-wrap: anywhere; }
+    #settings-thresholds-header { margin-top: 14px; }
+    .threshold-rule {
+      display: flex; flex-direction: column; gap: 6px; padding: 10px;
+      border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;
+    }
+    .threshold-rule-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .threshold-rule-row select, .threshold-rule-row input[type="number"] {
+      flex: 1; min-width: 90px;
+    }
+    .threshold-metric { flex: 2; min-width: 140px; }
+    .threshold-channels { display: flex; gap: 12px; flex-wrap: wrap; }
+    .threshold-channels .settings-checkbox { margin-top: 0; }
+    .threshold-siren-row { margin-left: 16px; }
+    .threshold-remove { align-self: flex-end; }
     #settings-backup-list .backup-meta { font-size: 11px; color: var(--muted); }
     dialog#metrics-dialog {
       border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
@@ -393,6 +407,12 @@
             </label>
           </div>
           <p class="docs-hint" id="settings-alerts-none-hint" hidden>Ни один канал алертов не настроен — см. docs/alerts.md.</p>
+          <div class="settings-backup-header" id="settings-thresholds-header">
+            <span class="settings-label" id="settings-label-thresholds">Пороговые алерты</span>
+            <button type="button" class="clear" id="settings-threshold-add">+ Добавить</button>
+          </div>
+          <p class="docs-hint" id="settings-thresholds-empty" hidden>Пока нет ни одного правила.</p>
+          <div id="settings-thresholds-list"></div>
         </div>
         <button type="submit" id="settings-save-button">Сохранить</button>
         <p class="docs-hint" id="settings-saved-hint" hidden>Сохранено.</p>
@@ -488,8 +508,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть', mergesToggleTitle: 'Слияние счётчиков', mergesTitle: 'Слияние счётчиков', mergesHint: 'Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.', mergesEmpty: 'Пока нечего проверять.', mergesClose: 'Закрыть', mergesApprove: 'Слить', mergesReject: 'Не сливать', editTitle: 'Изменить', editSend: 'Отправить', editCancel: 'Отмена', quickToolWaiting: 'Читаю датчик…', settingsLabelBackupAuto: 'Резервное копирование', settingsBackupAutoLabel: 'Автоматически, по расписанию', settingsBackupIntervalDaily: 'Каждый день', settingsBackupIntervalWeekly: 'Раз в неделю', settingsBackupIntervalMonthly: 'Раз в месяц', settingsLabelBackupList: 'Бэкапы', settingsBackupRun: 'Сделать бэкап сейчас', settingsBackupEmpty: 'Бэкапов ещё нет.', settingsBackupUnconfigured: 'Резервное копирование не настроено — задайте backup.s3 в config.yaml.', settingsTabGeneral: 'Общие', settingsTabBackup: 'Бэкап', settingsTabAlerts: 'Алерты', settingsAlertsHint: 'Каждый канал появляется здесь только если он настроен в config.yaml/.env — см. docs/alerts.md.', settingsAlertsTelegram: 'Телеграм', settingsAlertsWebhook: 'Вебхук', settingsAlertsSpeaker: 'Голосом через динамик', settingsAlertsNone: 'Ни один канал алертов не настроен — см. docs/alerts.md.' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close', mergesToggleTitle: 'Metric merges', mergesTitle: 'Metric merges', mergesHint: 'The bosun noticed similar maintenance counters — confirm if this is really the same counter under two different names.', mergesEmpty: 'Nothing to review right now.', mergesClose: 'Close', mergesApprove: 'Merge', mergesReject: "Don't merge", editTitle: 'Edit', editSend: 'Send', editCancel: 'Cancel', quickToolWaiting: 'Reading sensor…', settingsLabelBackupAuto: 'Backup', settingsBackupAutoLabel: 'Automatic, on a schedule', settingsBackupIntervalDaily: 'Every day', settingsBackupIntervalWeekly: 'Once a week', settingsBackupIntervalMonthly: 'Once a month', settingsLabelBackupList: 'Backups', settingsBackupRun: 'Back up now', settingsBackupEmpty: 'No backups yet.', settingsBackupUnconfigured: 'Backup is not configured — set backup.s3 in config.yaml.', settingsTabGeneral: 'General', settingsTabBackup: 'Backup', settingsTabAlerts: 'Alerts', settingsAlertsHint: 'Each channel appears here only once it is configured in config.yaml/.env — see docs/alerts.md.', settingsAlertsTelegram: 'Telegram', settingsAlertsWebhook: 'Webhook', settingsAlertsSpeaker: 'Speak through the speaker', settingsAlertsNone: 'No alert channel is configured — see docs/alerts.md.' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть', mergesToggleTitle: 'Слияние счётчиков', mergesTitle: 'Слияние счётчиков', mergesHint: 'Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.', mergesEmpty: 'Пока нечего проверять.', mergesClose: 'Закрыть', mergesApprove: 'Слить', mergesReject: 'Не сливать', editTitle: 'Изменить', editSend: 'Отправить', editCancel: 'Отмена', quickToolWaiting: 'Читаю датчик…', settingsLabelBackupAuto: 'Резервное копирование', settingsBackupAutoLabel: 'Автоматически, по расписанию', settingsBackupIntervalDaily: 'Каждый день', settingsBackupIntervalWeekly: 'Раз в неделю', settingsBackupIntervalMonthly: 'Раз в месяц', settingsLabelBackupList: 'Бэкапы', settingsBackupRun: 'Сделать бэкап сейчас', settingsBackupEmpty: 'Бэкапов ещё нет.', settingsBackupUnconfigured: 'Резервное копирование не настроено — задайте backup.s3 в config.yaml.', settingsTabGeneral: 'Общие', settingsTabBackup: 'Бэкап', settingsTabAlerts: 'Алерты', settingsAlertsHint: 'Каждый канал появляется здесь только если он настроен в config.yaml/.env — см. docs/alerts.md.', settingsAlertsTelegram: 'Телеграм', settingsAlertsWebhook: 'Вебхук', settingsAlertsSpeaker: 'Голосом через динамик', settingsAlertsNone: 'Ни один канал алертов не настроен — см. docs/alerts.md.', settingsLabelThresholds: 'Пороговые алерты', thresholdAdd: '+ Добавить', thresholdsEmpty: 'Пока нет ни одного правила.', thresholdTitlePlaceholder: 'Название (необязательно)', thresholdSmoothingLabel: 'Сглаживание (число последних значений)', thresholdSiren: 'Сирена перед текстом', thresholdCustomTextPlaceholder: 'Свой текст алерта (необязательно) — уйдёт во все включённые каналы вместо автотекста', thresholdRemove: 'Удалить' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close', mergesToggleTitle: 'Metric merges', mergesTitle: 'Metric merges', mergesHint: 'The bosun noticed similar maintenance counters — confirm if this is really the same counter under two different names.', mergesEmpty: 'Nothing to review right now.', mergesClose: 'Close', mergesApprove: 'Merge', mergesReject: "Don't merge", editTitle: 'Edit', editSend: 'Send', editCancel: 'Cancel', quickToolWaiting: 'Reading sensor…', settingsLabelBackupAuto: 'Backup', settingsBackupAutoLabel: 'Automatic, on a schedule', settingsBackupIntervalDaily: 'Every day', settingsBackupIntervalWeekly: 'Once a week', settingsBackupIntervalMonthly: 'Once a month', settingsLabelBackupList: 'Backups', settingsBackupRun: 'Back up now', settingsBackupEmpty: 'No backups yet.', settingsBackupUnconfigured: 'Backup is not configured — set backup.s3 in config.yaml.', settingsTabGeneral: 'General', settingsTabBackup: 'Backup', settingsTabAlerts: 'Alerts', settingsAlertsHint: 'Each channel appears here only once it is configured in config.yaml/.env — see docs/alerts.md.', settingsAlertsTelegram: 'Telegram', settingsAlertsWebhook: 'Webhook', settingsAlertsSpeaker: 'Speak through the speaker', settingsAlertsNone: 'No alert channel is configured — see docs/alerts.md.', settingsLabelThresholds: 'Threshold alerts', thresholdAdd: '+ Add', thresholdsEmpty: 'No rules yet.', thresholdTitlePlaceholder: 'Title (optional)', thresholdSmoothingLabel: 'Smoothing (number of recent samples)', thresholdSiren: 'Siren before the text', thresholdCustomTextPlaceholder: 'Custom alert text (optional) — sent to every enabled channel instead of the auto-generated message', thresholdRemove: 'Remove' }
     };
 
     function escapeHTML(value) {
@@ -962,6 +982,9 @@
       document.querySelector('#settings-alerts-webhook-label').textContent = text[locale].settingsAlertsWebhook;
       document.querySelector('#settings-alerts-speaker-label').textContent = text[locale].settingsAlertsSpeaker;
       document.querySelector('#settings-alerts-none-hint').textContent = text[locale].settingsAlertsNone;
+      document.querySelector('#settings-label-thresholds').textContent = text[locale].settingsLabelThresholds;
+      document.querySelector('#settings-threshold-add').textContent = text[locale].thresholdAdd;
+      document.querySelector('#settings-thresholds-empty').textContent = text[locale].thresholdsEmpty;
       mic.title = text[locale].micTitle;
       mic.setAttribute('aria-label', text[locale].micTitle);
       metricsToggle.title = text[locale].metricsToggleTitle;
@@ -1261,7 +1284,160 @@
       const anyAlertsConfigured = data.alerts_telegram_configured || data.alerts_webhook_configured || data.alerts_speaker_configured;
       document.querySelector('#settings-tab-alerts').hidden = !anyAlertsConfigured;
       document.querySelector('#settings-alerts-none-hint').hidden = anyAlertsConfigured;
+
+      alertsChannelsConfigured = {
+        telegram: !!data.alerts_telegram_configured,
+        webhook: !!data.alerts_webhook_configured,
+        speaker: !!data.alerts_speaker_configured
+      };
+      try {
+        const metricsResp = await fetch('/api/metrics/list');
+        const metricsData = await metricsResp.json();
+        knownMetricsForAlerts = Array.isArray(metricsData.metrics) ? metricsData.metrics : [];
+      } catch {
+        knownMetricsForAlerts = [];
+      }
+      renderThresholdRules(settings.alerts_thresholds || []);
     }
+
+    // Threshold alerts (docs/alerts.md): each rule is a plain DOM node in
+    // #settings-thresholds-list — no separate JS array kept in sync, the
+    // DOM itself is the source of truth (same idea as the monitoring
+    // dashboard's metrics checklist), read back on submit by
+    // collectThresholdRules().
+    let knownMetricsForAlerts = [];
+    let alertsChannelsConfigured = { telegram: false, webhook: false, speaker: false };
+    const thresholdOperators = ['>', '<', '>=', '<=', '=='];
+
+    function renderThresholdRules(rules) {
+      const list = document.querySelector('#settings-thresholds-list');
+      list.querySelectorAll('.threshold-rule').forEach(node => node.remove());
+      document.querySelector('#settings-thresholds-empty').hidden = rules.length > 0;
+      rules.forEach(rule => list.appendChild(buildThresholdRuleNode(rule)));
+    }
+
+    function buildThresholdRuleNode(rule) {
+      rule = rule || {};
+      const node = document.createElement('div');
+      node.className = 'threshold-rule';
+      node.dataset.id = rule.id || '';
+
+      const row = document.createElement('div');
+      row.className = 'threshold-rule-row';
+
+      const metricSelect = document.createElement('select');
+      metricSelect.className = 'threshold-metric';
+      const metricNames = new Set(knownMetricsForAlerts.map(m => m.name));
+      if (rule.metric && !metricNames.has(rule.metric)) {
+        knownMetricsForAlerts = knownMetricsForAlerts.concat([{ name: rule.metric, label_ru: rule.metric, label_en: rule.metric }]);
+      }
+      knownMetricsForAlerts.forEach(m => {
+        const option = document.createElement('option');
+        option.value = m.name;
+        option.textContent = m[language.value === 'en' ? 'label_en' : 'label_ru'] || m.name;
+        if (m.name === rule.metric) option.selected = true;
+        metricSelect.appendChild(option);
+      });
+
+      const operatorSelect = document.createElement('select');
+      operatorSelect.className = 'threshold-operator';
+      thresholdOperators.forEach(op => {
+        const option = document.createElement('option');
+        option.value = op;
+        option.textContent = op;
+        if (op === rule.operator) option.selected = true;
+        operatorSelect.appendChild(option);
+      });
+
+      const valueInput = document.createElement('input');
+      valueInput.type = 'number';
+      valueInput.step = 'any';
+      valueInput.className = 'threshold-value';
+      valueInput.value = rule.value ?? '';
+
+      row.append(metricSelect, operatorSelect, valueInput);
+
+      const titleInput = document.createElement('input');
+      titleInput.type = 'text';
+      titleInput.className = 'threshold-title';
+      titleInput.placeholder = text[language.value].thresholdTitlePlaceholder;
+      titleInput.value = rule.title || '';
+
+      const smoothingLabel = document.createElement('label');
+      smoothingLabel.className = 'settings-label';
+      smoothingLabel.textContent = text[language.value].thresholdSmoothingLabel;
+      const smoothingInput = document.createElement('input');
+      smoothingInput.type = 'number';
+      smoothingInput.min = '1';
+      smoothingInput.className = 'threshold-smoothing';
+      smoothingInput.value = rule.smoothing_samples || 1;
+
+      const channels = document.createElement('div');
+      channels.className = 'threshold-channels';
+      const sirenRow = document.createElement('label');
+      sirenRow.className = 'settings-checkbox threshold-siren-row';
+      const sirenCheckbox = document.createElement('input');
+      sirenCheckbox.type = 'checkbox';
+      sirenCheckbox.className = 'threshold-siren';
+      sirenCheckbox.checked = !!rule.siren;
+      sirenRow.append(sirenCheckbox, ' ' + text[language.value].thresholdSiren);
+      sirenRow.hidden = !rule.speaker;
+
+      [
+        ['telegram', 'threshold-telegram', text[language.value].settingsAlertsTelegram, rule.telegram],
+        ['webhook', 'threshold-webhook', text[language.value].settingsAlertsWebhook, rule.webhook],
+        ['speaker', 'threshold-speaker', text[language.value].settingsAlertsSpeaker, rule.speaker]
+      ].forEach(([channel, className, label, checked]) => {
+        if (!alertsChannelsConfigured[channel]) return;
+        const wrapper = document.createElement('label');
+        wrapper.className = 'settings-checkbox';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = className;
+        checkbox.checked = !!checked;
+        if (channel === 'speaker') {
+          checkbox.addEventListener('change', () => { sirenRow.hidden = !checkbox.checked; });
+        }
+        wrapper.append(checkbox, ' ' + label);
+        channels.appendChild(wrapper);
+      });
+
+      const customText = document.createElement('textarea');
+      customText.className = 'threshold-custom-text';
+      customText.rows = 2;
+      customText.placeholder = text[language.value].thresholdCustomTextPlaceholder;
+      customText.value = rule.custom_text || '';
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'clear threshold-remove';
+      removeButton.textContent = text[language.value].thresholdRemove;
+      removeButton.addEventListener('click', () => node.remove());
+
+      node.append(row, titleInput, smoothingLabel, smoothingInput, channels, sirenRow, customText, removeButton);
+      return node;
+    }
+
+    function collectThresholdRules() {
+      return [...document.querySelectorAll('#settings-thresholds-list .threshold-rule')].map(node => ({
+        id: node.dataset.id || undefined,
+        metric: node.querySelector('.threshold-metric').value,
+        operator: node.querySelector('.threshold-operator').value,
+        value: parseFloat(node.querySelector('.threshold-value').value) || 0,
+        title: node.querySelector('.threshold-title').value.trim(),
+        smoothing_samples: parseInt(node.querySelector('.threshold-smoothing').value, 10) || 1,
+        telegram: node.querySelector('.threshold-telegram')?.checked || false,
+        webhook: node.querySelector('.threshold-webhook')?.checked || false,
+        speaker: node.querySelector('.threshold-speaker')?.checked || false,
+        siren: node.querySelector('.threshold-siren').checked,
+        custom_text: node.querySelector('.threshold-custom-text').value.trim()
+      }));
+    }
+
+    document.querySelector('#settings-threshold-add').addEventListener('click', () => {
+      document.querySelector('#settings-thresholds-empty').hidden = true;
+      document.querySelector('#settings-thresholds-list').appendChild(buildThresholdRuleNode({ operator: '>', smoothing_samples: 1 }));
+    });
 
     async function loadBackupsList() {
       const list = document.querySelector('#settings-backup-list');
@@ -1331,7 +1507,8 @@
         backup_interval_hours: parseInt(document.querySelector('#settings-backup-interval').value, 10),
         alerts_telegram_enabled: document.querySelector('#settings-alerts-telegram').checked,
         alerts_webhook_enabled: document.querySelector('#settings-alerts-webhook').checked,
-        alerts_speaker_enabled: document.querySelector('#settings-alerts-speaker').checked
+        alerts_speaker_enabled: document.querySelector('#settings-alerts-speaker').checked,
+        alerts_thresholds: collectThresholdRules()
       };
       saveButton.disabled = true;
       savedHint.hidden = true;

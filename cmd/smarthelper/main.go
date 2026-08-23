@@ -145,6 +145,7 @@ func serveCmd() *cobra.Command {
 				RemoteTemperature: cfg.LLM.Remote.Temperature,
 				LocalTemperature:  cfg.LLM.Local.Temperature,
 				CanonicalTags:     cfg.Memo.CanonicalTags,
+				AlertsThresholds:  seedThresholdRules(cfg.Alerts.Thresholds),
 			})
 			if err != nil {
 				return fmt.Errorf("load settings: %w", err)
@@ -220,12 +221,16 @@ func serveCmd() *cobra.Command {
 					collector := metrics.NewCollector(metricsStore, registry, cfg.Metrics.Sources, logger)
 					go collector.Run(cmd.Context(), interval, time.Duration(retentionDays)*24*time.Hour)
 
-					if len(cfg.Alerts.Thresholds) > 0 {
-						if alertsDataDir, err := resolveDataDir(""); err != nil {
-							logger.Warn("could not resolve data directory; threshold alerts disabled", "error", err)
-						} else {
-							go runThresholdChecker(cmd.Context(), cfg, settingsStore, metricsStore, ttsEngine, alertsDataDir, logger)
-						}
+					// Always started, not gated on config.yaml having any
+					// alerts.thresholds entries — rules are web-managed
+					// now (settings.Data.AlertsThresholds, see
+					// runThresholdChecker) and can be added with zero
+					// config.yaml changes; the checker itself is a no-op
+					// on every tick until at least one rule exists.
+					if alertsDataDir, err := resolveDataDir(""); err != nil {
+						logger.Warn("could not resolve data directory; threshold alerts disabled", "error", err)
+					} else {
+						go runThresholdChecker(cmd.Context(), cfg, settingsStore, metricsStore, ttsEngine, alertsDataDir, logger)
 					}
 				}
 			}
@@ -731,40 +736,80 @@ func runBackupScheduler(
 	}
 }
 
-// activeAlertNotifiers assembles every alert channel that's both
-// configured (config.yaml/.env) and enabled (the settings page's live
-// toggle) — the same "config decides what exists, settings decides what's
-// on" split already used for backup.s3/settings.BackupAutoEnabled.
+// telegramNotifier/webhookNotifier/speakerNotifier each build one channel
+// if it's both configured (config.yaml/.env) and enabled by the caller —
+// shared by noaaAlertNotifiers (one global enabled flag per channel) and
+// thresholdRuleNotifiers (one enabled flag per rule, per channel). Return
+// a bare `nil` (not a typed nil pointer) on every "not applicable" path,
+// so the caller's `!= nil` check against the alerts.Notifier interface
+// behaves correctly.
+func telegramNotifier(cfg config.AlertsTelegramConfig, enabled bool, logger *slog.Logger) alerts.Notifier {
+	if cfg.ChatID == "" || !enabled {
+		return nil
+	}
+	botToken := os.Getenv(cfg.BotTokenEnv)
+	if botToken == "" {
+		logger.Warn("telegram alerts enabled but bot token env var is empty", "env", cfg.BotTokenEnv)
+		return nil
+	}
+	return &alerts.TelegramNotifier{BotToken: botToken, ChatID: cfg.ChatID}
+}
+
+func webhookNotifier(cfg config.AlertsWebhookConfig, enabled bool) alerts.Notifier {
+	if cfg.URL == "" || !enabled {
+		return nil
+	}
+	return &alerts.WebhookNotifier{URL: cfg.URL}
+}
+
+func speakerNotifier(cfg config.AlertsSpeakerConfig, enabled bool, ttsEngine voice.TTSEngine, language string, logger *slog.Logger) alerts.Notifier {
+	if !cfg.Enabled || !enabled {
+		return nil
+	}
+	if ttsEngine == nil {
+		logger.Warn("speaker alerts enabled but no TTS engine is configured (voice.tts.model_path)")
+		return nil
+	}
+	return &alerts.SpeakerNotifier{TTS: ttsEngine, PlayerPath: cfg.PlayerPath, Language: language}
+}
+
+func collectNotifiers(candidates ...alerts.Notifier) []alerts.Notifier {
+	var notifiers []alerts.Notifier
+	for _, n := range candidates {
+		if n != nil {
+			notifiers = append(notifiers, n)
+		}
+	}
+	return notifiers
+}
+
+// noaaAlertNotifiers assembles every channel that's both configured
+// (config.yaml/.env) and globally enabled (the settings page's NOAA
+// toggles) — NOAA is a single source, so unlike threshold rules there's
+// no per-rule channel selection to make, just one on/off per channel.
 // Re-read on every check rather than cached once, so flipping a settings
 // toggle takes effect on the very next tick, not after a restart.
-func activeAlertNotifiers(cfg *config.Config, settingsStore *settings.Store, ttsEngine voice.TTSEngine, logger *slog.Logger) []alerts.Notifier {
+func noaaAlertNotifiers(cfg *config.Config, settingsStore *settings.Store, ttsEngine voice.TTSEngine, logger *slog.Logger) []alerts.Notifier {
 	data := settingsStore.Get()
-	var notifiers []alerts.Notifier
+	return collectNotifiers(
+		telegramNotifier(cfg.Alerts.Channels.Telegram, data.AlertsTelegramEnabled, logger),
+		webhookNotifier(cfg.Alerts.Channels.Webhook, data.AlertsWebhookEnabled),
+		speakerNotifier(cfg.Alerts.Channels.Speaker, data.AlertsSpeakerEnabled, ttsEngine, data.DefaultLanguage, logger),
+	)
+}
 
-	tg := cfg.Alerts.Channels.Telegram
-	if tg.ChatID != "" && data.AlertsTelegramEnabled {
-		if botToken := os.Getenv(tg.BotTokenEnv); botToken == "" {
-			logger.Warn("telegram alerts enabled but bot token env var is empty", "env", tg.BotTokenEnv)
-		} else {
-			notifiers = append(notifiers, &alerts.TelegramNotifier{BotToken: botToken, ChatID: tg.ChatID})
-		}
-	}
-
-	wh := cfg.Alerts.Channels.Webhook
-	if wh.URL != "" && data.AlertsWebhookEnabled {
-		notifiers = append(notifiers, &alerts.WebhookNotifier{URL: wh.URL})
-	}
-
-	sp := cfg.Alerts.Channels.Speaker
-	if sp.Enabled && data.AlertsSpeakerEnabled {
-		if ttsEngine == nil {
-			logger.Warn("speaker alerts enabled but no TTS engine is configured (voice.tts.model_path)")
-		} else {
-			notifiers = append(notifiers, &alerts.SpeakerNotifier{TTS: ttsEngine, PlayerPath: sp.PlayerPath, Language: data.DefaultLanguage})
-		}
-	}
-
-	return notifiers
+// thresholdRuleNotifiers assembles the channels one specific web-managed
+// threshold rule (settings.AlertsThresholdRule) has opted into — a
+// channel still only fires if it's also configured in
+// config.yaml/.env, same "config decides what exists" rule as
+// noaaAlertNotifiers, just keyed off the rule's own checkboxes instead of
+// a single global toggle.
+func thresholdRuleNotifiers(cfg *config.Config, rule settings.AlertsThresholdRule, ttsEngine voice.TTSEngine, language string, logger *slog.Logger) []alerts.Notifier {
+	return collectNotifiers(
+		telegramNotifier(cfg.Alerts.Channels.Telegram, rule.Telegram, logger),
+		webhookNotifier(cfg.Alerts.Channels.Webhook, rule.Webhook),
+		speakerNotifier(cfg.Alerts.Channels.Speaker, rule.Speaker, ttsEngine, language, logger),
+	)
 }
 
 // currentPosition resolves the point NOAA alerts should watch: a fixed
@@ -798,12 +843,35 @@ func currentPosition(ctx context.Context, registry *tools.Registry, noaaCfg conf
 	return lat, lon, nil
 }
 
-// runThresholdChecker watches config.yaml's alerts.thresholds against
-// internal/metrics' latest samples, notifying only on a state transition
-// (see alerts.ThresholdChecker.Check) — every metric name here is exactly
-// whatever metrics.sources already samples, so a future custom sensor
-// (a tank level, battery charge) needs no change in this function, only a
-// new metrics.sources entry and a new thresholds entry in config.yaml.
+// seedThresholdRules converts config.yaml's alerts.thresholds (if any)
+// into the settings-managed rule shape, for settings.Load to seed the
+// very first time — a one-time migration path, not something read again
+// after that (see runThresholdChecker). Every channel starts off so the
+// human opts each rule into Telegram/webhook/speaker from the settings
+// page explicitly, same as config.yaml only ever provided metric/
+// operator/value/title before this feature existed.
+func seedThresholdRules(configured []config.AlertsThresholdConfig) []settings.AlertsThresholdRule {
+	rules := make([]settings.AlertsThresholdRule, 0, len(configured))
+	for _, t := range configured {
+		rules = append(rules, settings.AlertsThresholdRule{
+			Metric: t.Metric, Operator: t.Operator, Value: t.Value, Title: t.Title,
+			SmoothingSamples: 1,
+		})
+	}
+	return rules
+}
+
+// runThresholdChecker watches internal/settings.Data.AlertsThresholds —
+// web-managed rules, not config.yaml (which only ever seeds that list
+// once, see settings.Load's call site above) — against internal/metrics'
+// samples, notifying only on a state transition (see
+// alerts.ThresholdChecker.Check). Rules are re-read from settingsStore on
+// every tick, so adding, editing, or removing one from the settings page
+// takes effect on the very next tick, not after a restart — every metric
+// name here is exactly whatever metrics.sources already samples, so a
+// future custom sensor (a tank level, battery charge) needs no change in
+// this function, only a new metrics.sources entry and a new rule from
+// the web UI.
 func runThresholdChecker(
 	ctx context.Context,
 	cfg *config.Config,
@@ -813,11 +881,6 @@ func runThresholdChecker(
 	dataDir string,
 	logger *slog.Logger,
 ) {
-	thresholds := make([]alerts.Threshold, 0, len(cfg.Alerts.Thresholds))
-	for _, t := range cfg.Alerts.Thresholds {
-		thresholds = append(thresholds, alerts.Threshold{Metric: t.Metric, Operator: t.Operator, Value: t.Value, Title: t.Title})
-	}
-
 	state, err := alerts.LoadThresholdState(dataDir)
 	if err != nil {
 		logger.Warn("load threshold alert state; starting fresh", "error", err)
@@ -832,8 +895,22 @@ func runThresholdChecker(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			notifiers := activeAlertNotifiers(cfg, settingsStore, ttsEngine, logger)
-			checker := alerts.ThresholdChecker{Store: metricsStore, Thresholds: thresholds, Notifiers: notifiers}
+			data := settingsStore.Get()
+			thresholds := make([]alerts.Threshold, 0, len(data.AlertsThresholds))
+			for _, rule := range data.AlertsThresholds {
+				thresholds = append(thresholds, alerts.Threshold{
+					ID:               rule.ID,
+					Metric:           rule.Metric,
+					Operator:         rule.Operator,
+					Value:            rule.Value,
+					Title:            rule.Title,
+					SmoothingSamples: rule.SmoothingSamples,
+					CustomText:       rule.CustomText,
+					PlaySiren:        rule.Siren,
+					Notifiers:        thresholdRuleNotifiers(cfg, rule, ttsEngine, data.DefaultLanguage, logger),
+				})
+			}
+			checker := alerts.ThresholdChecker{Store: metricsStore, Thresholds: thresholds}
 			next, errs := checker.Check(ctx, state)
 			for _, err := range errs {
 				logger.Warn("threshold alert check", "error", err)
@@ -881,7 +958,7 @@ func runNOAAChecker(
 				logger.Warn("resolve position for NOAA alerts", "error", err)
 				continue
 			}
-			notifiers := activeAlertNotifiers(cfg, settingsStore, ttsEngine, logger)
+			notifiers := noaaAlertNotifiers(cfg, settingsStore, ttsEngine, logger)
 			next, errs := alerts.CheckNOAA(ctx, lat, lon, seen, notifiers)
 			for _, err := range errs {
 				logger.Warn("NOAA alert check", "error", err)

@@ -96,10 +96,11 @@ In daily use, not just a prototype. Working today:
   once its tool exists — see `docs/monitoring.md`.
 - **Alerts** — NOAA weather alerts for the current position, and any
   monitored metric (disk space today; a battery charge or water tank once
-  that sensor exists, no code change needed) crossing a configured
-  threshold, delivered via Telegram, a webhook, and/or spoken through the
-  host's own speaker — each channel is on only once it's both configured
-  and enabled from the settings page — see `docs/alerts.md`.
+  that sensor exists, no code change needed) crossing a bound you set from
+  the settings page — moving-average smoothing, its own Telegram/webhook/
+  speaker selection per rule, optional custom text, and a "siren before
+  the text" checkbox for the speaker. A channel is only ever usable once
+  it's configured in `config.yaml`/`.env` — see `docs/alerts.md`.
 - **`run_code`** — the LLM writes and runs a short Python program for
   math/parsing/simulation it would otherwise get wrong reasoning about
   itself. Never runs inside `bosun`'s own process/container — a separate,

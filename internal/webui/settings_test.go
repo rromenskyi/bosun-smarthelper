@@ -137,6 +137,62 @@ func TestServerSettingsUpdateRejectsInvalidLanguage(t *testing.T) {
 	}
 }
 
+func TestServerSettingsUpdateRejectsThresholdWithNoMetric(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetSettingsStore(mustLoadSettings(t))
+
+	payload := `{"alerts_thresholds":[{"operator":">","value":90}]}`
+	request := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", response.Code)
+	}
+}
+
+func TestServerSettingsUpdateRejectsThresholdWithInvalidOperator(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetSettingsStore(mustLoadSettings(t))
+
+	payload := `{"alerts_thresholds":[{"metric":"disk_used_percent","operator":"~=","value":90}]}`
+	request := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", response.Code)
+	}
+}
+
+func TestServerSettingsUpdateAcceptsValidThreshold(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetSettingsStore(mustLoadSettings(t))
+
+	payload := `{"alerts_thresholds":[{"metric":"disk_used_percent","operator":">","value":90,"telegram":true}]}`
+	request := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body settingsResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Settings.AlertsThresholds) != 1 {
+		t.Fatalf("thresholds = %+v, want 1", body.Settings.AlertsThresholds)
+	}
+	rule := body.Settings.AlertsThresholds[0]
+	if rule.ID == "" {
+		t.Error("saved threshold has no ID assigned")
+	}
+	if !rule.Telegram {
+		t.Error("telegram flag wasn't preserved")
+	}
+}
+
 type fakeTemperatureController struct {
 	remote, local float64
 }

@@ -42,6 +42,11 @@ type Alert struct {
 	// by metric name and crossed/not-crossed state instead, see
 	// ThresholdChecker).
 	ID string
+	// PlaySiren asks SpeakerNotifier to play a short built-in siren sound
+	// before speaking Title/Body — ignored by every other Notifier. Set
+	// per threshold rule (internal/settings.AlertsThresholdRule.Siren),
+	// never for NOAA alerts.
+	PlaySiren bool
 }
 
 // Notifier delivers one alert through one channel. Each implementation

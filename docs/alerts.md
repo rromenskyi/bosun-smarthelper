@@ -14,11 +14,12 @@ not a general logging or pub/sub system. Two sources, three channels.
   tick, which is the right choice for anything that moves.
 - **Metric thresholds** (`internal/alerts/threshold.go`) — watches any
   metric `internal/metrics` already samples (`metrics.sources` in
-  `config.yaml`, see `docs/monitoring.md`) against a configured limit.
-  This package has no idea what a metric physically represents — a future
+  `config.yaml`, see `docs/monitoring.md`) against a bound. This package
+  has no idea what a metric physically represents — a future
   battery-charge or grey/black/fresh-water-tank sensor needs only a new
-  `metrics.sources` entry and a new `alerts.thresholds` entry, no code
-  change here.
+  `metrics.sources` entry, no code change here. Unlike NOAA, threshold
+  *rules* are entirely web-managed (added/edited/removed from the
+  settings page, not `config.yaml`) — see "Threshold rules" below.
 
 Both are **edge-triggered**: a threshold notifies once when it crosses,
 once more when it goes back to normal, never again on every tick while it
@@ -36,7 +37,7 @@ alerts:
     # latitude: 42.35
     # longitude: -71.05
     check_interval: "15m"
-  thresholds:
+  thresholds:                # optional — see "Threshold rules" below
     - metric: disk_used_percent
       operator: ">"           # ">", "<", ">=", "<=", "=="
       value: 90
@@ -52,17 +53,62 @@ alerts:
       player_path: "aplay"
 ```
 
-`thresholds` with no entries disables the threshold checker entirely
-(no goroutine started); `noaa` with neither `use_gps` nor a non-zero
-`latitude`/`longitude` disables the NOAA checker the same way.
+`noaa` with neither `use_gps` nor a non-zero `latitude`/`longitude`
+disables the NOAA checker (no goroutine started). The threshold checker
+is always started once metrics are enabled (`metrics.enabled`, the
+default) — it's a no-op on every tick until at least one rule exists, and
+rules now live in the settings page, not `config.yaml`.
+
+## Threshold rules — web-managed, not `config.yaml`
+
+`alerts.thresholds` in `config.yaml` (above) is a **one-time seed**, the
+same "config.yaml seeds it once, the settings page is authoritative after
+that" pattern every other editable setting uses (`docs/settings.md`).
+After the very first run, rules are added, edited, and removed entirely
+from the settings page's "Алерты"/"Alerts" tab — a "Пороговые алерты"/
+"Threshold alerts" section lists them, with an "+ Добавить"/"+ Add"
+button for a new one. Each rule picks:
+
+- **Metric** — a dropdown populated from `GET /api/metrics/list`, i.e.
+  exactly whatever `metrics.sources` already reports (`docs/monitoring.md`).
+- **Bound** — an operator (`>`, `<`, `>=`, `<=`, `==`) and a value.
+- **Smoothing** — compares a moving average of the last N raw samples
+  instead of the single latest reading, to reduce false alarms from a
+  noisy sensor. N = 1 (the default) means no smoothing.
+- **Channels** — its own independent Telegram/webhook/speaker checkboxes.
+  Unlike NOAA (one source, one global toggle per channel — see below),
+  each threshold rule chooses its own subset of whichever channels are
+  configured; a checkbox for a channel with no credentials in
+  `config.yaml`/`.env` simply doesn't appear.
+- **Custom text** (optional) — replaces the auto-generated alarm message
+  ("*metric* is *value* (threshold: *op* *value*)") sent to every channel
+  this rule has enabled. Never applied to the "back to normal" recovery
+  message. Works identically across channels — Telegram just sends this
+  as its plain-text message, the webhook's JSON shape
+  (`source`/`severity`/`title`/`body`/`at`) doesn't change based on what
+  string fills `body`.
+- **Siren** (speaker only) — plays a short built-in sound
+  (`internal/alerts/assets/siren.wav`, embedded in the binary) before the
+  spoken text. No config path, no upload — one signal is enough to mean
+  "pay attention."
+
+Two rules can watch the same metric (e.g. a low-battery rule and a
+high-battery rule) — each is tracked independently
+(`internal/alerts.Threshold.ID`, generated server-side, never something
+the settings page or the LLM invents itself).
+
+## Channels
 
 ## Channels
 
 A channel only actually fires once it's both **configured here** (or in
-`.env`) and **enabled from the settings page** — the same "config decides
-what exists, settings decides what's live" split `backup.s3`/the
-auto-backup toggle already uses. A channel with no config at all doesn't
-show up on the settings page as an option to enable.
+`.env`) and **enabled** — the same "config decides what exists, settings
+decides what's live" split `backup.s3`/the auto-backup toggle already
+uses. What "enabled" means depends on the source: NOAA has one global
+on/off per channel (there's only one NOAA source); each threshold rule
+has its own independent per-channel checkboxes (see above). Either way, a
+channel with no config at all doesn't show up on the settings page as an
+option to enable.
 
 - **Telegram** (`internal/alerts/telegram.go`) — plain text via a bot's
   `sendMessage`. Create a bot with
@@ -103,8 +149,9 @@ container.
 ## Settings page
 
 Once a channel is configured, the settings page's "Алерты"/"Alerts" tab
-shows a toggle for it — off by default, same as every other opt-in
-background pass in this project. See `docs/settings.md`.
+shows a global toggle for it (NOAA) — off by default, same as every other
+opt-in background pass in this project — and makes it available as a
+per-rule checkbox for threshold rules (see above). See `docs/settings.md`.
 
 ## Why separate state files, not `settings.Store`
 

@@ -22,16 +22,17 @@ func (f *fakeTTS) Synthesize(_ context.Context, text string) ([]byte, error) {
 	return f.wav, nil
 }
 
-// fakePlayer writes a small shell script that copies its stdin to
+// fakePlayer writes a small shell script that appends its stdin to
 // $OUT_FILE, standing in for aplay so the test can inspect exactly what
 // bytes would have reached the real player — without needing actual
-// audio hardware.
+// audio hardware. Appends (not overwrites) so a siren-then-speech test
+// can tell the two sequential plays apart in the order they happened.
 func fakePlayer(t *testing.T) (path string, outFile string) {
 	t.Helper()
 	dir := t.TempDir()
 	outFile = filepath.Join(dir, "out.wav")
 	scriptPath := filepath.Join(dir, "fake-player.sh")
-	script := "#!/bin/sh\ncat > \"$OUT_FILE\"\n"
+	script := "#!/bin/sh\ncat >> \"$OUT_FILE\"\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake player script: %v", err)
 	}
@@ -79,6 +80,43 @@ func TestSpeakerNotifierPropagatesSynthesizeError(t *testing.T) {
 	notifier := &SpeakerNotifier{TTS: tts, PlayerPath: playerPath}
 	if err := notifier.Notify(context.Background(), Alert{Title: "x"}); err == nil {
 		t.Fatal("expected an error when synthesis fails")
+	}
+}
+
+func TestSpeakerNotifierPlaysSirenBeforeSpeechWhenRequested(t *testing.T) {
+	playerPath, outFile := fakePlayer(t)
+	tts := &fakeTTS{wav: []byte("speech-bytes")}
+	notifier := &SpeakerNotifier{TTS: tts, PlayerPath: playerPath}
+
+	if err := notifier.Notify(context.Background(), Alert{Title: "x", PlaySiren: true}); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	played, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read what the fake player received: %v", err)
+	}
+	if !strings.HasPrefix(string(played), string(sirenWAV)) {
+		t.Error("siren bytes weren't played first")
+	}
+	if !strings.HasSuffix(string(played), "speech-bytes") {
+		t.Error("synthesized speech wasn't played after the siren")
+	}
+}
+
+func TestSpeakerNotifierSkipsSirenWhenNotRequested(t *testing.T) {
+	playerPath, outFile := fakePlayer(t)
+	tts := &fakeTTS{wav: []byte("speech-bytes")}
+	notifier := &SpeakerNotifier{TTS: tts, PlayerPath: playerPath}
+
+	if err := notifier.Notify(context.Background(), Alert{Title: "x", PlaySiren: false}); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	played, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read what the fake player received: %v", err)
+	}
+	if string(played) != "speech-bytes" {
+		t.Errorf("played = %q, want just the speech (no siren)", played)
 	}
 }
 

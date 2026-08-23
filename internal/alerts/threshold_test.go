@@ -37,8 +37,7 @@ func TestThresholdCheckerFiresOnceOnCrossing(t *testing.T) {
 	notifier := &recordingNotifier{}
 	checker := &ThresholdChecker{
 		Store:      store,
-		Thresholds: []Threshold{{Metric: "disk_used_percent", Operator: ">", Value: 90, Title: "Disk"}},
-		Notifiers:  []Notifier{notifier},
+		Thresholds: []Threshold{{Metric: "disk_used_percent", Operator: ">", Value: 90, Title: "Disk", Notifiers: []Notifier{notifier}}},
 	}
 
 	state, errs := checker.Check(ctx, map[string]bool{})
@@ -74,8 +73,7 @@ func TestThresholdCheckerFiresRecoveryAlert(t *testing.T) {
 	notifier := &recordingNotifier{}
 	checker := &ThresholdChecker{
 		Store:      store,
-		Thresholds: []Threshold{{Metric: "disk_used_percent", Operator: ">", Value: 90}},
-		Notifiers:  []Notifier{notifier},
+		Thresholds: []Threshold{{Metric: "disk_used_percent", Operator: ">", Value: 90, Notifiers: []Notifier{notifier}}},
 	}
 
 	// Starts already marked crossed (as if we'd alerted last time), but
@@ -97,8 +95,7 @@ func TestThresholdCheckerSkipsMetricWithNoSamples(t *testing.T) {
 	notifier := &recordingNotifier{}
 	checker := &ThresholdChecker{
 		Store:      store,
-		Thresholds: []Threshold{{Metric: "battery_percent", Operator: "<", Value: 20}},
-		Notifiers:  []Notifier{notifier},
+		Thresholds: []Threshold{{Metric: "battery_percent", Operator: "<", Value: 20, Notifiers: []Notifier{notifier}}},
 	}
 	state, errs := checker.Check(context.Background(), map[string]bool{})
 	if len(errs) != 0 {
@@ -109,6 +106,134 @@ func TestThresholdCheckerSkipsMetricWithNoSamples(t *testing.T) {
 	}
 	if _, ok := state["battery_percent"]; ok {
 		t.Error("state has an entry for a metric with no samples, want none")
+	}
+}
+
+func TestThresholdCheckerSmoothingAveragesRecentSamples(t *testing.T) {
+	store := openTestMetricsStore(t)
+	ctx := context.Background()
+	base := time.Now().Truncate(time.Second)
+	// Latest single sample (80) is under the threshold, but the average
+	// of the last 3 (60, 70, 80 -> 70) is not — smoothing should still
+	// use the latter, so this must NOT fire.
+	for i, v := range []float64{60, 70, 80} {
+		if err := store.Insert(ctx, base.Add(time.Duration(i)*time.Minute), "engine_temp_c", v); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+	}
+	notifier := &recordingNotifier{}
+	checker := &ThresholdChecker{
+		Store: store,
+		Thresholds: []Threshold{{
+			Metric: "engine_temp_c", Operator: ">", Value: 75, SmoothingSamples: 3,
+			Notifiers: []Notifier{notifier},
+		}},
+	}
+
+	if _, errs := checker.Check(ctx, map[string]bool{}); len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	if len(notifier.alerts) != 0 {
+		t.Errorf("alerts = %+v, want none — smoothed average (70) is under the threshold (75)", notifier.alerts)
+	}
+
+	// Now push the average itself over the threshold.
+	if err := store.Insert(ctx, base.Add(3*time.Minute), "engine_temp_c", 100); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if _, errs := checker.Check(ctx, map[string]bool{}); len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	if len(notifier.alerts) != 1 {
+		t.Errorf("alerts = %+v, want exactly 1 once the smoothed average crosses the threshold", notifier.alerts)
+	}
+}
+
+func TestThresholdCheckerCustomTextAppliesOnlyToCrossedAlert(t *testing.T) {
+	store := openTestMetricsStore(t)
+	ctx := context.Background()
+	if err := store.Insert(ctx, time.Now(), "grey_water_percent", 95); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	notifier := &recordingNotifier{}
+	checker := &ThresholdChecker{
+		Store: store,
+		Thresholds: []Threshold{{
+			Metric: "grey_water_percent", Operator: ">", Value: 90,
+			CustomText: "Grey tank is nearly full, pump it out.",
+			Notifiers:  []Notifier{notifier},
+		}},
+	}
+
+	state, errs := checker.Check(ctx, map[string]bool{})
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	if notifier.alerts[0].Body != "Grey tank is nearly full, pump it out." {
+		t.Errorf("body = %q, want the custom text", notifier.alerts[0].Body)
+	}
+
+	if err := store.Insert(ctx, time.Now(), "grey_water_percent", 10); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if _, errs := checker.Check(ctx, state); len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	if len(notifier.alerts) != 2 {
+		t.Fatalf("alerts = %+v, want 2 (crossed + recovery)", notifier.alerts)
+	}
+	if notifier.alerts[1].Body == "Grey tank is nearly full, pump it out." {
+		t.Error("recovery alert reused the custom (alarm) text, want the auto-generated recovery message")
+	}
+}
+
+func TestThresholdCheckerPassesPlaySirenThrough(t *testing.T) {
+	store := openTestMetricsStore(t)
+	ctx := context.Background()
+	if err := store.Insert(ctx, time.Now(), "battery_percent", 5); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	notifier := &recordingNotifier{}
+	checker := &ThresholdChecker{
+		Store: store,
+		Thresholds: []Threshold{{
+			Metric: "battery_percent", Operator: "<", Value: 20,
+			PlaySiren: true, Notifiers: []Notifier{notifier},
+		}},
+	}
+	if _, errs := checker.Check(ctx, map[string]bool{}); len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	if !notifier.alerts[0].PlaySiren {
+		t.Error("PlaySiren = false, want true (threshold rule had it set)")
+	}
+}
+
+func TestThresholdCheckerTwoRulesOnSameMetricDontCollideInState(t *testing.T) {
+	store := openTestMetricsStore(t)
+	ctx := context.Background()
+	if err := store.Insert(ctx, time.Now(), "battery_percent", 50); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	lowNotifier := &recordingNotifier{}
+	highNotifier := &recordingNotifier{}
+	checker := &ThresholdChecker{
+		Store: store,
+		Thresholds: []Threshold{
+			{ID: "low-battery", Metric: "battery_percent", Operator: "<", Value: 20, Notifiers: []Notifier{lowNotifier}},
+			{ID: "high-battery", Metric: "battery_percent", Operator: ">", Value: 90, Notifiers: []Notifier{highNotifier}},
+		},
+	}
+
+	state, errs := checker.Check(ctx, map[string]bool{})
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	if len(state) != 2 {
+		t.Errorf("state = %+v, want 2 distinct entries (one per rule ID), not collided by shared metric name", state)
+	}
+	if len(lowNotifier.alerts) != 0 || len(highNotifier.alerts) != 0 {
+		t.Errorf("neither rule should have fired at 50%%: low=%+v high=%+v", lowNotifier.alerts, highNotifier.alerts)
 	}
 }
 

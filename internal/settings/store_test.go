@@ -63,3 +63,38 @@ func TestUpdatePersistsAndNormalizes(t *testing.T) {
 		t.Errorf("reloaded = %#v, want the update to have persisted", reloaded.Get())
 	}
 }
+
+func TestUpdateNormalizesThresholdRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	store, err := Load(path, Data{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if err := store.Update(Data{AlertsThresholds: []AlertsThresholdRule{
+		{Metric: " disk_used_percent ", Operator: ">", Value: 90, Title: "  Disk  ", SmoothingSamples: 0},
+		{ID: "kept-id", Metric: "cpu_percent", Operator: ">", Value: 95, SmoothingSamples: 5},
+	}}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got := store.Get().AlertsThresholds
+	if len(got) != 2 {
+		t.Fatalf("rules = %+v, want 2", got)
+	}
+	if got[0].ID == "" {
+		t.Error("rule with no ID should have been assigned one")
+	}
+	if got[0].Metric != "disk_used_percent" || got[0].Title != "Disk" {
+		t.Errorf("rule[0] = %+v, want trimmed metric/title", got[0])
+	}
+	if got[0].SmoothingSamples != 1 {
+		t.Errorf("SmoothingSamples = %d, want clamped to 1 (0 means \"no smoothing\", not \"no data\")", got[0].SmoothingSamples)
+	}
+	if got[1].ID != "kept-id" {
+		t.Errorf("rule[1].ID = %q, want the caller-supplied ID preserved", got[1].ID)
+	}
+	if got[1].SmoothingSamples != 5 {
+		t.Errorf("SmoothingSamples = %d, want the caller-supplied 5 preserved", got[1].SmoothingSamples)
+	}
+}

@@ -120,6 +120,16 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup_interval_hours must be positive when backup_auto_enabled is true"})
 		return
 	}
+	for _, rule := range data.AlertsThresholds {
+		if rule.Metric == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "every alert threshold needs a metric"})
+			return
+		}
+		if !validThresholdOperator(rule.Operator) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "alert threshold operator must be one of >, <, >=, <=, =="})
+			return
+		}
+	}
 
 	if err := s.settingsStore.Update(data); err != nil {
 		s.logger.Error("save settings", "error", err)
@@ -139,4 +149,13 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "settings": data})
+}
+
+func validThresholdOperator(op string) bool {
+	switch op {
+	case ">", "<", ">=", "<=", "==":
+		return true
+	default:
+		return false
+	}
 }

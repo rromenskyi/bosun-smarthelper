@@ -130,6 +130,28 @@ func (s *Store) Latest(ctx context.Context, metric string) (point Point, ok bool
 	return point, true, nil
 }
 
+// RecentValues returns up to n most-recent raw sample values for metric,
+// newest first — used for internal/alerts' moving-average smoothing,
+// which needs actual recent raw readings, the same reason Latest exists
+// instead of Query's bucket-averaged view. Fewer than n samples (or none)
+// is not an error — the caller averages whatever it got.
+func (s *Store) RecentValues(ctx context.Context, metric string, n int) ([]float64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT value FROM samples WHERE metric = ? ORDER BY ts DESC LIMIT ?`, metric, n)
+	if err != nil {
+		return nil, fmt.Errorf("query recent samples for %s: %w", metric, err)
+	}
+	defer rows.Close()
+	var values []float64
+	for rows.Next() {
+		var value float64
+		if err := rows.Scan(&value); err != nil {
+			return nil, fmt.Errorf("scan recent sample for %s: %w", metric, err)
+		}
+		values = append(values, value)
+	}
+	return values, rows.Err()
+}
+
 // Query returns up to maxPoints points for metric since the given time,
 // averaging raw samples into evenly-spaced buckets when the raw resolution
 // would exceed maxPoints — a 30-day range at a 30s sample interval is ~86k
