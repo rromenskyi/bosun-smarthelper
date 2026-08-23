@@ -127,6 +127,15 @@
     }
     .bubble summary { cursor: pointer; color: var(--muted); }
     .chat-image { display: block; max-width: 100%; margin-top: 8px; border-radius: 10px; border: 1px solid var(--line); }
+    .bubble h1, .bubble h2, .bubble h3 { margin: 10px 0 6px; line-height: 1.3; }
+    .bubble h1:first-child, .bubble h2:first-child, .bubble h3:first-child { margin-top: 0; }
+    .bubble h1 { font-size: 1.15em; }
+    .bubble h2 { font-size: 1.08em; }
+    .bubble h3 { font-size: 1.03em; }
+    /* Temml renders block/display formulas as <math display="block">,
+       which needs its own line to actually look like a display formula
+       rather than an inline one wrapping awkwardly mid-sentence. */
+    .bubble math[display="block"] { display: block; margin: 6px 0; }
     .message-actions { display: flex; gap: 6px; margin-top: 8px; }
     .message-actions button {
       padding: 2px 8px; border-radius: 8px;
@@ -527,6 +536,14 @@
     </form>
   </main>
 
+  <!-- Plain classic script (not type="module"): exposes the global
+       `temml` the main module script below calls into (renderMessageHTML)
+       — see static/vendor/temml.min.js's own header for what it is and
+       why. Module scripts always run after classic ones regardless of
+       document order, so this only needs to come from anywhere before
+       the first actual call, not specifically here — kept here for
+       readability. -->
+  <script src="/static/vendor/temml.min.js"></script>
   <script type="module">
     import { text } from './static/shared.js';
     import { updateCamerasLanguage, initCameras } from './static/cameras.js';
@@ -578,26 +595,79 @@
     // below are turned back into tags — nothing else from model output is
     // ever treated as HTML. URLs exclude quote characters so a crafted
     // link can't break out of the href attribute.
+    // Renders one $...$ (inline) or $$...$$ (display) formula to MathML
+    // via Temml (static/vendor/temml.min.js) — trust: false keeps LaTeX
+    // commands that could otherwise embed arbitrary content (e.g.
+    // \includegraphics) from doing anything, throwOnError: false means a
+    // model's malformed LaTeX renders as Temml's own inline error markup
+    // instead of losing the rest of the message. Falls back to the raw
+    // "$latex$" text if the vendor script itself somehow failed to load,
+    // or if Temml throws despite throwOnError (belt and suspenders).
+    function renderFormula(latex, displayMode) {
+      if (typeof temml === 'undefined') return `$${latex}$`;
+      try {
+        return temml.renderToString(latex, { throwOnError: false, trust: false, displayMode });
+      } catch {
+        return `$${latex}$`;
+      }
+    }
+
+    // Renders a small, safe subset of markdown: #/##/### headers,
+    // [text](url) links, **bold**, and $...$/$$...$$ LaTeX formulas (see
+    // renderFormula). Text is HTML-escaped first, then only these
+    // patterns are turned back into tags — nothing else from model
+    // output is ever treated as HTML.
     function renderMessageHTML(value) {
-      let html = escapeHTML(value);
+      // Formulas are extracted and rendered *before* escaping — raw
+      // LaTeX may contain <, >, & (e.g. "$a < b$") that must reach Temml
+      // as real characters, not HTML entities, and Temml's own MathML
+      // output is trusted markup that must not itself be escaped
+      // afterward. Each one is swapped for a plain-text placeholder
+      // token, restored once escaping and every other pattern below
+      // have already run. Display ($$...$$) must be
+      // extracted before inline ($...$), or the inline pattern would
+      // match a pair of $ characters from inside a $$...$$ block first
+      // and leave the outer $$ stray.
+      const formulas = [];
+      const placeholder = i => ` temml${i} `;
+      let source = value.replace(/\$\$([^$]+)\$\$/g, (_, latex) => {
+        formulas.push(renderFormula(latex, true));
+        return placeholder(formulas.length - 1);
+      });
+      source = source.replace(/\$([^$\n]+)\$/g, (_, latex) => {
+        formulas.push(renderFormula(latex, false));
+        return placeholder(formulas.length - 1);
+      });
+
+      let html = escapeHTML(source);
+      html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+      html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+      html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
       // Images first: a same-origin path (e.g. a document search result's
       // /document-images/... diagram) or an absolute URL. Must run before
       // the link regex below, since ![alt](url) also contains [alt](url).
       html = html.replace(/!\[([^\]]*)\]\((\/[^\s")']+|https?:\/\/[^\s")']+)\)/g, '<img src="$2" alt="$1" class="chat-image" loading="lazy">');
       html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s")']+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
       html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      formulas.forEach((rendered, i) => { html = html.replace(placeholder(i), rendered); });
       return html;
     }
 
     // Same markdown renderMessageHTML turns into markup for the screen —
     // for speech there's no equivalent, so drop images entirely, keep
-    // only the visible text of a link, and unwrap **bold** — the LLM's
+    // only the visible text of a link, unwrap **bold** and #/##/###
+    // headers, and drop the $/$$ delimiters around a formula — the LLM's
     // formatting isn't something Piper should read out loud literally.
+    // The bare LaTeX left behind (backslash macros and all) still isn't
+    // great to hear, but it's better than the raw punctuation.
     function stripMarkdownForSpeech(value) {
       return value
         .replace(/!\[([^\]]*)\]\([^)]+\)/g, '')
         .replace(/\[([^\]]+)\]\((https?:\/\/[^\s")']+)\)/g, '$1')
         .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/^#{1,3} (.+)$/gm, '$1')
+        .replace(/\$\$([^$]+)\$\$/g, '$1')
+        .replace(/\$([^$\n]+)\$/g, '$1')
         .replace(/[ \t]+/g, ' ')
         .trim();
     }
