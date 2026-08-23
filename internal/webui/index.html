@@ -1003,7 +1003,11 @@
       }
       if (!resolved) {
         row.remove();
-        addMessage('assistant', text[language.value][cancelled ? 'cancelled' : 'error'], cancelled ? '' : 'error');
+        // 'error' unconditionally, matching ask()'s own catch block above —
+        // it's really a "not a real answer, no actions" marker (also why
+        // it's styled the same way for a genuine error and a cancellation
+        // both), not literally about which of the two this is.
+        addMessage('assistant', text[language.value][cancelled ? 'cancelled' : 'error'], 'error');
       }
       pendingReplyAbort = null;
       waitingBubble = null;
