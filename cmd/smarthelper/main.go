@@ -271,6 +271,9 @@ func serveCmd() *cobra.Command {
 				cfg.Alerts.Channels.Webhook.URL != "",
 				cfg.Alerts.Channels.Speaker.Enabled,
 			)
+			server.SetAlertsTestSender(func(ctx context.Context, channel string) error {
+				return sendTestAlert(ctx, cfg, ttsEngine, settingsStore.Get().DefaultLanguage, logger, channel)
+			})
 
 			noaaCfg := cfg.Alerts.NOAA
 			if noaaCfg.UseGPS || noaaCfg.Latitude != 0 || noaaCfg.Longitude != 0 {
@@ -886,6 +889,38 @@ func speakerNotifier(cfg config.AlertsSpeakerConfig, enabled bool, ttsEngine voi
 		return nil
 	}
 	return &alerts.SpeakerNotifier{TTS: ttsEngine, PlayerPath: cfg.PlayerPath, Language: language}
+}
+
+// sendTestAlert delivers one harmless, clearly-marked test notification
+// through a single named channel — the settings page's "test" button
+// (docs/alerts.md), the only way to find out a bot token is wrong, a
+// webhook URL is unreachable, or the speaker channel has no working audio
+// device *before* a real NOAA alert or threshold crossing silently fails
+// to reach anyone. Passes enabled: true to the notifier constructor
+// regardless of that channel's own settings-page toggle — being off is
+// exactly the state a human tests from before deciding to flip it on.
+func sendTestAlert(ctx context.Context, cfg *config.Config, ttsEngine voice.TTSEngine, language string, logger *slog.Logger, channel string) error {
+	var notifier alerts.Notifier
+	switch channel {
+	case "telegram":
+		notifier = telegramNotifier(cfg.Alerts.Channels.Telegram, true, logger)
+	case "webhook":
+		notifier = webhookNotifier(cfg.Alerts.Channels.Webhook, true)
+	case "speaker":
+		notifier = speakerNotifier(cfg.Alerts.Channels.Speaker, true, ttsEngine, language, logger)
+	default:
+		return fmt.Errorf("unknown channel %q", channel)
+	}
+	if notifier == nil {
+		return fmt.Errorf("channel %q is not configured", channel)
+	}
+	return notifier.Notify(ctx, alerts.Alert{
+		Source:   "test",
+		Severity: alerts.SeverityInfo,
+		Title:    "Bosun test alert",
+		Body:     "This is a test from the settings page — no actual emergency.",
+		At:       time.Now(),
+	})
 }
 
 func collectNotifiers(candidates ...alerts.Notifier) []alerts.Notifier {

@@ -135,6 +135,7 @@ type Server struct {
 	backupS3Cfg       *backup.S3Config
 	backupDataDir     string
 	alertsConfigured  alertsConfigured
+	alertsTestSender  func(ctx context.Context, channel string) error
 	cameraManager     *cameras.Manager
 	cameraDataDir     string
 	generationsMu     sync.Mutex
@@ -413,6 +414,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/provider-override", s.handleProviderOverride)
 	mux.HandleFunc("GET /api/metrics/list", s.handleMetricsList)
 	mux.HandleFunc("GET /api/metrics", s.handleMetricsQuery)
+	mux.HandleFunc("POST /api/alerts/test", s.handleAlertsTest)
 	mux.HandleFunc("GET /api/metric-merges", s.handleMetricMergesList)
 	mux.HandleFunc("POST /api/metric-merges/{id}/decide", s.handleMetricMergeDecide)
 	mux.HandleFunc("GET /api/quick/{tool}", s.handleQuickTool)
@@ -771,8 +773,10 @@ func (s *Server) handleChatStreaming(
 	interval := heartbeatInterval
 
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
-	defer cancelHeartbeat()
+	var heartbeatDone sync.WaitGroup
+	heartbeatDone.Add(1)
 	go func() {
+		defer heartbeatDone.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -788,6 +792,16 @@ func (s *Server) handleChatStreaming(
 				}
 			}
 		}
+	}()
+	// Cancelling alone only *signals* the goroutine above to stop — it can
+	// still be mid-write() when this function returns, racing whatever
+	// happens to the response next (a real net/http.Server just drops that
+	// stray write on an already-closed connection, harmless, but a test
+	// reading the recorded body right after ServeHTTP returns doesn't get
+	// that protection). Waiting here closes that window for good.
+	defer func() {
+		cancelHeartbeat()
+		heartbeatDone.Wait()
 	}()
 
 	answer, err := asker.AskWithHistoryStreaming(ctx, message, history, language, func(e agent.StepEvent) {

@@ -363,6 +363,31 @@ metrics:
 #     segment_seconds: 300                   # 5-minute segments...
 #     segment_count: 50                      # ...50 of them = ~4 hours on disk before the oldest is overwritten
 
+# Alerts: NOAA weather alerts for the current position, and any
+# metrics.sources-sampled metric crossing a threshold — see docs/alerts.md.
+# Delivered through Telegram/a webhook/the local speaker, each only once
+# it's both configured here (or in .env) and enabled on the settings page
+# (NOAA has one global on/off per channel; a metric threshold rule — added
+# from the settings page, not here — picks its own channels per rule).
+# alerts:
+#   noaa:
+#     use_gps: true             # or a fixed point: latitude / longitude
+#     check_interval: "15m"
+#   thresholds:                 # optional one-time seed — see docs/alerts.md
+#     - metric: disk_used_percent
+#       operator: ">"
+#       value: 90
+#       title: "Disk space"
+#   channels:
+#     telegram:
+#       bot_token_env: "ALERTS_TELEGRAM_BOT_TOKEN"   # set in .env
+#       chat_id: "123456789"
+#     webhook:
+#       url: "https://example.com/bosun-alerts"
+#     speaker:
+#       enabled: true                                # needs voice.tts configured above
+#       player_path: "aplay"
+
 # Logging
 logging:
   level: "info"                             # debug, info, warn, error

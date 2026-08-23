@@ -115,8 +115,6 @@ the settings page or the LLM invents itself).
 
 ## Channels
 
-## Channels
-
 A channel only actually fires once it's both **configured here** (or in
 `.env`) and **enabled** — the same "config decides what exists, settings
 decides what's live" split `backup.s3`/the auto-backup toggle already
@@ -144,6 +142,21 @@ option to enable.
   shelling out to `player_path` (`aplay` by default, reading from stdin).
   The one channel that reaches someone without a phone in hand — asleep
   belowdecks, say.
+
+### Testing a channel before trusting it
+
+Every configured channel gets a "Test"/"Тест" button next to it on the
+settings page (`POST /api/alerts/test {"channel": "telegram"|"webhook"|
+"speaker"}`, `handleAlertsTest` in `internal/webui/alerts.go`) that fires
+one real, clearly-marked test notification through it — a wrong bot
+token, an unreachable webhook URL, or a speaker channel with no working
+audio device otherwise all fail exactly the same way a real alert would:
+silently, per the at-most-once section above. Deliberately ignores that
+channel's own settings-page enabled toggle, since testing is how a human
+decides whether to flip that toggle on in the first place. Returns the
+real underlying error on failure (a wrong chat ID, a connection refused)
+rather than swallowing it, since debugging *why* a channel doesn't work
+is the entire point of this button.
 
 ### Docker: reaching real audio hardware
 
