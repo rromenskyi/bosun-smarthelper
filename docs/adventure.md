@@ -82,6 +82,18 @@ create/list, Play, the 🎮 toggle, and a full chat round-trip through
 game mode, confirmed reaching the engine directly (~450ms end to end,
 no LLM call) rather than the chat asker.
 
+## Voice
+
+No dedicated code needed: the mic button transcribes speech via
+`/api/stt` and sends the result through the exact same `/api/chat`
+endpoint as a typed message (`internal/webui/index.html`, `startRecording`/
+`stopRecordingAndSend`), and the per-message 🔊 button synthesizes any
+reply's text via `/api/tts` (`speakText`) — both are already fully
+generic over message content. Game mode intercepts at `/api/chat`
+itself (see above), so a spoken command reaches the engine and a
+spoken reply comes back the same way a typed one does, with nothing
+adventure-specific in the voice path at all.
+
 ## Persistence (`internal/adventure/store.go`)
 
 A dedicated SQLite file (`~/.local/share/bosun/adventure.db` by
