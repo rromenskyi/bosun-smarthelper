@@ -25,6 +25,19 @@ The LLM connectivity check is intentionally conservative: if the configured
 check target or remote service is unavailable, Bosun enters offline
 mode even if an unrelated public endpoint might still respond.
 
+`Router.CheckConnectivity` retries a check target that fails
+(`connectivityCheckAttempts`, `connectivityCheckRetryDelay` in
+`internal/llm/router.go`) before actually flipping to offline — a real
+report showed a single slow/dropped `HEAD` request against a remote
+provider that's occasionally slow (see `docs/streaming.md`'s heartbeat
+section) routing the very next request or two to the local model even
+though nothing was actually wrong with the connection, just that one
+round-trip. A real, sustained outage still fails every attempt within the
+same short window, so genuine offline detection isn't meaningfully
+delayed — only a single bad round-trip is now forgiven. A failure that
+survives all retries is logged (`Router.SetLogger`) instead of flipping
+silently, which it did before.
+
 ## Adding an online tool
 
 Implement the normal `tools.Tool` interface and also implement:

@@ -1,10 +1,14 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -284,5 +288,129 @@ func TestRetryableRemoteError(t *testing.T) {
 	}
 	if isRetryableRemoteError(&httpStatusError{statusCode: http.StatusUnauthorized}) {
 		t.Error("HTTP 401 should not be retryable")
+	}
+}
+
+func checkTargetRouter(t *testing.T, target string) *Router {
+	t.Helper()
+	return &Router{config: &config.LLMConfig{Router: config.RouterConfig{
+		CheckTarget:  target,
+		CheckTimeout: "1s",
+	}}}
+}
+
+// TestRouterCheckConnectivityRetriesBeforeSucceeding is a regression test
+// for a real report: a single failed connectivity check against a
+// remote provider known to be occasionally slow flipped the whole router
+// to "offline" — and everything to the local model — for a full
+// check_interval, even though the outage was momentary.
+func TestRouterCheckConnectivityRetriesBeforeSucceeding(t *testing.T) {
+	original := connectivityCheckRetryDelay
+	connectivityCheckRetryDelay = time.Millisecond
+	defer func() { connectivityCheckRetryDelay = original }()
+
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) < connectivityCheckAttempts {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	router := checkTargetRouter(t, server.URL)
+	if !router.CheckConnectivity(context.Background()) {
+		t.Error("want online once an attempt within the retry budget succeeds")
+	}
+	if got := calls.Load(); got != connectivityCheckAttempts {
+		t.Errorf("calls = %d, want exactly %d (stop retrying once it succeeds)", got, connectivityCheckAttempts)
+	}
+}
+
+func TestRouterCheckConnectivityFailsAfterExhaustingRetries(t *testing.T) {
+	original := connectivityCheckRetryDelay
+	connectivityCheckRetryDelay = time.Millisecond
+	defer func() { connectivityCheckRetryDelay = original }()
+
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	router := checkTargetRouter(t, server.URL)
+	if router.CheckConnectivity(context.Background()) {
+		t.Error("want offline once every attempt in the retry budget fails")
+	}
+	if got := calls.Load(); got != connectivityCheckAttempts {
+		t.Errorf("calls = %d, want %d", got, connectivityCheckAttempts)
+	}
+	if router.IsOnline() {
+		t.Error("IsOnline() must reflect the failed check")
+	}
+}
+
+func TestRouterCheckConnectivitySucceedsOnFirstTryWithoutDelay(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	router := checkTargetRouter(t, server.URL)
+	start := time.Now()
+	online := router.CheckConnectivity(context.Background())
+	elapsed := time.Since(start)
+
+	if !online {
+		t.Error("want online")
+	}
+	if calls.Load() != 1 {
+		t.Errorf("calls = %d, want 1 — a first-try success must not retry", calls.Load())
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("elapsed = %v, want fast — no retry delay when the first attempt already succeeded", elapsed)
+	}
+}
+
+func TestRouterCheckConnectivityLogsFailureAfterRetries(t *testing.T) {
+	original := connectivityCheckRetryDelay
+	connectivityCheckRetryDelay = time.Millisecond
+	defer func() { connectivityCheckRetryDelay = original }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	router := checkTargetRouter(t, server.URL)
+	router.SetLogger(slog.New(slog.NewTextHandler(&logBuf, nil)))
+
+	router.CheckConnectivity(context.Background())
+
+	if !strings.Contains(logBuf.String(), "connectivity check failed") {
+		t.Errorf("log output = %q, want a failure warning naming the connectivity check", logBuf.String())
+	}
+}
+
+func TestRouterCheckConnectivityWithoutLoggerDoesNotPanic(t *testing.T) {
+	original := connectivityCheckRetryDelay
+	connectivityCheckRetryDelay = time.Millisecond
+	defer func() { connectivityCheckRetryDelay = original }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	// No SetLogger call — matches every Router built as a bare struct
+	// literal elsewhere in this file.
+	router := checkTargetRouter(t, server.URL)
+	if router.CheckConnectivity(context.Background()) {
+		t.Error("want offline")
 	}
 }

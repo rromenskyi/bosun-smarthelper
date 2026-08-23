@@ -110,10 +110,12 @@ func serveCmd() *cobra.Command {
 				return fmt.Errorf("invalid web session TTL %q", cfg.Web.SessionTTL)
 			}
 
+			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 			router, err := llm.NewRouter(&cfg.LLM)
 			if err != nil {
 				return fmt.Errorf("create LLM router: %w", err)
 			}
+			router.SetLogger(logger)
 			router.CheckConnectivity(cmd.Context())
 
 			// The settings store (docs/settings.md) is seeded from config.yaml's
@@ -140,7 +142,6 @@ func serveCmd() *cobra.Command {
 			live := settingsStore.Get()
 			router.SetTemperatures(live.RemoteTemperature, live.LocalTemperature)
 
-			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 			registry, docStore := buildRegistry(cfg)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(live.NameRU, live.NameEN, live.StylePrompt)
@@ -316,15 +317,16 @@ func chatCmd() *cobra.Command {
 				return fmt.Errorf("load config: %w", err)
 			}
 
+			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 			router, err := llm.NewRouter(&cfg.LLM)
 			if err != nil {
 				return fmt.Errorf("create LLM router: %w", err)
 			}
+			router.SetLogger(logger)
 			// Refresh connectivity before routing: configurable remote endpoint
 			// when online, falling back to the local model when offline.
 			router.CheckConnectivity(cmd.Context())
 
-			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 			registry, _ := buildRegistry(cfg)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(cfg.Assistant.NameRU, cfg.Assistant.NameEN, cfg.Assistant.StylePrompt)

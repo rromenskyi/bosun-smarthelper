@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -32,6 +33,20 @@ type Router struct {
 	// online/offline switch next to the status pill).
 	overrideMu       sync.RWMutex
 	providerOverride string
+	// logger records why a connectivity check ultimately failed (see
+	// CheckConnectivity) — nil (the zero value, e.g. a Router built as a
+	// struct literal in a test) just means those failures go unlogged,
+	// never a panic.
+	logger *slog.Logger
+}
+
+// SetLogger wires in a logger for otherwise-silent background events —
+// currently just a connectivity check that failed after retrying (see
+// CheckConnectivity). Optional: without one, those failures simply aren't
+// logged, the same "wiring absent means the feature quietly does less"
+// pattern used throughout this project.
+func (r *Router) SetLogger(logger *slog.Logger) {
+	r.logger = logger
 }
 
 // NewRouter creates a new LLM router
@@ -95,7 +110,25 @@ func NewRouter(cfg *config.LLMConfig) (*Router, error) {
 	}, nil
 }
 
-// CheckConnectivity performs a connectivity check
+// connectivityCheckAttempts/connectivityCheckRetryDelay: a single failed
+// HEAD request used to flip the whole router to "offline" (and every
+// request for the next check_interval to the local model) even when the
+// cause was a momentary hiccup against that one host rather than a real
+// outage — observed directly against this deployment's own remote
+// provider, which is known to be occasionally slow (see
+// docs/streaming.md's heartbeat section). A real, sustained outage still
+// fails every attempt and gets caught just as fast; this only forgives a
+// single bad round-trip.
+const connectivityCheckAttempts = 3
+
+// connectivityCheckRetryDelay is a var, not a const, so tests can shrink
+// it instead of a retry-exhaustion test taking real seconds.
+var connectivityCheckRetryDelay = 1 * time.Second
+
+// CheckConnectivity performs a connectivity check against
+// router.check_target, retrying a couple of times (see
+// connectivityCheckAttempts) before concluding the remote provider is
+// actually unreachable.
 func (r *Router) CheckConnectivity(ctx context.Context) bool {
 	r.checkMu.Lock()
 	defer r.checkMu.Unlock()
@@ -105,26 +138,57 @@ func (r *Router) CheckConnectivity(ctx context.Context) bool {
 		checkTimeout = 5 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
+	var lastErr error
+attempts:
+	for attempt := 1; attempt <= connectivityCheckAttempts; attempt++ {
+		err := r.probeConnectivityOnce(ctx, checkTimeout)
+		if err == nil {
+			r.setConnectivity(true)
+			return true
+		}
+		lastErr = err
+		if attempt == connectivityCheckAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			lastErr = ctx.Err()
+			break attempts
+		case <-time.After(connectivityCheckRetryDelay):
+		}
+	}
+	if r.logger != nil {
+		r.logger.Warn("remote connectivity check failed after retries",
+			"target", r.config.Router.CheckTarget, "attempts", connectivityCheckAttempts, "error", lastErr)
+	}
+	r.setConnectivity(false)
+	return false
+}
+
+// probeConnectivityOnce is a single HEAD attempt against check_target — a
+// non-nil error (network error, timeout, or a 5xx response, treated the
+// same as a transport failure here) means this attempt didn't confirm the
+// target reachable.
+func (r *Router) probeConnectivityOnce(ctx context.Context, timeout time.Duration) error {
+	attemptCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "HEAD", r.config.Router.CheckTarget, nil)
+	req, err := http.NewRequestWithContext(attemptCtx, "HEAD", r.config.Router.CheckTarget, nil)
 	if err != nil {
-		r.setConnectivity(false)
-		return false
+		return err
 	}
 
-	client := &http.Client{Timeout: checkTimeout}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		r.setConnectivity(false)
-		return false
+		return err
 	}
 	defer resp.Body.Close()
 
-	online := resp.StatusCode < 500
-	r.setConnectivity(online)
-	return online
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("check target returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // IsOnline returns the last known connectivity status
