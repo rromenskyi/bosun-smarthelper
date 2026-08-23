@@ -220,6 +220,10 @@
     }
     .docs-list li span { overflow-wrap: anywhere; }
     .docs-list button { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-size: 14px; flex: 0 0 auto; }
+    .adventure-scene { display: flex; justify-content: center; margin: 0 0 8px; }
+    .adventure-scene[hidden] { display: none; }
+    .adventure-scene img { max-width: 100%; max-height: 220px; border-radius: 12px; object-fit: cover; }
+    #adventure-toggle.active { background: var(--accent); color: #10251c; }
     dialog#settings-dialog {
       border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
       color: var(--text); width: min(90vw, 440px); max-height: 85vh; overflow-y: auto; padding: 18px;
@@ -358,6 +362,7 @@
         <button class="bell" id="docs-toggle" type="button" aria-label="Документы" title="Документы">📄</button>
         <button class="bell" id="metrics-toggle" type="button" aria-label="Мониторинг" title="Мониторинг" hidden>📊</button>
         <button class="bell" id="cameras-toggle" type="button" aria-label="Камеры" title="Камеры" hidden>📹</button>
+        <button class="bell" id="adventure-toggle" type="button" aria-label="Игра" title="Игра" hidden>🎮</button>
         <button class="bell" id="merges-toggle" type="button" aria-label="Слияние счётчиков" title="Слияние счётчиков" hidden>🔗<span class="badge" id="merges-badge" hidden>0</span></button>
         <button class="bell" id="bell" type="button" aria-label="Позвать старпома" title="Позвать старпома">🔔</button>
         <button type="button" class="status" id="status" title="Онлайн/оффлайн: авто"><span class="dot"></span><span>Подключение…</span></button>
@@ -387,6 +392,7 @@
         <button type="button" class="settings-tab active" data-tab="general" id="settings-tab-general">Общие</button>
         <button type="button" class="settings-tab" data-tab="backup" id="settings-tab-backup">Бэкап</button>
         <button type="button" class="settings-tab" data-tab="alerts" id="settings-tab-alerts" hidden>Алерты</button>
+        <button type="button" class="settings-tab" data-tab="adventure" id="settings-tab-adventure" hidden>Игра</button>
       </div>
       <form id="settings-form">
         <div class="settings-panel" data-panel="general">
@@ -470,6 +476,17 @@
           <p class="docs-hint" id="settings-thresholds-empty" hidden>Пока нет ни одного правила.</p>
           <div id="settings-thresholds-list"></div>
         </div>
+        <div class="settings-panel" data-panel="adventure" hidden>
+          <div class="settings-backup-header">
+            <span class="settings-label" id="settings-label-adventure-new">Название новой сессии</span>
+          </div>
+          <div class="settings-alerts-row">
+            <input type="text" id="adventure-new-session-name" placeholder="Название новой сессии">
+            <button type="button" class="clear" id="adventure-new-session-create">Создать</button>
+          </div>
+          <p class="docs-hint" id="adventure-sessions-empty" hidden>Пока нет игровых сессий.</p>
+          <ul class="docs-list" id="adventure-sessions-list"></ul>
+        </div>
         <button type="submit" id="settings-save-button">Сохранить</button>
         <p class="docs-hint" id="settings-saved-hint" hidden>Сохранено.</p>
       </form>
@@ -518,6 +535,11 @@
       <button class="chip" data-tool="web_search" data-ru="Найди в интернете: " data-en="Search the web for: " data-label-ru="Поиск" data-label-en="Search">Поиск</button>
       <button class="chip" data-tool="wikipedia" data-ru="Найди в Википедии: " data-en="Look up on Wikipedia: " data-label-ru="Википедия" data-label-en="Wikipedia">Википедия</button>
     </nav>
+
+    <div class="adventure-scene" id="adventure-scene" hidden>
+      <img id="adventure-scene-image" alt="">
+      <audio id="adventure-scene-audio" loop></audio>
+    </div>
 
     <section class="messages" id="messages" aria-live="polite">
       <div class="empty" id="empty"><strong id="empty-title">Чем помочь?</strong><span id="empty-body">Спроси о погоде, холодильнике, местоположении или состоянии системы.</span></div>
@@ -570,6 +592,7 @@
     const metricsToggle = document.querySelector('#metrics-toggle');
     const metricsDialog = document.querySelector('#metrics-dialog');
     const metricsChecklist = document.querySelector('#metrics-checklist');
+    const adventureToggle = document.querySelector('#adventure-toggle');
     const mergesToggle = document.querySelector('#merges-toggle');
     const mergesBadge = document.querySelector('#merges-badge');
     const mergesDialog = document.querySelector('#merges-dialog');
@@ -1026,6 +1049,9 @@
             localStorage.setItem(sessionStorageKey, sessionId);
           }
           addMessage('assistant', data.answer, '', value.trim(), isVoiceTurn);
+          if (data.location_id !== undefined && data.location_id !== null) {
+            updateAdventureScene(data.location_id);
+          }
         }
       } catch (error) {
         clearQueued();
@@ -1184,6 +1210,7 @@
       document.querySelector('#metrics-empty').textContent = text[locale].metricsEmpty;
       document.querySelector('#metrics-close').textContent = text[locale].metricsClose;
       updateCamerasLanguage(locale);
+      updateAdventureLanguage(locale);
       mergesToggle.title = text[locale].mergesToggleTitle;
       mergesToggle.setAttribute('aria-label', text[locale].mergesToggleTitle);
       document.querySelector('#merges-title').textContent = text[locale].mergesTitle;
@@ -1482,6 +1509,10 @@
         webhook: !!data.alerts_webhook_configured,
         speaker: !!data.alerts_speaker_configured
       };
+
+      document.querySelector('#settings-tab-adventure').hidden = !data.adventure_configured;
+      adventureToggle.hidden = !data.adventure_configured;
+      if (data.adventure_configured) loadAdventureSessions();
       try {
         const metricsResp = await fetch('/api/metrics/list');
         const metricsData = await metricsResp.json();
@@ -1670,6 +1701,154 @@
         button.disabled = false;
       }
     });
+    // Adventure (docs/adventure.md) — session management is plain,
+    // LLM-free REST calls, deliberately: choosing what to play must
+    // never depend on a model being available. adventureMode/
+    // adventureSessionName track this browser tab's current state;
+    // the server independently tracks the same thing per chat
+    // session_id, so a page reload just needs loadSettings' session
+    // list, not a dedicated "am I in game mode" endpoint.
+    let adventureMode = false;
+    let adventureSessionName = null;
+    let adventureManifest = null;
+
+    async function loadAdventureSessions() {
+      const list = document.querySelector('#adventure-sessions-list');
+      const empty = document.querySelector('#adventure-sessions-empty');
+      try {
+        const response = await fetch('/api/adventure/sessions');
+        const data = await response.json();
+        const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+        list.innerHTML = '';
+        empty.hidden = sessions.length > 0;
+        sessions.forEach(session => {
+          const li = document.createElement('li');
+          const info = document.createElement('span');
+          info.textContent = `${session.name} — ${text[language.value].adventureSessionMeta(session.turns, session.location_id)}`;
+          const actions = document.createElement('span');
+          const playButton = document.createElement('button');
+          playButton.type = 'button';
+          playButton.textContent = text[language.value].adventurePlay;
+          playButton.addEventListener('click', () => playAdventureSession(session.name));
+          const deleteButton = document.createElement('button');
+          deleteButton.type = 'button';
+          deleteButton.textContent = text[language.value].adventureDelete;
+          deleteButton.addEventListener('click', async () => {
+            await fetch(`/api/adventure/sessions/${encodeURIComponent(session.name)}`, { method: 'DELETE' });
+            if (adventureSessionName === session.name) { adventureMode = false; adventureSessionName = null; updateAdventureToggle(); }
+            loadAdventureSessions();
+          });
+          actions.append(playButton, deleteButton);
+          li.append(info, actions);
+          list.appendChild(li);
+        });
+      } catch {
+        // Best-effort: connectivity issues already surface via the status pill.
+      }
+    }
+
+    async function playAdventureSession(name) {
+      try {
+        const response = await fetch('/api/adventure/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, enabled: true, adventure_session: name })
+        });
+        if (!response.ok) return;
+        adventureMode = true;
+        adventureSessionName = name;
+        updateAdventureToggle();
+        settingsDialog.close();
+      } catch {
+        // Best-effort: connectivity issues already surface via the status pill.
+      }
+    }
+
+    function updateAdventureToggle() {
+      adventureToggle.classList.toggle('active', adventureMode);
+      adventureToggle.title = adventureMode ? text[language.value].adventureExitTitle : text[language.value].adventureToggleTitle;
+      adventureToggle.setAttribute('aria-label', adventureToggle.title);
+      if (!adventureMode) document.querySelector('#adventure-scene').hidden = true;
+    }
+
+    adventureToggle.addEventListener('click', async () => {
+      if (adventureMode) {
+        try {
+          await fetch('/api/adventure/mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, enabled: false })
+          });
+        } catch {
+          // Best-effort: connectivity issues already surface via the status pill.
+        }
+        adventureMode = false;
+        adventureSessionName = null;
+        updateAdventureToggle();
+      } else {
+        settingsToggle.click();
+        document.querySelector('#settings-tab-adventure').click();
+      }
+    });
+
+    document.querySelector('#adventure-new-session-create').addEventListener('click', async () => {
+      const input = document.querySelector('#adventure-new-session-name');
+      const name = input.value.trim();
+      if (!name) return;
+      try {
+        const response = await fetch('/api/adventure/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        if (response.ok) {
+          input.value = '';
+          await loadAdventureSessions();
+        }
+      } catch {
+        // Best-effort: connectivity issues already surface via the status pill.
+      }
+    });
+
+    // manifest.json (docs/adventure.md's art-audio pipeline, built
+    // separately in go-adventure) may not exist yet — a 404/network
+    // failure here just means no location art/audio, not an error the
+    // user needs to see.
+    async function loadAdventureManifest() {
+      try {
+        const response = await fetch('/static/adventure/manifest.json');
+        if (!response.ok) { adventureManifest = null; return; }
+        adventureManifest = await response.json();
+      } catch {
+        adventureManifest = null;
+      }
+    }
+
+    function updateAdventureScene(locationId) {
+      const scene = document.querySelector('#adventure-scene');
+      const entry = adventureManifest && adventureManifest[String(locationId)];
+      if (!entry) { scene.hidden = true; return; }
+      const image = document.querySelector('#adventure-scene-image');
+      const audio = document.querySelector('#adventure-scene-audio');
+      if (entry.image) { image.src = `/static/adventure/${entry.image}`; image.hidden = false; } else { image.hidden = true; }
+      if (entry.audio) {
+        audio.src = `/static/adventure/${entry.audio}`;
+        audio.play().catch(() => {});
+      } else {
+        audio.pause();
+        audio.removeAttribute('src');
+      }
+      scene.hidden = false;
+    }
+
+    function updateAdventureLanguage(locale) {
+      document.querySelector('#settings-tab-adventure').textContent = text[locale].settingsTabAdventure;
+      document.querySelector('#adventure-new-session-name').placeholder = text[locale].adventureNewSessionPlaceholder;
+      document.querySelector('#adventure-new-session-create').textContent = text[locale].adventureCreate;
+      document.querySelector('#adventure-sessions-empty').textContent = text[locale].adventureEmpty;
+      updateAdventureToggle();
+    }
+
     document.querySelectorAll('.settings-tab').forEach(tab => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
@@ -2093,6 +2272,8 @@
     loadDocuments();
     loadSettings();
     initCameras();
+    loadAdventureManifest();
+    updateAdventureToggle();
     setInterval(refreshStatus, 3000);
   </script>
 </body>

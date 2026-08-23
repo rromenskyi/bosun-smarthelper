@@ -62,8 +62,25 @@ depends on a model being available to ask.
 
 The response to a game-mode turn carries `location_id` (`chatResponse`
 in `internal/webui/server.go`), but only on a turn that actually moved
-the player — never on every turn — so a future UI can swap the
-location's art/ambient audio exactly when it should and no more often.
+the player — never on every turn — so the UI swaps the location's
+art/ambient audio exactly when it should and no more often.
+
+## Playing it
+
+A 🎮 button appears in the header once the feature is enabled. Session
+management lives in its own settings tab (list, create, delete, "Play")
+— all plain REST calls, no LLM involved. Clicking "Play" turns game
+mode on for the current browser tab's conversation; the 🎮 button then
+toggles it back off. While on, ordinary chat messages go straight to
+the engine; `#adventure-scene` above the message list shows the current
+location's art/ambient audio once `tools/artgen`'s manifest exists (a
+missing `/static/adventure/manifest.json` — the normal case until that
+pipeline has actually been run and its output copied in — just means
+no art/audio, not an error).
+Verified live with a real browser (Playwright): settings tab, session
+create/list, Play, the 🎮 toggle, and a full chat round-trip through
+game mode, confirmed reaching the engine directly (~450ms end to end,
+no LLM call) rather than the chat asker.
 
 ## Persistence (`internal/adventure/store.go`)
 
