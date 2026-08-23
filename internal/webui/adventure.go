@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/roman220/bosun-smarthelper/internal/adventure"
 	"github.com/roman220/bosun-smarthelper/internal/llm"
@@ -150,4 +151,144 @@ func (s *Server) narrateAdventureOutput(ctx context.Context, text string) (strin
 		return "", err
 	}
 	return strings.TrimSpace(resp.Content), nil
+}
+
+type adventureSessionSummary struct {
+	Name       string `json:"name"`
+	Turns      int    `json:"turns"`
+	LocationID int32  `json:"location_id"`
+	GameOver   bool   `json:"game_over"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+// handleAdventureSessionsList backs the settings page's session picker —
+// plain, LLM-free, same as everything else in this file.
+func (s *Server) handleAdventureSessionsList(w http.ResponseWriter, r *http.Request) {
+	if s.adventureStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "adventure feature is not enabled"})
+		return
+	}
+	infos, err := s.adventureStore.ListSessions()
+	if err != nil {
+		s.logger.Error("list adventure sessions", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not list sessions"})
+		return
+	}
+	sessions := make([]adventureSessionSummary, len(infos))
+	for i, info := range infos {
+		sessions[i] = adventureSessionSummary{
+			Name:       info.Name,
+			Turns:      info.Turns,
+			LocationID: info.LocationID,
+			GameOver:   info.GameOver,
+			UpdatedAt:  info.UpdatedAt.Format(time.RFC3339),
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+type adventureSessionCreateRequest struct {
+	Name string `json:"name"`
+	Seed int    `json:"seed"`
+}
+
+// handleAdventureSessionCreate makes a new named session. Does not itself
+// put any conversation into game mode or select an active session — the
+// settings page's "new" button and a subsequent explicit select/mode
+// call are two separate, deliberate steps.
+func (s *Server) handleAdventureSessionCreate(w http.ResponseWriter, r *http.Request) {
+	if s.adventureStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "adventure feature is not enabled"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	var request adventureSessionCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if _, err := s.adventureStore.CreateSession(name, request.Seed); err != nil {
+		if err == adventure.ErrSessionExists {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "a session with that name already exists"})
+			return
+		}
+		s.logger.Error("create adventure session", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create session"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name})
+}
+
+type adventureSessionRenameRequest struct {
+	NewName string `json:"new_name"`
+}
+
+// handleAdventureSessionRename renames a session in place.
+func (s *Server) handleAdventureSessionRename(w http.ResponseWriter, r *http.Request) {
+	if s.adventureStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "adventure feature is not enabled"})
+		return
+	}
+	oldName := strings.TrimSpace(r.PathValue("name"))
+	if oldName == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	var request adventureSessionRenameRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	newName := strings.TrimSpace(request.NewName)
+	if newName == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "new_name is required"})
+		return
+	}
+	if err := s.adventureStore.RenameSession(oldName, newName); err != nil {
+		switch err {
+		case adventure.ErrSessionNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		case adventure.ErrSessionExists:
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "a session with that name already exists"})
+		default:
+			s.logger.Error("rename adventure session", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not rename session"})
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": newName})
+}
+
+// handleAdventureSessionDelete removes a session. Any chat conversation
+// still pointed at it via game mode will simply get "session not found"
+// on its next turn — no attempt to hunt down and clear those pointers
+// here, since they're keyed by chat session id, not by adventure session
+// name, and are naturally cleaned up as chat sessions expire (see
+// SessionOptions.TTL).
+func (s *Server) handleAdventureSessionDelete(w http.ResponseWriter, r *http.Request) {
+	if s.adventureStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "adventure feature is not enabled"})
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if err := s.adventureStore.DeleteSession(name); err != nil {
+		if err == adventure.ErrSessionNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+			return
+		}
+		s.logger.Error("delete adventure session", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not delete session"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": name})
 }

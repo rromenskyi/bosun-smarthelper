@@ -67,6 +67,7 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		"alerts_telegram_configured": s.alertsConfigured.Telegram,
 		"alerts_webhook_configured":  s.alertsConfigured.Webhook,
 		"alerts_speaker_configured":  s.alertsConfigured.Speaker,
+		"adventure_configured":       s.adventureStore != nil,
 	})
 }
 
