@@ -146,6 +146,21 @@ Stdin is captured to a temp file (`cat > "$CODE_FILE"`, in the foreground)
 empirically necessary: piping stdin directly into a backgrounded command
 on this image's shell does not reliably deliver it.
 
+**Known gap, accepted, not a security hole**: this kill is by process
+group, not by cgroup. Code that explicitly detaches into its *own* new
+session — Python's `subprocess.Popen(..., start_new_session=True)`, or an
+equivalent `setsid()` call — gets a new PGID and is no longer reachable by
+`kill -KILL -- -$PGID`, so it keeps running past the per-call
+`timeout_seconds`. This doesn't threaten the one non-negotiable (it's
+still fully contained inside the same disposable container, still bounded
+by that container's `--memory`/`--cpus` cgroup limits regardless of which
+process group it's in, and still gets cleaned up whenever the session's
+TTL eventually reaps the whole container) — it just means the wall-clock
+timeout specifically isn't airtight against deliberately evasive code,
+consistent with that timeout always having been a reliability guard, not
+a security control (see "What this deliberately does not protect
+against" above).
+
 ## Enabling it
 
 **Two separate switches, deliberately** — `sandbox.enabled` in

@@ -28,6 +28,22 @@ still-active alert. State survives a restart (`alerts_threshold_state.json`,
 `alerts_noaa_seen_state.json` in the data directory) — see "Why separate
 state files" below.
 
+**At-most-once, not guaranteed delivery, by design**: state flips to
+"notified" as soon as a check runs, regardless of whether any configured
+notifier actually succeeded (`internal/alerts.ThresholdChecker.Check`,
+`CheckNOAA`). If Telegram/the webhook endpoint is briefly unreachable
+right when a rule crosses, that one delivery is lost — it does *not*
+retry on the next tick, since by then the state already reads "already
+notified" and nothing has changed. The alternative (only commit "notified"
+once a notifier succeeds) trades this for a worse failure mode: a
+permanently broken channel would make the checker retry-storm forever on
+every tick for a metric that's genuinely still crossed. Given the
+channels here (Telegram, a webhook, the local speaker) are all either
+reliable or fail in a way a human will notice on their own (a broken
+webhook, an unplugged speaker), the simpler at-most-once behavior was
+kept — flagged here explicitly since it's a real trade-off, not an
+oversight.
+
 ## Config
 
 ```yaml

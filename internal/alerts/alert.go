@@ -12,8 +12,18 @@ package alerts
 
 import (
 	"context"
+	"net/http"
 	"time"
 )
+
+// httpClient is shared by every HTTP-based Notifier (Telegram, webhook).
+// A bounded Timeout matters here specifically because both
+// runThresholdChecker and runNOAAChecker (cmd/smarthelper/main.go) call
+// Notify synchronously inside a single ticker goroutine — http.DefaultClient
+// has no timeout at all, so an endpoint that accepts the connection but
+// never responds would hang that goroutine forever, silently stopping
+// every future alert check, not just the one delivery.
+var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 // Severity mirrors NOAA's own alert severity scale (see
 // https://www.weather.gov/documentation/services-web-api#/default/get_alerts)

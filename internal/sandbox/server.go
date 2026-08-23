@@ -81,11 +81,21 @@ type runResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// maxRunRequestBody bounds the JSON body handleRun will read — generous
+// for a real Python program (about 1500 lines of ASCII), but not
+// unbounded. Matters more here than for a typical small API request:
+// sandbox containers run with --network host (see runner.go), so code
+// executing inside the very sandbox this service isolates can reach
+// sandboxd's own loopback listener and would otherwise be able to POST
+// an arbitrarily large body at it.
+const maxRunRequestBody = 64 * 1024
+
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "POST only")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRunRequestBody)
 	var req runRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -118,6 +128,16 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Touched before EnsureRunning/Exec, not after — the reaper's 2-minute
+	// tick has no way to know a session is mid-request otherwise. A
+	// session sitting just under SessionTTL that then starts a call
+	// taking up to MaxTimeout (120s) would otherwise still read as idle
+	// for the whole call, and sweep() could remove its container out from
+	// under an in-flight docker exec.
+	if err := s.Tracker.Touch(req.SessionID); err != nil && s.Logger != nil {
+		s.Logger.Warn("persist sandbox session state", "session", req.SessionID, "error", err)
+	}
+
 	ctx := r.Context()
 	if err := s.Runner.EnsureRunning(ctx, containerName, s.RuntimeImage, workspaceDir, s.MemoryLimit, s.CPULimit); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("start sandbox: %v", err))
@@ -128,9 +148,6 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("run code: %v", err))
 		return
-	}
-	if err := s.Tracker.Touch(req.SessionID); err != nil && s.Logger != nil {
-		s.Logger.Warn("persist sandbox session state", "session", req.SessionID, "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, runResponse{

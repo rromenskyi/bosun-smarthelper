@@ -130,6 +130,40 @@ func TestHandleRunSurfacesRunnerErrorAsHTTP500(t *testing.T) {
 	}
 }
 
+func TestHandleRunTouchesSessionBeforeExecutingNotAfter(t *testing.T) {
+	// The reaper only knows a session is idle via Tracker's timestamps
+	// (reaper.go's Expired) — if Touch happened only after a successful
+	// Exec, a session sitting near its TTL when a new (possibly
+	// long-running) call starts would still read as idle for the whole
+	// call, and could be reaped mid-execution. Touch must happen before
+	// EnsureRunning/Exec, so it's recorded even when the call ultimately
+	// fails.
+	runner := newFakeRunner()
+	runner.ensureErr = errStartFailed
+	s := newTestServer(t, runner)
+
+	postRun(t, s, map[string]any{"session_id": validSession1, "code": "pass"})
+
+	if len(s.Tracker.Expired(time.Now(), 0)) != 1 {
+		t.Error("session wasn't touched even though EnsureRunning failed — reaper race window is back")
+	}
+}
+
+func TestHandleRunRejectsOversizedBody(t *testing.T) {
+	// Sandbox containers run with --network host (runner.go), so code
+	// executing inside the very sandbox this service isolates can reach
+	// sandboxd's own loopback listener directly — the body cap must be
+	// enforced regardless of who's calling.
+	s := newTestServer(t, newFakeRunner())
+	oversized := bytes.Repeat([]byte("a"), maxRunRequestBody+1)
+	request := httptest.NewRequest("POST", "/run", bytes.NewReader(oversized))
+	response := httptest.NewRecorder()
+	s.Handler().ServeHTTP(response, request)
+	if response.Code == 200 {
+		t.Error("an oversized body should not succeed")
+	}
+}
+
 func TestHandleRunOnlyAcceptsPost(t *testing.T) {
 	s := newTestServer(t, newFakeRunner())
 	request := httptest.NewRequest("GET", "/run", nil)

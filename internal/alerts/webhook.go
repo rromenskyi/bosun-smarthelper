@@ -45,7 +45,7 @@ func (w *WebhookNotifier) Notify(ctx context.Context, alert Alert) error {
 		return fmt.Errorf("create webhook request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("send webhook: %w", err)
 	}
