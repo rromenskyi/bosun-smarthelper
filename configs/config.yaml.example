@@ -327,6 +327,26 @@ metrics:
 #       enabled: true               # needs /dev/snd passed through to the container and aplay
 #       player_path: "aplay"        # installed — see docs/alerts.md — and voice.tts configured
 
+# run_code: lets the LLM write and run a short Python 3 program for math/
+# parsing/simulation it would otherwise reason about badly. Runs in a
+# separate, isolated container via a separate `sandboxd` service, never
+# inside bosun itself — see docs/sandbox.md before turning this on.
+# Enabling it is genuinely TWO switches, not one: `enabled: true` here,
+# AND `COMPOSE_PROFILES=sandbox` in .env (sandboxd holds
+# /var/run/docker.sock — root-equivalent on the host — so it only runs at
+# all once you opt into that separately).
+# sandbox:
+#   enabled: true
+#   url: "http://127.0.0.1:8090"            # sandboxd's address, as bosun's tool sees it
+#   session_ttl: "15m"                      # idle workspace containers are reaped after this long
+#   timeout_seconds: 30                     # per-execution wall-clock cap (reliability, not security)
+#   memory_limit: "512m"                    # per-container `docker run --memory` (reliability, not security)
+#   cpu_limit: "1"                          # per-container `docker run --cpus` (reliability, not security)
+#   # listen_addr/scratch_dir/state_dir are sandboxd-side only — the
+#   # defaults (127.0.0.1:8090, /data/sandbox/workspaces, /data/sandbox/state)
+#   # already match docker-compose.yml's sandboxd volume mounts; no reason
+#   # to override them on a Docker deployment.
+
 # Logging
 logging:
   level: "info"                             # debug, info, warn, error

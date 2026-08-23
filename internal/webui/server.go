@@ -534,6 +534,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
 	defer cancel()
+	// Scopes a run_code workspace (internal/tools.CodeExecTool,
+	// docs/sandbox.md) to this real chat session — never something the
+	// LLM itself supplies, since sessionID here is already
+	// server-generated/validated above.
+	ctx = tools.ContextWithSessionID(ctx, sessionID)
 
 	// Only the local model needs serializing — it's weak, shared hardware
 	// that can't usefully run more than one generation at a time. The

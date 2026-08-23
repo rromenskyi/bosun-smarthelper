@@ -25,6 +25,7 @@ type Config struct {
 	Metrics   MetricsConfig   `mapstructure:"metrics"`
 	Backup    BackupConfig    `mapstructure:"backup"`
 	Alerts    AlertsConfig    `mapstructure:"alerts"`
+	Sandbox   SandboxConfig   `mapstructure:"sandbox"`
 }
 
 // BackupConfig holds settings for the manual, on-demand `smarthelper
@@ -117,6 +118,51 @@ type AlertsWebhookConfig struct {
 type AlertsSpeakerConfig struct {
 	Enabled    bool   `mapstructure:"enabled"`
 	PlayerPath string `mapstructure:"player_path"`
+}
+
+// SandboxConfig is the `run_code` tool (internal/tools/codeexec.go,
+// docs/sandbox.md): lets the LLM write and run a short Python program for
+// computation it's bad at itself (math, parsing, simulation). Off by
+// default — enabling it needs BOTH Enabled here AND the separate
+// `sandboxd` service actually running (Compose profile "sandbox", see
+// docker-compose.yml) — this file alone never starts anything with
+// /var/run/docker.sock access.
+//
+// One config file, shared read-only between the `bosun` container (which
+// only reads URL/Enabled, to call sandboxd) and the `sandboxd` container
+// (which reads everything else, to run itself) — the same file already
+// mounted into both, no second config mechanism.
+type SandboxConfig struct {
+	// Enabled registers the run_code tool in bosun. Meaningless unless
+	// sandboxd is also actually running (see above).
+	Enabled bool `mapstructure:"enabled"`
+	// URL is sandboxd's own address, as bosun's tool sees it.
+	URL string `mapstructure:"url"`
+	// ListenAddr is what sandboxd itself binds to — loopback only; nothing
+	// but bosun, on the same host, needs to reach this.
+	ListenAddr string `mapstructure:"listen_addr"`
+	// ScratchDir/StateDir are sandboxd-side paths: per-session workspace
+	// bind mounts, and the reaper's persisted session-state JSON
+	// (internal/sandbox, same atomicWriteJSON pattern as
+	// internal/backup/schedule.go), respectively.
+	ScratchDir string `mapstructure:"scratch_dir"`
+	StateDir   string `mapstructure:"state_dir"`
+	// SessionTTL: how long an idle session's workspace container survives
+	// before the reaper removes it — a duration string like
+	// alerts.noaa.check_interval.
+	SessionTTL string `mapstructure:"session_ttl"`
+	// TimeoutSeconds bounds a single execution's wall-clock time —
+	// reliability (don't let a runaway script hang sandboxd), not security.
+	TimeoutSeconds int `mapstructure:"timeout_seconds"`
+	// MemoryLimit/CPULimit are `docker run --memory`/`--cpus` values —
+	// also reliability, not security: this box runs LLM inference too and
+	// a memory-bomb/infinite-loop script from the weak local model
+	// shouldn't be able to take the whole thing down.
+	MemoryLimit string `mapstructure:"memory_limit"`
+	CPULimit    string `mapstructure:"cpu_limit"`
+	// RuntimeImage is the locally built (not pulled at request time) image
+	// each session's container runs — see deploy/sandbox-runtime/Dockerfile.
+	RuntimeImage string `mapstructure:"runtime_image"`
 }
 
 // MetricsConfig holds the local monitoring dashboard's sampling and
@@ -533,6 +579,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("alerts.noaa.check_interval", "15m")
 	v.SetDefault("alerts.channels.telegram.bot_token_env", "ALERTS_TELEGRAM_BOT_TOKEN")
 	v.SetDefault("alerts.channels.speaker.player_path", "aplay")
+
+	v.SetDefault("sandbox.url", "http://127.0.0.1:8090")
+	v.SetDefault("sandbox.listen_addr", "127.0.0.1:8090")
+	v.SetDefault("sandbox.scratch_dir", "/data/sandbox/workspaces")
+	v.SetDefault("sandbox.state_dir", "/data/sandbox/state")
+	v.SetDefault("sandbox.session_ttl", "15m")
+	v.SetDefault("sandbox.timeout_seconds", 30)
+	v.SetDefault("sandbox.memory_limit", "512m")
+	v.SetDefault("sandbox.cpu_limit", "1")
+	v.SetDefault("sandbox.runtime_image", "bosun-sandbox-python:local")
 
 	v.SetDefault("metrics.sources", []map[string]any{
 		{"metric": "cpu_temp_c", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu.temp_c", "label_ru": "Температура CPU", "label_en": "CPU temperature", "unit": "°C"},

@@ -3,6 +3,11 @@
 Everything here goes deeper on one feature or decision than `README.md`'s
 top-level tour has room for. Grouped by what you're trying to do.
 
+- **[why-bosun.md](why-bosun.md)** — the problem this project actually
+  solves (a boat/RV with no reliable internet) and the one thing neither a
+  cloud assistant nor fixed marine electronics can do on their own. Start
+  here if you're wondering what this is *for*, not just what it does.
+
 ## Deploying and running it
 
 - **[../INSTALL.md](../INSTALL.md)** — complete, tested, from-zero install
@@ -67,6 +72,12 @@ top-level tour has room for. Grouped by what you're trying to do.
   change needed), delivered via Telegram, a webhook, or spoken through the
   host's own speaker; each channel is on only once it's both configured
   and enabled from the settings page.
+- **[sandbox.md](sandbox.md)** — `run_code`: the LLM writes and runs a
+  short Python program for math/parsing/simulation it's otherwise bad at.
+  Never executes inside `bosun` itself — a separate `sandboxd` service (the
+  only thing holding `/var/run/docker.sock`) runs it in its own Docker
+  container instead. Off by default, and needs two separate opt-ins to run
+  at all.
 
 ## How it behaves, and why
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,6 +27,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/llm"
 	"github.com/roman220/bosun-smarthelper/internal/mcp"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
+	"github.com/roman220/bosun-smarthelper/internal/sandbox"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
 	"github.com/roman220/bosun-smarthelper/internal/voice"
@@ -43,7 +45,7 @@ func main() {
 		Use:   "smarthelper",
 		Short: "Bosun (Starpom), a local-first assistant with hybrid LLM routing and MCP tools",
 	}
-	root.AddCommand(versionCmd(), mcpCmd(), chatCmd(), serveCmd(), errorsCmd(), documentsCmd(), backupCmd(), restoreCmd())
+	root.AddCommand(versionCmd(), mcpCmd(), chatCmd(), serveCmd(), errorsCmd(), documentsCmd(), backupCmd(), restoreCmd(), sandboxServeCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
@@ -406,6 +408,51 @@ func resolveDataDir(configuredDir string) (string, error) {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
 	return filepath.Join(home, ".local", "share", "bosun"), nil
+}
+
+// sandboxServeCmd runs sandboxd — the only process in this stack that
+// touches /var/run/docker.sock, deliberately separate from `serve`'s much
+// larger, network-facing bosun process. See docs/sandbox.md for why, and
+// internal/sandbox for the actual HTTP handler + reaper.
+func sandboxServeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "sandbox-serve",
+		Short:  "Run the run_code tool's isolated execution service (internal use, see docs/sandbox.md)",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+			tracker, err := sandbox.NewSessionTracker(cfg.Sandbox.StateDir)
+			if err != nil {
+				return fmt.Errorf("load sandbox session state: %w", err)
+			}
+
+			sessionTTL, err := time.ParseDuration(cfg.Sandbox.SessionTTL)
+			if err != nil || sessionTTL <= 0 {
+				sessionTTL = 15 * time.Minute
+			}
+			timeout := time.Duration(cfg.Sandbox.TimeoutSeconds) * time.Second
+			if timeout <= 0 {
+				timeout = 30 * time.Second
+			}
+			const maxTimeout = 120 * time.Second
+
+			server := sandbox.NewServer(tracker, cfg.Sandbox.ScratchDir, cfg.Sandbox.RuntimeImage,
+				cfg.Sandbox.MemoryLimit, cfg.Sandbox.CPULimit, timeout, maxTimeout, logger)
+
+			if err := sandbox.Reconcile(cmd.Context(), server.Runner, tracker); err != nil {
+				logger.Warn("reconcile sandbox session state against running containers", "error", err)
+			}
+			go sandbox.Run(cmd.Context(), server, 2*time.Minute, sessionTTL, logger)
+
+			logger.Info("sandboxd listening", "addr", cfg.Sandbox.ListenAddr)
+			return http.ListenAndServe(cfg.Sandbox.ListenAddr, server.Handler())
+		},
+	}
 }
 
 func backupCmd() *cobra.Command {
@@ -865,5 +912,8 @@ func buildRegistry(cfg *config.Config) (*tools.Registry, *documents.Store) {
 	registry.Register(tools.NewFridgeTool(&cfg.Sensors.Fridge))
 	registry.Register(tools.NewGPSTool(&cfg.Sensors.GPS))
 	registry.Register(tools.NewSystemTool(&cfg.Sensors.System))
+	if cfg.Sandbox.Enabled {
+		registry.Register(tools.NewCodeExecTool(&cfg.Sandbox))
+	}
 	return registry, docStore
 }

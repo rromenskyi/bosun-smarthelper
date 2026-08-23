@@ -6,6 +6,11 @@ and automatically prefers a remote LLM (OpenAI-compatible) when the internet
 is available. Exposes sensor data through MCP (Model Context Protocol) so any
 MCP-compatible client (Claude Desktop, custom agents, etc.) can query it.
 
+**Wondering what this is for?** [docs/why-bosun.md](docs/why-bosun.md)
+covers the actual problem this solves — a boat or RV with no reliable
+internet — and why neither a cloud assistant nor fixed marine electronics
+solve it on their own.
+
 **New here?** [INSTALL.md](INSTALL.md) is a complete, tested, from-zero
 walkthrough (fresh Ubuntu → running web UI) using Docker — the fastest
 path to a working assistant with no manual model setup. The Quick Start
@@ -95,6 +100,13 @@ In daily use, not just a prototype. Working today:
   threshold, delivered via Telegram, a webhook, and/or spoken through the
   host's own speaker — each channel is on only once it's both configured
   and enabled from the settings page — see `docs/alerts.md`.
+- **`run_code`** — the LLM writes and runs a short Python program for
+  math/parsing/simulation it would otherwise get wrong reasoning about
+  itself. Never runs inside `bosun`'s own process/container — a separate,
+  minimal `sandboxd` service (the only thing in the stack holding
+  `/var/run/docker.sock`) runs it in its own Docker container instead. Off
+  by default, needs two separate opt-ins to run at all — see
+  `docs/sandbox.md`.
 
 Not yet built: real fridge sensor hardware, continuous voice conversation
 mode. See `SPEC.md` for the full roadmap, and

@@ -136,6 +136,44 @@ services:
       --host 127.0.0.1 --port 1236
       --threads 4 --language ru --audio-ctx 512
 
+  # run_code's execution service (docs/sandbox.md) — the only container in
+  # this stack that holds /var/run/docker.sock, deliberately kept separate
+  # from `bosun` itself (much larger, network-facing surface) rather than
+  # giving bosun the socket directly. Off by default: `sandbox.enabled:
+  # false` in config.yaml already keeps bosun from registering the
+  # run_code tool, but that alone doesn't stop this container — a
+  # root-equivalent socket holder — from running anyway, so it's also
+  # gated behind a Compose profile. Enabling the feature is genuinely two
+  # switches: `sandbox.enabled: true` in config.yaml, AND
+  # `COMPOSE_PROFILES=sandbox` in .env (see .env.example).
+  sandboxd:
+    # Context is the repo root, not ./deploy/sandbox — unlike llama/whisper
+    # (self-contained, clone their own source), this Dockerfile builds the
+    # same `smarthelper` binary bosun itself does, so it needs cmd/ and
+    # internal/ from here.
+    build:
+      context: .
+      dockerfile: deploy/sandbox/Dockerfile
+    image: bosun-sandboxd:local
+    container_name: sandboxd
+    restart: unless-stopped
+    profiles: ["sandbox"]
+    network_mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config.yaml:/etc/smarthelper/config.yaml:ro
+      # Per-session workspaces and the reaper's persisted session-state
+      # JSON (internal/sandbox) — a plain host directory, same reasoning
+      # as ./data/bosun: survives `docker compose down -v`.
+      - ./data/sandbox:/data/sandbox
+    group_add:
+      # Matches this host's "docker" group (GID 973, `getent group
+      # docker`) — for consistency with the dialout/audio group_add
+      # entries on the bosun service above, even though holding
+      # /var/run/docker.sock is already root-equivalent regardless of
+      # this container's own UID (see docs/sandbox.md).
+      - "973"
+
   # Outbound-only connector for remote access (bosunonline.us) — no port
   # forwarding on the router. Host networking so it can reach the
   # plain-HTTP fallback listener at localhost:8080 (TLS is already

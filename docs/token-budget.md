@@ -14,19 +14,26 @@ accidentally reintroduce a model-confusing bloat regression.
    line) — currently ~60 tokens.
 2. **Tool contract** — every tool the connectivity state allows
    (`Registry.AvailableList`), sent as JSON Schema for native tool-calling
-   APIs (Ollama, OpenAI). Measured with all 7 built-in tools registered:
+   APIs (Ollama, OpenAI). Measured with every built-in tool registered,
+   including `run_code` (`sandbox.enabled: true` — off by default, but
+   still worth measuring the worst case):
 
    | State | Tools | Full JSON Schema |
    |-------|-------|-------------------|
-   | online | 7 | ~3000 bytes (~750 tokens) |
-   | offline | 4 | ~1500 bytes (~380 tokens) |
+   | online | 9 | ~8.7 KB (~2170 tokens) |
+   | offline | 6 | ~7.2 KB (~1800 tokens) |
+
+   `run_code` has no `RequiresNetwork()` — it must stay usable fully
+   offline (a boat with no internet still wants local computation help,
+   see `docs/sandbox.md`) — so it's the one tool present in both rows.
+   Enabling it costs the same ~720 bytes (~180 tokens) either way.
 
    The local model is usually only invoked while offline (router prefers
-   remote when online), which already gets the smaller 4-tool set for free.
-   The exception: general internet is up but the remote call itself fails
-   (bad key, quota, outage) — the router falls back to local mid-request, and
-   that local call still carries the full 7-tool online contract. This is the
-   worst case worth designing for.
+   remote when online), which already gets the smaller offline tool set for
+   free. The exception: general internet is up but the remote call itself
+   fails (bad key, quota, outage) — the router falls back to local
+   mid-request, and that local call still carries the full online contract.
+   This is the worst case worth designing for.
 3. **Conversation history** — `web.history.local` / `web.history.remote`
    (`internal/config/config.go`, `internal/webui/server.go`). Two separate
    budgets, selected per request from current connectivity, not one shared
