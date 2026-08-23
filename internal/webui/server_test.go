@@ -179,6 +179,30 @@ func TestServerChatStreamingErrorEvent(t *testing.T) {
 	}
 }
 
+// TestServerChatSavesUserMessageBeforeAnswerArrives is a regression test
+// for a real report: refreshing the page before a slow generation finished
+// lost the question along with the answer, since the whole turn was only
+// ever written to the session store once the answer was in hand. The
+// user's half now lands on disk as soon as the request starts, so a
+// refresh (or a request that outright fails, as here) still leaves the
+// question visible in history even with no reply.
+func TestServerChatSavesUserMessageBeforeAnswerArrives(t *testing.T) {
+	asker := &streamingErrorAsker{}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"привет","session_id":"never-answered"}`))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	history := server.loadHistory("never-answered")
+	if len(history) != 1 || history[0].Role != "user" || history[0].Content != "привет" {
+		t.Errorf("history = %#v, want just the user's message despite the failed answer", history)
+	}
+}
+
 // slowStreamingAsker sleeps before each delta, long enough to trigger the
 // heartbeat ticker at least once per gap.
 type slowStreamingAsker struct {

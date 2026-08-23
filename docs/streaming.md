@@ -54,6 +54,20 @@ frontend change — the client's NDJSON parser only recognizes specific
 connection upkeep, invisible to the user, that resets any intermediary's
 idle timer without affecting the actual answer.
 
+## The question is saved before the answer exists
+
+`handleChat` writes the user's own message to the session store
+(`saveUserMessage`) as soon as the request is accepted — not, as before,
+bundled together with the answer in one write after generation finishes.
+A generation can legitimately run for a long time (see the heartbeat
+section above), and the old behavior meant refreshing the page before an
+answer arrived lost the question too, since nothing had reached disk yet.
+`saveAssistantReply` appends the other half once an answer actually comes
+back; if it never does (the client disconnects, the request errors out),
+the user's message is left as the last, unanswered entry — an honest
+record of what actually happened, and `index.html`'s `hydrateHistory`
+already renders a trailing user message with no reply just fine.
+
 ## Only the local model queues
 
 `handleChat` used to serialize *every* chat request through one slot

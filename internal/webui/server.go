@@ -588,6 +588,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	history := s.loadHistory(sessionID)
+	// Saved now, not after the answer comes back — see saveUserMessage.
+	s.saveUserMessage(sessionID, request.Message)
 	if servedLocally {
 		// The local model is about to serve this request: trim to its small
 		// budget for the outgoing call only. The full history stays in the
@@ -623,7 +625,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, chatResponse{Error: "assistant request failed"})
 		return
 	}
-	s.saveTurn(sessionID, request.Message, answer)
+	s.saveAssistantReply(sessionID, answer)
 	writeJSON(w, http.StatusOK, chatResponse{Answer: answer, SessionID: sessionID})
 }
 
@@ -739,7 +741,7 @@ func (s *Server) handleChatStreaming(
 		return
 	}
 
-	s.saveTurn(sessionID, message, answer)
+	s.saveAssistantReply(sessionID, answer)
 	write(streamEvent{Type: "done", SessionID: sessionID})
 }
 
@@ -953,7 +955,17 @@ func (s *Server) loadHistory(sessionID string) []agent.HistoryMessage {
 	return append([]agent.HistoryMessage(nil), session.History...)
 }
 
-func (s *Server) saveTurn(sessionID, userMessage, answer string) {
+// saveUserMessage persists the user's half of a turn immediately, before
+// the asker call even starts. A generation can legitimately run for a long
+// time (see docs/streaming.md's heartbeat section); without this, a page
+// refresh mid-generation lost the question along with the never-saved
+// answer, since nothing reached disk until the whole turn completed.
+// saveAssistantReply appends the other half once (if) an answer arrives —
+// on failure or an abandoned request, the user message is left as the
+// last, unanswered entry, which is an honest reflection of what actually
+// happened and renders fine (hydrateHistory in index.html tolerates a
+// trailing user message with no reply).
+func (s *Server) saveUserMessage(sessionID, userMessage string) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	now := time.Now()
@@ -962,10 +974,20 @@ func (s *Server) saveTurn(sessionID, userMessage, answer string) {
 		s.evictOldestLocked()
 	}
 	session := s.sessions[sessionID]
-	session.History = append(session.History,
-		agent.HistoryMessage{Role: "user", Content: userMessage},
-		agent.HistoryMessage{Role: "assistant", Content: answer},
-	)
+	session.History = append(session.History, agent.HistoryMessage{Role: "user", Content: userMessage})
+	session.History = trimHistory(session.History, s.sessionOptions.Remote.Turns, s.sessionOptions.Remote.MaxChars)
+	session.UpdatedAt = now
+	s.sessions[sessionID] = session
+	s.persistLocked()
+}
+
+func (s *Server) saveAssistantReply(sessionID, answer string) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	now := time.Now()
+	s.purgeExpiredLocked(now)
+	session := s.sessions[sessionID]
+	session.History = append(session.History, agent.HistoryMessage{Role: "assistant", Content: answer})
 	session.History = trimHistory(session.History, s.sessionOptions.Remote.Turns, s.sessionOptions.Remote.MaxChars)
 	session.UpdatedAt = now
 	s.sessions[sessionID] = session
