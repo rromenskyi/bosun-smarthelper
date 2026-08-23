@@ -26,6 +26,31 @@ type Config struct {
 	Backup    BackupConfig    `mapstructure:"backup"`
 	Alerts    AlertsConfig    `mapstructure:"alerts"`
 	Sandbox   SandboxConfig   `mapstructure:"sandbox"`
+	Cameras   []CameraConfig  `mapstructure:"cameras"`
+}
+
+// CameraConfig is one WiFi camera — see docs/cameras.md. Config-only, not
+// settings-page-editable: which cameras exist is an infrastructure
+// decision, not something to add/remove from a phone. A camera's own
+// stream server accepts only one client, which is exactly why this
+// exists at all — internal/cameras.Relay is the one thing that ever
+// connects directly to StreamURL; everything else (the recorder, any
+// number of live browser viewers) is a subscriber of the relay instead.
+type CameraConfig struct {
+	// Name is a URL-safe identifier used in API paths
+	// (/api/cameras/<name>/...) and the recorded segments' directory.
+	Name      string `mapstructure:"name"`
+	LabelRU   string `mapstructure:"label_ru"`
+	LabelEN   string `mapstructure:"label_en"`
+	StreamURL string `mapstructure:"stream_url"`
+	// Record turns on cyclic (ring-buffer) archival for this camera via
+	// an ffmpeg subprocess reading from the relay (never the camera
+	// directly) — see docs/cameras.md.
+	Record bool `mapstructure:"record"`
+	// SegmentSeconds/SegmentCount size the ring: SegmentCount segments of
+	// SegmentSeconds each, oldest overwritten once full.
+	SegmentSeconds int `mapstructure:"segment_seconds"`
+	SegmentCount   int `mapstructure:"segment_count"`
 }
 
 // BackupConfig holds settings for the manual, on-demand `smarthelper

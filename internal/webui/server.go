@@ -23,6 +23,7 @@ import (
 
 	"github.com/roman220/bosun-smarthelper/internal/agent"
 	"github.com/roman220/bosun-smarthelper/internal/backup"
+	"github.com/roman220/bosun-smarthelper/internal/cameras"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
@@ -134,6 +135,8 @@ type Server struct {
 	backupS3Cfg       *backup.S3Config
 	backupDataDir     string
 	alertsConfigured  alertsConfigured
+	cameraManager     *cameras.Manager
+	cameraDataDir     string
 }
 
 // alertsConfigured tracks which alert channels config.yaml/.env actually
@@ -352,6 +355,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/quick/{tool}", s.handleQuickTool)
 	mux.HandleFunc("GET /api/backups", s.handleBackupsList)
 	mux.HandleFunc("POST /api/backups", s.handleBackupRun)
+	mux.HandleFunc("GET /api/cameras/list", s.handleCamerasList)
+	mux.HandleFunc("GET /api/cameras/{name}/stream", s.handleCameraStream)
+	mux.HandleFunc("GET /api/cameras/{name}/archive", s.handleCameraArchiveList)
+	mux.HandleFunc("GET /api/cameras/{name}/archive/{file}", s.handleCameraArchiveFile)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
 	}

@@ -108,6 +108,11 @@ In daily use, not just a prototype. Working today:
   `/var/run/docker.sock`) runs it in its own Docker container instead. Off
   by default, needs two separate opt-ins to run at all — see
   `docs/sandbox.md`.
+- **Cameras** — a 📹 button for one or more WiFi cameras' live view and
+  recorded archive. These cameras typically accept only one client at a
+  time, so a relay (`internal/cameras`) holds that one connection and
+  fans frames out to any number of viewers plus the archive recorder —
+  see `docs/cameras.md`.
 
 Not yet built: real fridge sensor hardware, continuous voice conversation
 mode. See `SPEC.md` for the full roadmap, and

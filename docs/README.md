@@ -78,6 +78,11 @@ top-level tour has room for. Grouped by what you're trying to do.
   only thing holding `/var/run/docker.sock`) runs it in its own Docker
   container instead. Off by default, and needs two separate opt-ins to run
   at all.
+- **[cameras.md](cameras.md)** — a 📹 button for one or more WiFi
+  cameras' live view and recorded archive. A relay (`internal/cameras`)
+  holds each camera's one client slot and fans frames out to any number
+  of viewers plus the archive recorder, since these cameras typically
+  accept only a single connection.
 
 ## How it behaves, and why
 
@@ -99,10 +104,3 @@ top-level tour has room for. Grouped by what you're trying to do.
 - **`../SPEC.md`** — the full roadmap: what's shipped, what's next.
 - **`../AGENTS.md`** — code style and testing expectations for anyone
   (human or agent) changing this codebase.
-
-## Not a Bosun feature, just on the same host
-
-- **[dashcam.md](dashcam.md)** — cyclic recording of a WiFi camera's MJPG
-  stream via `docker-compose.yml`'s `dashcam` service. No Go code, no
-  `config.yaml`, doesn't touch the LLM or tool registry — riding on the
-  same compose file purely for convenience.

@@ -28,6 +28,14 @@ services:
       # removing Docker entirely. Requires the container's bosun user to
       # be uid/gid 1000 (this host's own user) — see Dockerfile.
       - ./data/bosun:/home/bosun/.local/share/bosun
+      # Camera archive (internal/cameras, docs/cameras.md) — a sibling of
+      # the mount above, deliberately NOT nested inside it:
+      # internal/backup.BuildArchive only ever walks
+      # ./data/bosun/.local/share/bosun (cfg.Backup.DataDir), so this
+      # stays excluded from the S3 backup by construction. Recording is
+      # optional per camera (config.yaml's cameras[].record) — this mount
+      # is harmless even with zero cameras configured.
+      - ./data/dashcam:/home/bosun/.local/share/dashcam
       # mkcert-issued cert/key for HTTPS (see docs/tls.md) — regenerate with
       # `mkcert -cert-file data/certs/cert.pem -key-file data/certs/key.pem
       # <lan-ip> <hostname> localhost 127.0.0.1 ::1` if the LAN IP changes.
@@ -191,37 +199,3 @@ services:
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
 
-  # MVP cyclic (ring-buffer) recording of a WiFi camera's MJPG stream —
-  # not a Bosun feature, just riding on the same host/compose file for
-  # convenience. Writes to ./data/dashcam, a directory internal/backup
-  # never walks (it only ever archives cfg.Backup.DataDir, i.e.
-  # ./data/bosun — see internal/backup/archive.go's BuildArchive), so
-  # this is structurally excluded from the S3 backup, not just by
-  # convention. All camera-specific values (stream URL, segment length,
-  # how many segments to keep) come from .env — see .env.example —
-  # nothing camera-specific is hardcoded here.
-  #
-  # No transcode-vs-CPU tradeoff in practice: measured live against the
-  # real camera, both `-c:v copy` and a full libx264 encode ran at the
-  # same ~0.32x realtime speed — the bottleneck is the camera's own
-  # frame delivery rate (~8 fps despite an advertised 25), not this
-  # host's CPU — so libx264 (smaller files per hour) costs nothing extra
-  # here. `-segment_wrap` is what makes this genuinely cyclic: ffmpeg
-  # itself overwrites the oldest of DASHCAM_SEGMENT_COUNT files once it
-  # wraps around, no separate cleanup process needed.
-  dashcam:
-    image: jrottenberg/ffmpeg:6-alpine
-    container_name: dashcam
-    restart: unless-stopped
-    network_mode: host
-    user: "1000:1000"
-    volumes:
-      - ./data/dashcam:/data/dashcam
-    entrypoint: ["ffmpeg"]
-    command: >-
-      -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2
-      -i ${DASHCAM_STREAM_URL}
-      -an -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p
-      -f segment -segment_time ${DASHCAM_SEGMENT_SECONDS:-300}
-      -segment_wrap ${DASHCAM_SEGMENT_COUNT:-50} -reset_timestamps 1
-      /data/dashcam/cam_%03d.mp4

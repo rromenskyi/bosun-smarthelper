@@ -253,6 +253,11 @@
     .threshold-channels .settings-checkbox { margin-top: 0; }
     .threshold-siren-row { margin-left: 16px; }
     .threshold-remove { align-self: flex-end; }
+    #cameras-live { width: 100%; border-radius: 10px; margin-bottom: 10px; background: #000; display: block; }
+    #cameras-archive-player { width: 100%; border-radius: 10px; margin-bottom: 10px; background: #000; }
+    #cameras-archive-label { margin-top: 4px; }
+    #cameras-archive-list li { cursor: pointer; }
+    #cameras-archive-list li:hover { background: var(--panel-2); }
     #settings-backup-list .backup-meta { font-size: 11px; color: var(--muted); }
     dialog#metrics-dialog {
       border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
@@ -314,6 +319,7 @@
         <button class="bell" id="settings-toggle" type="button" aria-label="Настройки" title="Настройки">⚙️</button>
         <button class="bell" id="docs-toggle" type="button" aria-label="Документы" title="Документы">📄</button>
         <button class="bell" id="metrics-toggle" type="button" aria-label="Мониторинг" title="Мониторинг" hidden>📊</button>
+        <button class="bell" id="cameras-toggle" type="button" aria-label="Камеры" title="Камеры" hidden>📹</button>
         <button class="bell" id="merges-toggle" type="button" aria-label="Слияние счётчиков" title="Слияние счётчиков" hidden>🔗<span class="badge" id="merges-badge" hidden>0</span></button>
         <button class="bell" id="bell" type="button" aria-label="Позвать старпома" title="Позвать старпома">🔔</button>
         <button type="button" class="status" id="status" title="Онлайн/оффлайн: авто"><span class="dot"></span><span>Подключение…</span></button>
@@ -442,6 +448,17 @@
       <button type="button" class="clear" id="merges-close">Закрыть</button>
     </dialog>
 
+    <dialog id="cameras-dialog">
+      <h2 id="cameras-title">Камеры</h2>
+      <div class="metrics-range" id="cameras-picker"></div>
+      <img id="cameras-live" alt="">
+      <p class="settings-label" id="cameras-archive-label">Архив</p>
+      <p class="docs-hint" id="cameras-archive-empty" hidden>Пока нет записей.</p>
+      <video id="cameras-archive-player" controls hidden></video>
+      <ul class="docs-list" id="cameras-archive-list"></ul>
+      <button type="button" class="clear" id="cameras-close">Закрыть</button>
+    </dialog>
+
     <nav class="quick" aria-label="Быстрые запросы">
       <button class="chip" data-tool="get_weather" data-ru="Какая погода на ближайшие дни по моим текущим координатам?" data-en="What's the weather for the next few days at my current coordinates?" data-label-ru="Погода" data-label-en="Weather">Погода</button>
       <button class="chip" data-tool="get_gps" data-ru="Где я сейчас и с какой скоростью двигаюсь?" data-en="Where am I and how fast am I moving?" data-label-ru="GPS" data-label-en="GPS">GPS</button>
@@ -490,6 +507,8 @@
     const settingsForm = document.querySelector('#settings-form');
     const metricsToggle = document.querySelector('#metrics-toggle');
     const metricsDialog = document.querySelector('#metrics-dialog');
+    const camerasToggle = document.querySelector('#cameras-toggle');
+    const camerasDialog = document.querySelector('#cameras-dialog');
     const metricsChecklist = document.querySelector('#metrics-checklist');
     const mergesToggle = document.querySelector('#merges-toggle');
     const mergesBadge = document.querySelector('#merges-badge');
@@ -508,8 +527,8 @@
     localStorage.setItem(sessionStorageKey, sessionId);
 
     const text = {
-      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть', mergesToggleTitle: 'Слияние счётчиков', mergesTitle: 'Слияние счётчиков', mergesHint: 'Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.', mergesEmpty: 'Пока нечего проверять.', mergesClose: 'Закрыть', mergesApprove: 'Слить', mergesReject: 'Не сливать', editTitle: 'Изменить', editSend: 'Отправить', editCancel: 'Отмена', quickToolWaiting: 'Читаю датчик…', settingsLabelBackupAuto: 'Резервное копирование', settingsBackupAutoLabel: 'Автоматически, по расписанию', settingsBackupIntervalDaily: 'Каждый день', settingsBackupIntervalWeekly: 'Раз в неделю', settingsBackupIntervalMonthly: 'Раз в месяц', settingsLabelBackupList: 'Бэкапы', settingsBackupRun: 'Сделать бэкап сейчас', settingsBackupEmpty: 'Бэкапов ещё нет.', settingsBackupUnconfigured: 'Резервное копирование не настроено — задайте backup.s3 в config.yaml.', settingsTabGeneral: 'Общие', settingsTabBackup: 'Бэкап', settingsTabAlerts: 'Алерты', settingsAlertsHint: 'Каждый канал появляется здесь только если он настроен в config.yaml/.env — см. docs/alerts.md.', settingsAlertsTelegram: 'Телеграм', settingsAlertsWebhook: 'Вебхук', settingsAlertsSpeaker: 'Голосом через динамик', settingsAlertsNone: 'Ни один канал алертов не настроен — см. docs/alerts.md.', settingsLabelThresholds: 'Пороговые алерты', thresholdAdd: '+ Добавить', thresholdsEmpty: 'Пока нет ни одного правила.', thresholdTitlePlaceholder: 'Название (необязательно)', thresholdSmoothingLabel: 'Сглаживание (число последних значений)', thresholdSiren: 'Сирена перед текстом', thresholdCustomTextPlaceholder: 'Свой текст алерта (необязательно) — уйдёт во все включённые каналы вместо автотекста', thresholdRemove: 'Удалить' },
-      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close', mergesToggleTitle: 'Metric merges', mergesTitle: 'Metric merges', mergesHint: 'The bosun noticed similar maintenance counters — confirm if this is really the same counter under two different names.', mergesEmpty: 'Nothing to review right now.', mergesClose: 'Close', mergesApprove: 'Merge', mergesReject: "Don't merge", editTitle: 'Edit', editSend: 'Send', editCancel: 'Cancel', quickToolWaiting: 'Reading sensor…', settingsLabelBackupAuto: 'Backup', settingsBackupAutoLabel: 'Automatic, on a schedule', settingsBackupIntervalDaily: 'Every day', settingsBackupIntervalWeekly: 'Once a week', settingsBackupIntervalMonthly: 'Once a month', settingsLabelBackupList: 'Backups', settingsBackupRun: 'Back up now', settingsBackupEmpty: 'No backups yet.', settingsBackupUnconfigured: 'Backup is not configured — set backup.s3 in config.yaml.', settingsTabGeneral: 'General', settingsTabBackup: 'Backup', settingsTabAlerts: 'Alerts', settingsAlertsHint: 'Each channel appears here only once it is configured in config.yaml/.env — see docs/alerts.md.', settingsAlertsTelegram: 'Telegram', settingsAlertsWebhook: 'Webhook', settingsAlertsSpeaker: 'Speak through the speaker', settingsAlertsNone: 'No alert channel is configured — see docs/alerts.md.', settingsLabelThresholds: 'Threshold alerts', thresholdAdd: '+ Add', thresholdsEmpty: 'No rules yet.', thresholdTitlePlaceholder: 'Title (optional)', thresholdSmoothingLabel: 'Smoothing (number of recent samples)', thresholdSiren: 'Siren before the text', thresholdCustomTextPlaceholder: 'Custom alert text (optional) — sent to every enabled channel instead of the auto-generated message', thresholdRemove: 'Remove' }
+      ru: { brand: 'Старпом', placeholder: 'Напиши сообщение…', error: 'Не удалось получить ответ. Попробуй ещё раз.', cancelled: 'Ответ прерван.', remoteWaiting: 'Удалённая модель думает…', localWaiting: 'Локальная модель думает — на медленном железе это может занять несколько минут…', local: 'Локальная модель', remote: 'Удалённая модель', subtitle: 'Локальный помощник', emptyTitle: 'Чем помочь?', emptyBody: 'Спроси о погоде, заметках, холодильнике, местоположении или системе.', clear: 'Очистить чат', bellTitle: 'Позвать старпома', bellReplies: ['Есть, капитан! Слушаю.', 'На связи, капитан!', 'Слушаю, капитан!'], sendLabel: 'Отправить', stopLabel: 'Прервать ответ', docsToggleTitle: 'Документы', docsTitle: 'Документы', docsHint: 'Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.', docsTitlePlaceholder: 'Название (необязательно)', docsUpload: 'Загрузить', docsClose: 'Закрыть', docsEmpty: 'Пока нет загруженных документов.', docsDeleteTitle: 'Удалить', queuedPosition: n => `В очереди за локальной моделью — позиция ${n}…`, settingsToggleTitle: 'Настройки', settingsTitle: 'Настройки', settingsLabelNameRu: 'Имя (русский)', settingsLabelNameEn: 'Имя (английский)', settingsLabelPrompt: 'Системный промпт', settingsLabelLanguage: 'Язык по умолчанию', settingsLabelRemoteTemp: 'Температура (удалённая модель)', settingsLabelLocalTemp: 'Температура (локальная модель)', settingsLabelTags: 'Теги для автонормализации памяти (через запятую)', settingsTagsHint: 'Пусто — автонормализация тегов выключена.', settingsSave: 'Сохранить', settingsSaved: 'Сохранено.', settingsClose: 'Закрыть', settingsCaCertLink: 'Скачать сертификат для HTTPS', speakTitle: 'Озвучить', regenerateTitle: 'Перегенерировать', feedbackUpTitle: 'Хороший ответ', feedbackDownTitle: 'Плохой ответ', micTitle: 'Голосовой ввод', micError: 'Не удалось получить доступ к микрофону — проверь разрешение браузера.', micListening: '🎙️ Слушаю…', micProcessing: '🎙️ Распознаю…', overrideTitle: mode => `Онлайн/оффлайн: ${{ auto: 'авто', local: 'только локальная', remote: 'только удалённая' }[mode]} — нажми, чтобы переключить`, metricsToggleTitle: 'Мониторинг', metricsTitle: 'Мониторинг', metricsEmpty: 'Пока нет данных — датчики ещё не отправили ни одного значения.', metricsClose: 'Закрыть', mergesToggleTitle: 'Слияние счётчиков', mergesTitle: 'Слияние счётчиков', mergesHint: 'Старпом заметил похожие счётчики техобслуживания — подтверди, если это один и тот же счётчик под разными именами.', mergesEmpty: 'Пока нечего проверять.', mergesClose: 'Закрыть', mergesApprove: 'Слить', mergesReject: 'Не сливать', editTitle: 'Изменить', editSend: 'Отправить', editCancel: 'Отмена', quickToolWaiting: 'Читаю датчик…', settingsLabelBackupAuto: 'Резервное копирование', settingsBackupAutoLabel: 'Автоматически, по расписанию', settingsBackupIntervalDaily: 'Каждый день', settingsBackupIntervalWeekly: 'Раз в неделю', settingsBackupIntervalMonthly: 'Раз в месяц', settingsLabelBackupList: 'Бэкапы', settingsBackupRun: 'Сделать бэкап сейчас', settingsBackupEmpty: 'Бэкапов ещё нет.', settingsBackupUnconfigured: 'Резервное копирование не настроено — задайте backup.s3 в config.yaml.', settingsTabGeneral: 'Общие', settingsTabBackup: 'Бэкап', settingsTabAlerts: 'Алерты', settingsAlertsHint: 'Каждый канал появляется здесь только если он настроен в config.yaml/.env — см. docs/alerts.md.', settingsAlertsTelegram: 'Телеграм', settingsAlertsWebhook: 'Вебхук', settingsAlertsSpeaker: 'Голосом через динамик', settingsAlertsNone: 'Ни один канал алертов не настроен — см. docs/alerts.md.', settingsLabelThresholds: 'Пороговые алерты', thresholdAdd: '+ Добавить', thresholdsEmpty: 'Пока нет ни одного правила.', thresholdTitlePlaceholder: 'Название (необязательно)', thresholdSmoothingLabel: 'Сглаживание (число последних значений)', thresholdSiren: 'Сирена перед текстом', thresholdCustomTextPlaceholder: 'Свой текст алерта (необязательно) — уйдёт во все включённые каналы вместо автотекста', thresholdRemove: 'Удалить', camerasToggleTitle: 'Камеры', camerasTitle: 'Камеры', camerasArchiveLabel: 'Архив', camerasArchiveEmpty: 'Пока нет записей.', camerasClose: 'Закрыть' },
+      en: { brand: 'Bosun', placeholder: 'Type a message…', error: 'Could not get an answer. Please try again.', cancelled: 'Response cancelled.', remoteWaiting: 'Remote model is thinking…', localWaiting: 'Local model is thinking — on slow hardware this can take several minutes…', local: 'Local model', remote: 'Remote model', subtitle: 'Local-first assistant', emptyTitle: 'How can I help?', emptyBody: 'Ask about weather, memos, the fridge, your location, or system status.', clear: 'Clear chat', bellTitle: 'Call the bosun', bellReplies: ['Aye, Captain! Listening.', 'Standing by, Captain!', 'At your service, Captain!'], sendLabel: 'Send', stopLabel: 'Stop response', docsToggleTitle: 'Documents', docsTitle: 'Documents', docsHint: 'Upload a plain-text file (convert a PDF to text first) — the bosun can then search it for answers.', docsTitlePlaceholder: 'Title (optional)', docsUpload: 'Upload', docsClose: 'Close', docsEmpty: 'No documents uploaded yet.', docsDeleteTitle: 'Delete', queuedPosition: n => `Queued behind the local model — position ${n}…`, settingsToggleTitle: 'Settings', settingsTitle: 'Settings', settingsLabelNameRu: 'Name (Russian)', settingsLabelNameEn: 'Name (English)', settingsLabelPrompt: 'System prompt', settingsLabelLanguage: 'Default language', settingsLabelRemoteTemp: 'Temperature (remote model)', settingsLabelLocalTemp: 'Temperature (local model)', settingsLabelTags: 'Memo tag auto-normalization vocabulary (comma-separated)', settingsTagsHint: 'Empty — tag auto-normalization is off.', settingsSave: 'Save', settingsSaved: 'Saved.', settingsClose: 'Close', settingsCaCertLink: 'Download the HTTPS certificate', speakTitle: 'Speak', regenerateTitle: 'Regenerate', feedbackUpTitle: 'Good response', feedbackDownTitle: 'Bad response', micTitle: 'Voice input', micError: 'Could not access the microphone — check the browser permission.', micListening: '🎙️ Listening…', micProcessing: '🎙️ Recognizing…', overrideTitle: mode => `Online/offline: ${{ auto: 'auto', local: 'local only', remote: 'remote only' }[mode]} — click to switch`, metricsToggleTitle: 'Monitoring', metricsTitle: 'Monitoring', metricsEmpty: 'No data yet — no sensor has reported a value.', metricsClose: 'Close', mergesToggleTitle: 'Metric merges', mergesTitle: 'Metric merges', mergesHint: 'The bosun noticed similar maintenance counters — confirm if this is really the same counter under two different names.', mergesEmpty: 'Nothing to review right now.', mergesClose: 'Close', mergesApprove: 'Merge', mergesReject: "Don't merge", editTitle: 'Edit', editSend: 'Send', editCancel: 'Cancel', quickToolWaiting: 'Reading sensor…', settingsLabelBackupAuto: 'Backup', settingsBackupAutoLabel: 'Automatic, on a schedule', settingsBackupIntervalDaily: 'Every day', settingsBackupIntervalWeekly: 'Once a week', settingsBackupIntervalMonthly: 'Once a month', settingsLabelBackupList: 'Backups', settingsBackupRun: 'Back up now', settingsBackupEmpty: 'No backups yet.', settingsBackupUnconfigured: 'Backup is not configured — set backup.s3 in config.yaml.', settingsTabGeneral: 'General', settingsTabBackup: 'Backup', settingsTabAlerts: 'Alerts', settingsAlertsHint: 'Each channel appears here only once it is configured in config.yaml/.env — see docs/alerts.md.', settingsAlertsTelegram: 'Telegram', settingsAlertsWebhook: 'Webhook', settingsAlertsSpeaker: 'Speak through the speaker', settingsAlertsNone: 'No alert channel is configured — see docs/alerts.md.', settingsLabelThresholds: 'Threshold alerts', thresholdAdd: '+ Add', thresholdsEmpty: 'No rules yet.', thresholdTitlePlaceholder: 'Title (optional)', thresholdSmoothingLabel: 'Smoothing (number of recent samples)', thresholdSiren: 'Siren before the text', thresholdCustomTextPlaceholder: 'Custom alert text (optional) — sent to every enabled channel instead of the auto-generated message', thresholdRemove: 'Remove', camerasToggleTitle: 'Cameras', camerasTitle: 'Cameras', camerasArchiveLabel: 'Archive', camerasArchiveEmpty: 'No recordings yet.', camerasClose: 'Close' }
     };
 
     function escapeHTML(value) {
@@ -992,6 +1011,13 @@
       document.querySelector('#metrics-title').textContent = text[locale].metricsTitle;
       document.querySelector('#metrics-empty').textContent = text[locale].metricsEmpty;
       document.querySelector('#metrics-close').textContent = text[locale].metricsClose;
+      camerasToggle.title = text[locale].camerasToggleTitle;
+      camerasToggle.setAttribute('aria-label', text[locale].camerasToggleTitle);
+      document.querySelector('#cameras-title').textContent = text[locale].camerasTitle;
+      document.querySelector('#cameras-archive-label').textContent = text[locale].camerasArchiveLabel;
+      document.querySelector('#cameras-archive-empty').textContent = text[locale].camerasArchiveEmpty;
+      document.querySelector('#cameras-close').textContent = text[locale].camerasClose;
+      renderCameraPicker();
       mergesToggle.title = text[locale].mergesToggleTitle;
       mergesToggle.setAttribute('aria-label', text[locale].mergesToggleTitle);
       document.querySelector('#merges-title').textContent = text[locale].mergesTitle;
@@ -1717,6 +1743,96 @@
       if (metricsRefreshTimer) { clearInterval(metricsRefreshTimer); metricsRefreshTimer = null; }
     });
 
+    // Cameras (docs/cameras.md) — live view + archive. The 📹 button is
+    // only shown once GET /api/cameras/list reports at least one camera
+    // (see loadCamerasAvailability), the same "hide the button, don't
+    // error" idiom the 📊/🔗 buttons already use.
+    let camerasKnown = [];
+    let activeCamera = null;
+
+    async function loadCamerasAvailability() {
+      try {
+        const response = await fetch('/api/cameras/list');
+        const data = await response.json();
+        camerasKnown = Array.isArray(data.cameras) ? data.cameras : [];
+      } catch {
+        camerasKnown = [];
+      }
+      camerasToggle.hidden = camerasKnown.length === 0;
+    }
+
+    function renderCameraPicker() {
+      const picker = document.querySelector('#cameras-picker');
+      picker.innerHTML = '';
+      if (camerasKnown.length < 2) return; // nothing to pick between
+      camerasKnown.forEach(camera => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = camera[language.value === 'en' ? 'label_en' : 'label_ru'] || camera.name;
+        button.className = camera.name === activeCamera ? 'active' : '';
+        button.addEventListener('click', () => selectCamera(camera.name));
+        picker.appendChild(button);
+      });
+    }
+
+    function selectCamera(name) {
+      activeCamera = name;
+      renderCameraPicker();
+      const live = document.querySelector('#cameras-live');
+      // Setting a fresh src (rather than reusing the same URL) makes the
+      // browser actually open a new connection to the new camera's
+      // relay endpoint instead of assuming nothing changed.
+      live.src = `/api/cameras/${encodeURIComponent(name)}/stream?_=${Date.now()}`;
+      const player = document.querySelector('#cameras-archive-player');
+      player.hidden = true;
+      player.removeAttribute('src');
+      loadCameraArchive(name);
+    }
+
+    async function loadCameraArchive(name) {
+      const list = document.querySelector('#cameras-archive-list');
+      const empty = document.querySelector('#cameras-archive-empty');
+      list.innerHTML = '';
+      try {
+        const response = await fetch(`/api/cameras/${encodeURIComponent(name)}/archive`);
+        const data = await response.json();
+        const segments = Array.isArray(data.segments) ? data.segments : [];
+        empty.hidden = segments.length > 0;
+        segments.forEach(segment => {
+          const li = document.createElement('li');
+          const sizeMB = (segment.size_bytes / 1e6).toFixed(1);
+          const when = new Date(segment.last_modified).toLocaleString(language.value === 'ru' ? 'ru-RU' : 'en-US');
+          li.textContent = `${segment.name} — ${sizeMB} MB — ${when}`;
+          li.addEventListener('click', () => {
+            const player = document.querySelector('#cameras-archive-player');
+            player.src = `/api/cameras/${encodeURIComponent(name)}/archive/${encodeURIComponent(segment.name)}`;
+            player.hidden = false;
+            player.play().catch(() => {});
+          });
+          list.appendChild(li);
+        });
+      } catch {
+        // Best-effort: connectivity issues already surface via the status pill.
+      }
+    }
+
+    camerasToggle.addEventListener('click', () => {
+      if (!activeCamera && camerasKnown.length > 0) activeCamera = camerasKnown[0].name;
+      renderCameraPicker();
+      if (activeCamera) selectCamera(activeCamera);
+      camerasDialog.showModal();
+    });
+    document.querySelector('#cameras-close').addEventListener('click', () => camerasDialog.close());
+    camerasDialog.addEventListener('close', () => {
+      // Stop consuming the relay's single-buffer subscriber slot the
+      // moment nobody's actually looking — clearing src closes the
+      // browser's connection to /stream.
+      document.querySelector('#cameras-live').removeAttribute('src');
+      const player = document.querySelector('#cameras-archive-player');
+      player.pause();
+      player.removeAttribute('src');
+    });
+
     // Metric-merge approval queue (docs/maintenance-tracking.md) — the
     // background checker only ever proposes; a merge only actually happens
     // once approved here. mergesCache lets renderMerges redraw with the
@@ -1855,6 +1971,7 @@
     refreshStatus();
     loadDocuments();
     loadSettings();
+    loadCamerasAvailability();
     setInterval(refreshStatus, 3000);
   </script>
 </body>

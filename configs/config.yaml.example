@@ -347,6 +347,22 @@ metrics:
 #   # already match docker-compose.yml's sandboxd volume mounts; no reason
 #   # to override them on a Docker deployment.
 
+# Cameras — a 📹 button in the web UI for live view + archive, see
+# docs/cameras.md. Config-only, not settings-page-editable: which cameras
+# exist is an infrastructure decision. Each camera's own web server
+# typically accepts only one client — internal/cameras.Relay is the one
+# thing that ever connects to stream_url directly; the archive recorder
+# and any number of live browser viewers are all subscribers of the
+# relay instead, never the camera.
+# cameras:
+#   - name: "front"                          # url-safe id, used in API paths and the archive directory
+#     label_ru: "Нос"
+#     label_en: "Bow"
+#     stream_url: "http://192.168.1.50:81/stream"
+#     record: true                           # cyclic (ring-buffer) archival via ffmpeg — off just shows live view
+#     segment_seconds: 300                   # 5-minute segments...
+#     segment_count: 50                      # ...50 of them = ~4 hours on disk before the oldest is overwritten
+
 # Logging
 logging:
   level: "info"                             # debug, info, warn, error
