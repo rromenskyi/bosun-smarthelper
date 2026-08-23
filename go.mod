@@ -4,9 +4,12 @@ go 1.26.0
 
 require (
 	github.com/joho/godotenv v1.5.1
+	github.com/rromenskyi/go-adventure v0.0.0-20260823194638-5d01fb9be7a8
 	github.com/shirou/gopsutil/v4 v4.24.9
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
+	go.bug.st/serial v1.8.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
@@ -35,7 +38,6 @@ require (
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	go.bug.st/serial v1.8.0 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
@@ -46,5 +48,4 @@ require (
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.57.0 // indirect
 )

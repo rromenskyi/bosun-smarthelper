@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 
+	"github.com/roman220/bosun-smarthelper/internal/adventure"
 	"github.com/roman220/bosun-smarthelper/internal/config"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/embeddings"
@@ -25,8 +26,14 @@ func openErrorLog(cfg *config.Config, logger *slog.Logger) *errlog.Logger {
 // buildRegistry also returns the document store (see internal/documents)
 // so serveCmd can wire it into the web UI's upload endpoints — document
 // ingestion is a human-only, web-UI-only path, never an LLM tool action,
-// to keep the tool contract small for weak local models.
-func buildRegistry(cfg *config.Config) (*tools.Registry, *documents.Store) {
+// to keep the tool contract small for weak local models. It also
+// returns the adventure store (nil unless cfg.Adventure.Enabled) so
+// serveCmd can wire it into the web UI's session-management endpoints
+// and game-mode chat branch (see docs/adventure.md) — the adventure
+// tool registered here is the opportunistic, LLM-decides path; game
+// mode's own direct-to-store path (bypassing the tool loop) is where
+// cfg.Adventure.NarrateLocal/NarrateRemote actually applies.
+func buildRegistry(cfg *config.Config, logger *slog.Logger) (*tools.Registry, *documents.Store, *adventure.Store) {
 	docStore := documents.NewStore(cfg.Documents.Path, embeddings.NewClient(&cfg.LLM.Embeddings))
 	memoTool := tools.NewMemoTool(&cfg.Memo, &cfg.LLM.Embeddings)
 	memoTool.SetDocumentStore(docStore)
@@ -43,5 +50,17 @@ func buildRegistry(cfg *config.Config) (*tools.Registry, *documents.Store) {
 	if cfg.Sandbox.Enabled {
 		registry.Register(tools.NewCodeExecTool(&cfg.Sandbox))
 	}
-	return registry, docStore
+
+	var adventureStore *adventure.Store
+	if cfg.Adventure.Enabled {
+		store, err := adventure.Open("")
+		if err != nil {
+			logger.Warn("could not open adventure store; adventure_game tool disabled", "error", err)
+		} else {
+			adventureStore = store
+			registry.Register(adventure.NewTool(store))
+		}
+	}
+
+	return registry, docStore, adventureStore
 }

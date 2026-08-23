@@ -72,7 +72,7 @@ func mcpCmd() *cobra.Command {
 			}
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			registry, _ := buildRegistry(cfg)
+			registry, _, _ := buildRegistry(cfg, logger)
 
 			server := mcp.NewServer(cfg.MCP.ServerName, version, registry, logger)
 			server.SetErrorLog(openErrorLog(cfg, logger))
@@ -142,7 +142,11 @@ func serveCmd() *cobra.Command {
 			live := settingsStore.Get()
 			router.SetTemperatures(live.RemoteTemperature, live.LocalTemperature)
 
-			registry, docStore := buildRegistry(cfg)
+			// adventureStore wiring into the web UI (session-management
+			// endpoints, game-mode chat branch) lands in a later stage —
+			// see docs/adventure.md; the tool itself is already usable
+			// from normal chat via buildRegistry's registration above.
+			registry, docStore, _ := buildRegistry(cfg, logger)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(live.NameRU, live.NameEN, live.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
@@ -327,7 +331,7 @@ func chatCmd() *cobra.Command {
 			// when online, falling back to the local model when offline.
 			router.CheckConnectivity(cmd.Context())
 
-			registry, _ := buildRegistry(cfg)
+			registry, _, _ := buildRegistry(cfg, logger)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(cfg.Assistant.NameRU, cfg.Assistant.NameEN, cfg.Assistant.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))

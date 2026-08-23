@@ -83,6 +83,12 @@ top-level tour has room for. Grouped by what you're trying to do.
   holds each camera's one client slot and fans frames out to any number
   of viewers plus the archive recorder, since these cameras typically
   accept only a single connection.
+- **[adventure.md](adventure.md)** — a voice-playable text adventure
+  (Colossal Cave Adventure), for when there's nothing to do, no
+  connection, or you're driving. The engine is a separate, zero-dependency
+  public repo ([go-adventure](https://github.com/rromenskyi/go-adventure));
+  `internal/adventure` here is SQLite session persistence plus an LLM
+  tool. Off by default.
 
 ## How it behaves, and why
 

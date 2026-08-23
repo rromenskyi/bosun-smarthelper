@@ -24,7 +24,25 @@ type Config struct {
 	Backup    BackupConfig    `mapstructure:"backup"`
 	Alerts    AlertsConfig    `mapstructure:"alerts"`
 	Sandbox   SandboxConfig   `mapstructure:"sandbox"`
+	Adventure AdventureConfig `mapstructure:"adventure"`
 	Cameras   []CameraConfig  `mapstructure:"cameras"`
+}
+
+// AdventureConfig is the optional text-adventure game feature (see
+// docs/adventure.md) — internal/adventure registers its tool only when
+// Enabled is true. NarrateLocal/NarrateRemote are forward-declared for
+// the game-mode chat path (not yet built): whether that path's raw game
+// output gets rephrased by the LLM before reaching the user, per
+// currently active provider. Both default false (raw text) so the game
+// keeps working with zero LLM calls even fully offline once that path
+// exists — narration is meant to be a decoration, never a dependency.
+// Unused until then; the adventure_game tool itself (the path that
+// exists today) always lets the model narrate naturally, like any other
+// tool.
+type AdventureConfig struct {
+	Enabled       bool `mapstructure:"enabled"`
+	NarrateLocal  bool `mapstructure:"narrate_local"`
+	NarrateRemote bool `mapstructure:"narrate_remote"`
 }
 
 // CameraConfig is one WiFi camera — see docs/cameras.md. Config-only, not
@@ -612,6 +630,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("sandbox.memory_limit", "512m")
 	v.SetDefault("sandbox.cpu_limit", "1")
 	v.SetDefault("sandbox.runtime_image", "bosun-sandbox-python:local")
+
+	v.SetDefault("adventure.enabled", false)
+	v.SetDefault("adventure.narrate_local", false)
+	v.SetDefault("adventure.narrate_remote", false)
 
 	v.SetDefault("metrics.sources", []map[string]any{
 		{"metric": "cpu_temp_c", "tool": "get_system_info", "args": map[string]any{"include": []any{"cpu"}}, "field": "cpu.temp_c", "label_ru": "Температура CPU", "label_en": "CPU temperature", "unit": "°C"},
