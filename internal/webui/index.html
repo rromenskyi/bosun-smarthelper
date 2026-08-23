@@ -220,9 +220,14 @@
     }
     .docs-list li span { overflow-wrap: anywhere; }
     .docs-list button { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-size: 14px; flex: 0 0 auto; }
-    .adventure-scene { display: flex; justify-content: center; margin: 0 0 8px; }
+    .adventure-scene { display: flex; justify-content: center; position: relative; margin: 0 0 8px; }
     .adventure-scene[hidden] { display: none; }
     .adventure-scene img { max-width: 100%; max-height: 220px; border-radius: 12px; object-fit: cover; }
+    .adventure-mute {
+      position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; border-radius: 50%;
+      border: 0; background: rgba(0, 0, 0, .5); color: #fff; font-size: 16px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
     #adventure-toggle.active { background: var(--accent); color: #10251c; }
     dialog#settings-dialog {
       border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
@@ -539,6 +544,7 @@
     <div class="adventure-scene" id="adventure-scene" hidden>
       <img id="adventure-scene-image" alt="">
       <audio id="adventure-scene-audio" loop></audio>
+      <button type="button" class="adventure-mute" id="adventure-mute" aria-label="Звук локации">🔊</button>
     </div>
 
     <section class="messages" id="messages" aria-live="polite">
@@ -1711,6 +1717,9 @@
     let adventureMode = false;
     let adventureSessionName = null;
     let adventureManifest = null;
+    // Persisted across reloads/location changes — muting shouldn't need
+    // to be re-done every time the room changes.
+    let adventureAudioMuted = localStorage.getItem('adventure-audio-muted') === 'true';
 
     async function loadAdventureSessions() {
       const list = document.querySelector('#adventure-sessions-list');
@@ -1849,6 +1858,7 @@
         const audio = document.querySelector('#adventure-scene-audio');
         if (entry.audio) {
           audio.src = `/static/adventure/${entry.audio}`;
+          audio.muted = adventureAudioMuted;
           audio.play().catch(() => {});
         } else {
           audio.pause();
@@ -1866,6 +1876,19 @@
       document.querySelector('#adventure-sessions-empty').textContent = text[locale].adventureEmpty;
       updateAdventureToggle();
     }
+
+    function updateAdventureMuteButton() {
+      const button = document.querySelector('#adventure-mute');
+      button.textContent = adventureAudioMuted ? '🔇' : '🔊';
+    }
+    updateAdventureMuteButton();
+
+    document.querySelector('#adventure-mute').addEventListener('click', () => {
+      adventureAudioMuted = !adventureAudioMuted;
+      localStorage.setItem('adventure-audio-muted', String(adventureAudioMuted));
+      document.querySelector('#adventure-scene-audio').muted = adventureAudioMuted;
+      updateAdventureMuteButton();
+    });
 
     document.querySelectorAll('.settings-tab').forEach(tab => {
       tab.addEventListener('click', () => {
