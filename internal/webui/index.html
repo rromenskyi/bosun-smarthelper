@@ -73,6 +73,12 @@
       border: 1px solid var(--line); background: var(--panel); cursor: pointer;
       font-size: 18px; display: grid; place-items: center; transform-origin: 50% 15%;
     }
+    /* Without this, the [hidden] attribute (an author-origin .bell rule
+       with equal specificity beats the UA's own [hidden] { display: none })
+       is silently ineffective on every .bell button — #metrics-toggle,
+       #cameras-toggle, and #merges-toggle all stayed visible regardless of
+       .hidden in JS. Same fix already applied to .settings-panel below. */
+    .bell[hidden] { display: none; }
     .bell:hover { border-color: rgba(141, 224, 183, .45); }
     .bell:active { transform: scale(.92); }
     .bell.ringing { animation: bell-ring .5s ease-in-out; }
@@ -944,8 +950,65 @@
       }
     }
 
+    // Set while pollForPendingReply (below) is waiting for a generation
+    // this page didn't itself start streaming — e.g. after a reload. The
+    // fetch abort alone can't reach that generation (this page has no
+    // live connection to it), so a real stop has to ask the server
+    // directly; see docs/streaming.md.
+    let pendingReplyAbort = null;
+
     function cancelActive() {
       if (activeAbortController) activeAbortController.abort();
+      fetch('/api/chat/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      }).catch(() => {});
+      if (pendingReplyAbort) pendingReplyAbort();
+    }
+
+    // A generation survives a reload now (docs/streaming.md) — this picks
+    // one back up when hydrateHistory finds the last message is a
+    // question with no reply yet, polling until the answer lands, the
+    // stop button cancels it (pendingReplyAbort), or a generous deadline
+    // passes with neither.
+    async function pollForPendingReply(userText) {
+      busy = true;
+      setSendButtonState(true);
+      const row = addMessage('assistant', text[language.value][`${currentProvider}Waiting`], 'thinking live');
+      waitingBubble = row.querySelector('.bubble');
+
+      let cancelled = false;
+      pendingReplyAbort = () => { cancelled = true; };
+
+      const deadline = Date.now() + 15 * 60 * 1000;
+      let resolved = false;
+      while (!cancelled && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 4000));
+        if (cancelled) break;
+        try {
+          const response = await fetch(`/api/history?session_id=${encodeURIComponent(sessionId)}`);
+          const data = await response.json();
+          const messages = Array.isArray(data.messages) ? data.messages : [];
+          const last = messages[messages.length - 1];
+          if (last && last.role === 'assistant') {
+            row.remove();
+            addMessage('assistant', last.content, '', userText);
+            resolved = true;
+            break;
+          }
+        } catch (error) {
+          // Transient — keep polling until the deadline or a cancel.
+        }
+      }
+      if (!resolved) {
+        row.remove();
+        addMessage('assistant', text[language.value][cancelled ? 'cancelled' : 'error'], cancelled ? '' : 'error');
+      }
+      pendingReplyAbort = null;
+      waitingBubble = null;
+      busy = false;
+      setSendButtonState(false);
     }
 
     function resizeInput() {
@@ -1964,6 +2027,15 @@
               addMessage('assistant', message.content, '', lastUser);
             }
           });
+          const last = data.messages[data.messages.length - 1];
+          if (last.role === 'user') {
+            // The page was reloaded (or the previous tab just closed)
+            // while this question was still being answered — the
+            // generation itself keeps running server-side regardless
+            // (docs/streaming.md), so pick it back up instead of leaving
+            // it looking permanently unanswered.
+            pollForPendingReply(last.content);
+          }
         }
       } catch (error) {
         // No stored history yet, or the server is unreachable — start with an empty transcript.

@@ -137,6 +137,21 @@ type Server struct {
 	alertsConfigured  alertsConfigured
 	cameraManager     *cameras.Manager
 	cameraDataDir     string
+	generationsMu     sync.Mutex
+	generations       map[string]*generationHandle
+}
+
+// generationHandle is the in-flight state for one session's chat request —
+// tracked so a generation survives the client going away (a page reload,
+// most commonly) instead of being cancelled by it, while still leaving a
+// deliberate stop (POST /api/chat/stop) able to cancel exactly this
+// generation and no other. A pointer, not the bare context.CancelFunc,
+// because Go doesn't allow comparing func values — completion needs to
+// check "is this still the generation I registered" before deleting the
+// map entry, in case a second request for the same session_id has since
+// registered its own. See docs/streaming.md.
+type generationHandle struct {
+	cancel context.CancelFunc
 }
 
 // alertsConfigured tracks which alert channels config.yaml/.env actually
@@ -326,7 +341,54 @@ func NewServer(
 		defaultLanguage: defaultLanguage,
 		sessions:        sessions,
 		sessionOptions:  options,
+		generations:     make(map[string]*generationHandle),
 	}
+}
+
+// beginGeneration registers the cancel func for a session's in-flight
+// generation, so a later POST /api/chat/stop can find and cancel exactly
+// this one. Returns a func to call when the generation ends (success,
+// failure, or its own timeout) that removes the registration — but only if
+// it's still the same handle, in case a second request for the same
+// session_id has since replaced it.
+func (s *Server) beginGeneration(sessionID string, cancel context.CancelFunc) func() {
+	handle := &generationHandle{cancel: cancel}
+	s.generationsMu.Lock()
+	s.generations[sessionID] = handle
+	s.generationsMu.Unlock()
+	return func() {
+		s.generationsMu.Lock()
+		if s.generations[sessionID] == handle {
+			delete(s.generations, sessionID)
+		}
+		s.generationsMu.Unlock()
+	}
+}
+
+type chatStopRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+// handleChatStop cancels a session's in-flight generation, if any — the
+// only way one actually gets cancelled now that it no longer dies with the
+// client's own connection (see beginGeneration and docs/streaming.md).
+// Reports "stopped": false rather than an error when there's nothing to
+// cancel; by the time this arrives the generation may well have already
+// finished on its own, which isn't a failure worth surfacing.
+func (s *Server) handleChatStop(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	var request chatStopRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || !validSessionID(request.SessionID) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid session_id"})
+		return
+	}
+	s.generationsMu.Lock()
+	handle := s.generations[request.SessionID]
+	s.generationsMu.Unlock()
+	if handle != nil {
+		handle.cancel()
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"stopped": handle != nil})
 }
 
 // Handler returns the complete HTTP handler for the web UI.
@@ -336,6 +398,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("POST /api/chat/stop", s.handleChatStop)
 	mux.HandleFunc("POST /api/session/clear", s.handleSessionClear)
 	mux.HandleFunc("GET /api/documents", s.handleDocumentsList)
 	mux.HandleFunc("POST /api/documents", s.handleDocumentUpload)
@@ -539,8 +602,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+	// Deliberately NOT derived from r.Context(): tying generation to the
+	// request's own connection meant a page reload — not just an explicit
+	// stop — silently killed the model call mid-answer, discarding work
+	// a slow remote generation may have spent a long time on (see
+	// docs/streaming.md). beginGeneration below is what makes an
+	// intentional stop (POST /api/chat/stop) still work despite this.
+	ctx, cancel := context.WithTimeout(context.Background(), s.requestTimeout)
 	defer cancel()
+	endGeneration := s.beginGeneration(sessionID, cancel)
+	defer endGeneration()
 	// Scopes a run_code workspace (internal/tools.CodeExecTool,
 	// docs/sandbox.md) to this real chat session — never something the
 	// LLM itself supplies, since sessionID here is already

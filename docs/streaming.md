@@ -68,6 +68,39 @@ the user's message is left as the last, unanswered entry — an honest
 record of what actually happened, and `index.html`'s `hydrateHistory`
 already renders a trailing user message with no reply just fine.
 
+## A generation survives a reload — only an explicit stop ends it
+
+`handleChat` used to build its context with
+`context.WithTimeout(r.Context(), s.requestTimeout)` — tying the actual
+LLM call to the HTTP request's own connection. That meant a page reload
+(or just closing the tab) silently killed the generation mid-answer, the
+same as clicking the explicit "stop" button, since both just close the
+connection and Go has no way to tell them apart from `r.Context()` alone.
+Combined with the previous section, that used to discard real, possibly
+minutes-long work: the question survived, but the answer never would.
+
+The context is now `context.WithTimeout(context.Background(),
+s.requestTimeout)` instead — nothing about the client leaving cancels it.
+`beginGeneration` registers its `cancel` func in a per-session map
+(`Server.generations`) for exactly as long as the generation runs; `POST
+/api/chat/stop {"session_id"}` (`handleChatStop`) is now the *only* way to
+actually cancel one, and is what the web UI's stop button calls. Go's
+`net/http` doesn't force-kill a handler goroutine when the client
+disconnects — it only stops being able to write to that response — so the
+handler just keeps running in the background, writes such connections
+tolerate silently, until the generation finishes and `saveAssistantReply`
+persists the real answer regardless of whether anyone's still watching.
+
+On the client side, `hydrateHistory` (index.html) checks whether the last
+loaded message is a lone, unanswered `user` entry — evidence a generation
+was still running (or failed) when the page was last open — and if so
+calls `pollForPendingReply`, which shows the normal "thinking" bubble and
+polls `/api/history` every few seconds until the answer lands, the user
+clicks stop (which now also posts to `/api/chat/stop` via `cancelActive`,
+not just `AbortController.abort()` — that only stops *this tab's own*
+fetch, which has nothing to do with a generation resumed after a reload),
+or a generous deadline passes with neither.
+
 ## Only the local model queues
 
 `handleChat` used to serialize *every* chat request through one slot
