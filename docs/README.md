@@ -99,3 +99,10 @@ top-level tour has room for. Grouped by what you're trying to do.
 - **`../SPEC.md`** — the full roadmap: what's shipped, what's next.
 - **`../AGENTS.md`** — code style and testing expectations for anyone
   (human or agent) changing this codebase.
+
+## Not a Bosun feature, just on the same host
+
+- **[dashcam.md](dashcam.md)** — cyclic recording of a WiFi camera's MJPG
+  stream via `docker-compose.yml`'s `dashcam` service. No Go code, no
+  `config.yaml`, doesn't touch the LLM or tool registry — riding on the
+  same compose file purely for convenience.
