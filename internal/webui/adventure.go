@@ -40,6 +40,15 @@ func (s *Server) SetAdventureNarrator(narrator adventureNarrator, narrateLocal, 
 	s.adventureNarrateRemote = narrateRemote
 }
 
+// SetAdventureMediaDir points GET /static/adventure/ at a plain host
+// directory (tools/artgen's output, bind-mounted in — see
+// docker-compose.yml) instead of the embedded static assets. Empty
+// (the default) means no location art/audio is ever served, and
+// index.html's manifest.json fetch 404s harmlessly.
+func (s *Server) SetAdventureMediaDir(dir string) {
+	s.adventureMediaDir = dir
+}
+
 type adventureModeRequest struct {
 	SessionID        string `json:"session_id"`
 	Enabled          bool   `json:"enabled"`

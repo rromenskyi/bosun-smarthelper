@@ -38,10 +38,15 @@ type Config struct {
 // a decoration, never a dependency. The opportunistic adventure_game
 // LLM tool is a separate path that always lets the model narrate
 // naturally, like any other tool; these two flags don't apply to it.
+// MediaDir, if set, points GET /static/adventure/ at tools/artgen's
+// generated output (a plain host directory, bind-mounted in — see
+// docker-compose.yml) — the ~40MB of location art/audio is deliberately
+// never committed to git or baked into the binary.
 type AdventureConfig struct {
-	Enabled       bool `mapstructure:"enabled"`
-	NarrateLocal  bool `mapstructure:"narrate_local"`
-	NarrateRemote bool `mapstructure:"narrate_remote"`
+	Enabled       bool   `mapstructure:"enabled"`
+	NarrateLocal  bool   `mapstructure:"narrate_local"`
+	NarrateRemote bool   `mapstructure:"narrate_remote"`
+	MediaDir      string `mapstructure:"media_dir"`
 }
 
 // CameraConfig is one WiFi camera — see docs/cameras.md. Config-only, not

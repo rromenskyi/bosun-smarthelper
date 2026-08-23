@@ -175,6 +175,9 @@ func serveCmd() *cobra.Command {
 				server.SetAdventureStore(adventureStore)
 				server.SetAdventureNarrator(router, cfg.Adventure.NarrateLocal, cfg.Adventure.NarrateRemote)
 			}
+			if cfg.Adventure.MediaDir != "" {
+				server.SetAdventureMediaDir(cfg.Adventure.MediaDir)
+			}
 			var ttsEngine voice.TTSEngine
 			if cfg.Voice.TTS.ModelPath != "" {
 				ttsEngine = &voice.PiperTTS{

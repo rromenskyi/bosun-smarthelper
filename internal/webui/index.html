@@ -1764,11 +1764,18 @@
       }
     }
 
+    // Only updates the button's own look — never touches #adventure-scene.
+    // It used to also force the scene hidden whenever adventureMode was
+    // false, but this is called from updateAdventureLanguage(), which
+    // refreshStatus() calls every 3s — that turned "the picture is shown"
+    // into "the picture flickers off again within 3 seconds," since
+    // nothing about a routine status refresh should touch the scene at
+    // all. Actually leaving game mode (the toggle's own click handler,
+    // and handleAdventureTurn on game_over) hides the scene explicitly.
     function updateAdventureToggle() {
       adventureToggle.classList.toggle('active', adventureMode);
       adventureToggle.title = adventureMode ? text[language.value].adventureExitTitle : text[language.value].adventureToggleTitle;
       adventureToggle.setAttribute('aria-label', adventureToggle.title);
-      if (!adventureMode) document.querySelector('#adventure-scene').hidden = true;
     }
 
     adventureToggle.addEventListener('click', async () => {
@@ -1785,6 +1792,7 @@
         adventureMode = false;
         adventureSessionName = null;
         updateAdventureToggle();
+        document.querySelector('#adventure-scene').hidden = true;
       } else {
         settingsToggle.click();
         document.querySelector('#settings-tab-adventure').click();
@@ -1828,17 +1836,27 @@
       const scene = document.querySelector('#adventure-scene');
       const entry = adventureManifest && adventureManifest[String(locationId)];
       if (!entry) { scene.hidden = true; return; }
+
+      // Image first, and scene.hidden cleared right after — audio is a
+      // bonus, never allowed to block showing the picture even if
+      // something in that block throws (audio.play() without a fresh
+      // user gesture can reject or, in some engines, throw outright).
       const image = document.querySelector('#adventure-scene-image');
-      const audio = document.querySelector('#adventure-scene-audio');
       if (entry.image) { image.src = `/static/adventure/${entry.image}`; image.hidden = false; } else { image.hidden = true; }
-      if (entry.audio) {
-        audio.src = `/static/adventure/${entry.audio}`;
-        audio.play().catch(() => {});
-      } else {
-        audio.pause();
-        audio.removeAttribute('src');
-      }
       scene.hidden = false;
+
+      try {
+        const audio = document.querySelector('#adventure-scene-audio');
+        if (entry.audio) {
+          audio.src = `/static/adventure/${entry.audio}`;
+          audio.play().catch(() => {});
+        } else {
+          audio.pause();
+          audio.removeAttribute('src');
+        }
+      } catch {
+        // Best-effort: never let ambient audio block showing the scene.
+      }
     }
 
     function updateAdventureLanguage(locale) {

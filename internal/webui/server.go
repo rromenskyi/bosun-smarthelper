@@ -169,6 +169,7 @@ type Server struct {
 	adventureNarrator      adventureNarrator
 	adventureNarrateLocal  bool
 	adventureNarrateRemote bool
+	adventureMediaDir      string
 }
 
 // generationHandle is the in-flight state for one session's chat request —
@@ -468,6 +469,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/cameras/{name}/archive/{file}", s.handleCameraArchiveFile)
 	if s.documentImagesDir != "" {
 		mux.Handle("GET /document-images/", http.StripPrefix("/document-images/", http.FileServer(http.Dir(s.documentImagesDir))))
+	}
+	if s.adventureMediaDir != "" {
+		// Registered as its own, more specific pattern so ServeMux routes
+		// it here instead of the embed.FS-backed "/static/" handler above
+		// — the generated art/audio is real (~350MB), deliberately never
+		// committed to git or baked into the binary (see docs/adventure.md),
+		// just a plain host directory bind-mounted in, same reasoning as
+		// documentImagesDir above.
+		mux.Handle("GET /static/adventure/", http.StripPrefix("/static/adventure/", http.FileServer(http.Dir(s.adventureMediaDir))))
 	}
 	return securityHeaders(mux)
 }
