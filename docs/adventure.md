@@ -21,41 +21,49 @@ persistence for named sessions and an `adventure_game` tool the LLM can
 call. The engine stays a pure library; nothing about how Старпом plays
 it lives in go-adventure itself.
 
-## Two ways to play (only one exists yet)
+## Two ways to play
 
-**Today — the opportunistic path.** `adventure_game` is a normal LLM
-tool, registered like `run_code` or `get_weather`. The model decides on
-its own, during regular conversation, when to call it — "let's play",
-"go north", "what am I holding" all work as regular chat messages. Its
+**The opportunistic path.** `adventure_game` is a normal LLM tool,
+registered like `run_code` or `get_weather`. The model decides on its
+own, during regular conversation, when to call it — "let's play", "go
+north", "what am I holding" all work as regular chat messages. Its
 result gets narrated by the model like any other tool's, in Старпом's
 own voice; there's no special-casing. This means playing this way
 always costs at least one LLM call per turn, same as it would for any
 tool-using exchange.
 
-**Planned — game mode.** A per-conversation toggle that routes chat
-input straight into the game engine (`internal/adventure.Store.Play`),
-bypassing the LLM/tool-calling loop entirely — the point being that the
-core loop (bored, no connection, driving) needs to work with **zero**
-LLM calls. `AdventureConfig.NarrateLocal`/`NarrateRemote` (below) are
-forward-declared for this path: when a session's active provider has
-narration off, replies are the engine's raw text verbatim; when on, one
-extra plain LLM call rephrases it. Not built yet — see the project's
-running plan for sequencing.
-
-An earlier version of the opportunistic tool tried to fake the "zero
-LLM calls" guarantee by having the *tool* short-circuit the agent's
-loop the instant its result carried a "narration off" marker. Live
-testing caught the real flaw: a single user message that asked for more
-than one game action ("start a session, then go inside, then check
+An earlier version of this tool tried to fake a "zero LLM calls"
+guarantee by having the *tool* short-circuit the agent's loop the
+instant its result carried a "narration off" marker. Live testing
+caught the real flaw: a single user message that asked for more than
+one game action ("start a session, then go inside, then check
 inventory") got silently truncated to just the first action, because
 the short-circuit returned to the user before the model got a chance to
 decide whether it wanted to call the tool again. Multi-step tool
-chaining is a real, if secondary, capability the agent loop supports for
-every tool — this exception broke it just for this one. The fix was
-architectural, not a patch: the zero-LLM-call guarantee only belongs to
-a direct, non-looping call path (game mode's future direct-to-`Play`
-branch), which can't have this failure mode because it's not a loop.
-The opportunistic tool now behaves exactly like every other tool.
+chaining is a real, if secondary, capability the agent loop supports
+for every tool — this exception broke it just for this one. Reverted:
+the opportunistic tool now behaves exactly like every other tool.
+
+**Game mode.** A per-conversation toggle (`POST /api/adventure/mode`)
+that routes chat input straight into the game engine
+(`internal/adventure.Store.Play`, called from `handleChat`/
+`handleChatStreaming` in `internal/webui/server.go`), bypassing the
+LLM/tool-calling loop entirely — this is where the "bored, no
+connection, driving" case actually gets its **zero-LLM-call**
+guarantee, since it's a single direct call, not a loop, and so can't
+have the truncation failure mode above. `AdventureConfig.NarrateLocal`/
+`NarrateRemote` decide, per currently active provider, whether a turn's
+reply is the engine's raw text verbatim (default) or gets one extra
+plain (tool-less) LLM call to rephrase it — never a multi-step loop.
+Turning game mode on requires naming an existing session and is itself
+a plain, LLM-free write (`internal/webui/adventure.go`'s
+`handleAdventureMode`) — deliberately, so choosing what to play never
+depends on a model being available to ask.
+
+The response to a game-mode turn carries `location_id` (`chatResponse`
+in `internal/webui/server.go`), but only on a turn that actually moved
+the player — never on every turn — so a future UI can swap the
+location's art/ambient audio exactly when it should and no more often.
 
 ## Persistence (`internal/adventure/store.go`)
 
@@ -90,8 +98,8 @@ other store in this project, holding:
 ```yaml
 adventure:
   enabled: true          # off by default
-  narrate_local: false   # unused until game mode exists
-  narrate_remote: false  # unused until game mode exists
+  narrate_local: false   # game mode: rephrase via LLM when serving locally?
+  narrate_remote: false  # game mode: rephrase via LLM when serving remotely?
 ```
 
 Or via environment: `SMARTHELPER_ADVENTURE_ENABLED=true`.

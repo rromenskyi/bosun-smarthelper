@@ -142,11 +142,7 @@ func serveCmd() *cobra.Command {
 			live := settingsStore.Get()
 			router.SetTemperatures(live.RemoteTemperature, live.LocalTemperature)
 
-			// adventureStore wiring into the web UI (session-management
-			// endpoints, game-mode chat branch) lands in a later stage —
-			// see docs/adventure.md; the tool itself is already usable
-			// from normal chat via buildRegistry's registration above.
-			registry, docStore, _ := buildRegistry(cfg, logger)
+			registry, docStore, adventureStore := buildRegistry(cfg, logger)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(live.NameRU, live.NameEN, live.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
@@ -175,6 +171,10 @@ func serveCmd() *cobra.Command {
 			server.SetTemperatureController(router)
 			server.SetProviderOverrideController(router)
 			server.SetCACertFile(cfg.Web.CACertFile)
+			if adventureStore != nil {
+				server.SetAdventureStore(adventureStore)
+				server.SetAdventureNarrator(router, cfg.Adventure.NarrateLocal, cfg.Adventure.NarrateRemote)
+			}
 			var ttsEngine voice.TTSEngine
 			if cfg.Voice.TTS.ModelPath != "" {
 				ttsEngine = &voice.PiperTTS{

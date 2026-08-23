@@ -108,6 +108,40 @@ func TestPlayReportsLocationChange(t *testing.T) {
 	}
 }
 
+func TestPlaySubstitutesFallbackForEmptyEngineOutput(t *testing.T) {
+	s := openTestStore(t)
+	if _, err := s.CreateSession("empty1", 42); err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+
+	// Confirmed live: a single recognized noun with no verb (e.g. just
+	// naming an object) leaves game.Output genuinely empty — a real
+	// upstream go-adventure parser gap, not something to fix by reaching
+	// into its dispatch logic here. Play must never hand the caller an
+	// empty string regardless of which input triggers it.
+	output, _, _, _, err := s.Play("empty1", "lamp")
+	if err != nil {
+		t.Fatalf("Play failed: %v", err)
+	}
+	if output == "" {
+		t.Fatal("Play returned an empty output — the fallback should have caught this")
+	}
+	if output != emptyOutputFallback {
+		t.Errorf("output = %q, want the fallback %q", output, emptyOutputFallback)
+	}
+
+	// The fallback must also be what gets persisted to history — an
+	// empty string there would be just as bad for any future UI reading
+	// it back.
+	history, err := s.History("empty1", 0)
+	if err != nil {
+		t.Fatalf("History failed: %v", err)
+	}
+	if len(history) != 1 || history[0].Output != emptyOutputFallback {
+		t.Errorf("history = %+v, want one entry with the fallback output", history)
+	}
+}
+
 func TestSessionIsolation(t *testing.T) {
 	s := openTestStore(t)
 

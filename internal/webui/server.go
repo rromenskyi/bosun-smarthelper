@@ -22,6 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/roman220/bosun-smarthelper/internal/adventure"
 	"github.com/roman220/bosun-smarthelper/internal/agent"
 	"github.com/roman220/bosun-smarthelper/internal/backup"
 	"github.com/roman220/bosun-smarthelper/internal/cameras"
@@ -163,6 +164,11 @@ type Server struct {
 	cameraDataDir     string
 	generationsMu     sync.Mutex
 	generations       map[string]*generationHandle
+
+	adventureStore         *adventure.Store
+	adventureNarrator      adventureNarrator
+	adventureNarrateLocal  bool
+	adventureNarrateRemote bool
 }
 
 // generationHandle is the in-flight state for one session's chat request —
@@ -267,6 +273,13 @@ func (s *Server) SetDocumentStore(store *documents.Store) {
 type chatSession struct {
 	History   []agent.HistoryMessage
 	UpdatedAt time.Time
+
+	// AdventureMode/AdventureSessionName: while AdventureMode is set,
+	// every message in this conversation goes straight to the named
+	// go-adventure session instead of the LLM/tool-calling loop — see
+	// docs/adventure.md and internal/webui/adventure.go.
+	AdventureMode        bool
+	AdventureSessionName string
 }
 
 // HistoryBudget caps how much conversation history is kept for one provider.
@@ -424,6 +437,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/chat/stop", s.handleChatStop)
+	mux.HandleFunc("POST /api/adventure/mode", s.handleAdventureMode)
 	mux.HandleFunc("POST /api/session/clear", s.handleSessionClear)
 	mux.HandleFunc("GET /api/documents", s.handleDocumentsList)
 	mux.HandleFunc("POST /api/documents", s.handleDocumentUpload)
@@ -579,6 +593,12 @@ type chatResponse struct {
 	Answer    string `json:"answer,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	Error     string `json:"error,omitempty"`
+
+	// LocationID is set only by a game-mode turn (internal/webui/adventure.go)
+	// that actually moved the player to a new location — never on every
+	// turn — so the frontend knows exactly when to swap the location's
+	// art/ambient audio rather than re-fetching it on every message.
+	LocationID *int32 `json:"location_id,omitempty"`
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -643,6 +663,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// LLM itself supplies, since sessionID here is already
 	// server-generated/validated above.
 	ctx = tools.ContextWithSessionID(ctx, sessionID)
+
+	// Game mode (docs/adventure.md): every message in this conversation
+	// goes straight to the named go-adventure session, bypassing the
+	// LLM/tool-calling loop (and its local-model queueing/streaming
+	// machinery below) entirely — deliberately simpler than the general
+	// chat path, since a game turn is normally instant and the optional
+	// narration step (internal/webui/adventure.go) is always exactly one
+	// plain call, never something that needs to stream or queue.
+	if adventureSessionName, ok := s.adventureModeSession(sessionID); ok {
+		s.handleAdventureTurn(w, ctx, sessionID, request.Message, adventureSessionName)
+		return
+	}
 
 	// Only the local model needs serializing — it's weak, shared hardware
 	// that can't usefully run more than one generation at a time. The
@@ -1098,6 +1130,39 @@ func (s *Server) saveAssistantReply(sessionID, answer string) {
 	session := s.sessions[sessionID]
 	session.History = append(session.History, agent.HistoryMessage{Role: "assistant", Content: answer})
 	session.History = trimHistory(session.History, s.sessionOptions.Remote.Turns, s.sessionOptions.Remote.MaxChars)
+	session.UpdatedAt = now
+	s.sessions[sessionID] = session
+	s.persistLocked()
+}
+
+// adventureModeSession reports whether sessionID's conversation is
+// currently in game mode and, if so, which named go-adventure session
+// it's pointed at.
+func (s *Server) adventureModeSession(sessionID string) (string, bool) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	session, ok := s.sessions[sessionID]
+	if !ok || !session.AdventureMode {
+		return "", false
+	}
+	return session.AdventureSessionName, true
+}
+
+// setAdventureMode flips sessionID's conversation into or out of game
+// mode. Selecting which named session becomes active is a plain,
+// LLM-free write — deliberately, so it works the same with or without a
+// model available (see docs/adventure.md).
+func (s *Server) setAdventureMode(sessionID string, enabled bool, adventureSessionName string) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	now := time.Now()
+	s.purgeExpiredLocked(now)
+	if _, exists := s.sessions[sessionID]; !exists && len(s.sessions) >= s.sessionOptions.MaxSessions {
+		s.evictOldestLocked()
+	}
+	session := s.sessions[sessionID]
+	session.AdventureMode = enabled
+	session.AdventureSessionName = adventureSessionName
 	session.UpdatedAt = now
 	s.sessions[sessionID] = session
 	s.persistLocked()

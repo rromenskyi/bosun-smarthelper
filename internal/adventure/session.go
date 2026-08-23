@@ -156,6 +156,17 @@ func (s *Store) RenameSession(oldName, newName string) error {
 	return nil
 }
 
+// emptyOutputFallback stands in for a genuinely empty game.Output — this
+// happens for real, reproducibly, on some inputs the engine's parser
+// accepts but has no message for (confirmed live, e.g. a bare object
+// name with no verb, such as "lamp"). That's an upstream go-adventure
+// gap, not something to patch here by reaching into its parser — this
+// integration's own responsibility is simply to never hand the user an
+// empty reply. "Nothing happens." is the engine's own idiom for exactly
+// this case (it's what a recognized-but-inert command like "xyzzy"
+// already answers with).
+const emptyOutputFallback = "Nothing happens."
+
 // Play loads session name, applies command, appends the turn to its
 // history, persists the resulting state, and returns the game's output
 // text, current location, whether the location changed this turn (so a
@@ -170,6 +181,9 @@ func (s *Store) Play(name, command string) (output string, locationID int32, loc
 
 	if err := game.ProcessCommand(command); err != nil {
 		return "", 0, false, false, fmt.Errorf("process command: %w", err)
+	}
+	if game.Output == "" {
+		game.Output = emptyOutputFallback
 	}
 
 	if err := s.AppendHistory(name, int(game.Turns), command, game.Output); err != nil {
