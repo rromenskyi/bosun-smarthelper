@@ -33,6 +33,18 @@ Instructions for any AI agent (or human) working in this repository.
   in their own files (e.g. `llm.Client` interface in `types.go`, implemented by
   `LocalClient`/`RemoteClient`).
 - Errors: wrap with `fmt.Errorf("context: %w", err)`.
+- JS (`internal/webui/index.html`'s inline script, `internal/webui/static/*.js`):
+  no build step, no bundler, no npm dependency for this project's own
+  toolchain — `make check` deliberately never runs a JS linter, since that
+  would force every contributor to have Node.js installed just to build a
+  Go project. When touching this code, sanity-check it with ESLint via
+  Docker instead (no local install needed):
+  `docker run --rm -v "$(pwd)":/work -w /work node:20-slim sh -c "npx eslint --no-eslintrc --env browser,es2022 --parser-options ecmaVersion:latest,sourceType:module --global temml:readonly --rule '{\"no-unused-vars\":\"warn\",\"no-undef\":\"warn\"}' internal/webui/static/*.js"`
+  (the inline `<script type="module">` in index.html needs extracting to a
+  temp file first, since ESLint doesn't parse HTML). Caught a real
+  `ReferenceError` this way once already (a stray `locale` instead of
+  `language.value` in `renderMerges`) — worth rerunning after any
+  non-trivial change to the chat UI's JS.
 
 ## Testing
 

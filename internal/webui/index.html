@@ -1979,12 +1979,12 @@
         const approve = document.createElement('button');
         approve.type = 'button';
         approve.className = 'approve';
-        approve.textContent = text[locale].mergesApprove;
+        approve.textContent = text[language.value].mergesApprove;
         approve.addEventListener('click', () => decideMerge(suggestion.id, true));
         const reject = document.createElement('button');
         reject.type = 'button';
         reject.className = 'reject';
-        reject.textContent = text[locale].mergesReject;
+        reject.textContent = text[language.value].mergesReject;
         reject.addEventListener('click', () => decideMerge(suggestion.id, false));
         actions.append(approve, reject);
         li.append(label, actions);
