@@ -230,7 +230,14 @@
        and, as a side effect, keeps each location's picture in the
        scrollback where it happened instead of only ever showing the
        latest one. */
-    .bubble .location-image { display: block; max-width: 100%; max-height: 260px; border-radius: 12px; object-fit: cover; margin-bottom: 10px; }
+    /* aspect-ratio reserves the final box before the image's bytes ever
+       arrive (every generated location image is a 1024x1024 square —
+       docs/art-audio-pipeline.md) — without it the element has no size
+       until it loads, so autoscroll-to-bottom (which runs right after
+       the message is added, well before the image finishes loading)
+       measures a shorter page than the final one and stops partway
+       through the picture. */
+    .bubble .location-image { display: block; max-width: 100%; max-height: 260px; aspect-ratio: 1 / 1; border-radius: 12px; object-fit: cover; margin-bottom: 10px; }
     #adventure-toggle.active { background: var(--accent); color: #10251c; }
     dialog#settings-dialog {
       border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
@@ -1885,8 +1892,13 @@
         const img = document.createElement('img');
         img.className = 'location-image';
         img.alt = '';
+        // The CSS aspect-ratio reserves the image's final box up front,
+        // so this normally isn't needed — kept as a safety net in case a
+        // given image ever doesn't come back square.
+        img.addEventListener('load', scrollToBottom);
         img.src = `/static/adventure/${entry.image}`;
         bubble.insertBefore(img, bubble.firstChild);
+        scrollToBottom();
       }
       updateAdventureAudio(entry);
     }
