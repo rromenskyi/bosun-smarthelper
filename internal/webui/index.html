@@ -38,14 +38,7 @@
       min-height: 0;
       margin: 0 auto;
       display: grid;
-      /* header, nav.quick, #adventure-scene, .messages, form — five direct
-         children now, one explicit "auto" track each except .messages,
-         which gets the flexible/scrollable track. Before #adventure-scene
-         existed this had 4 tracks for 4 children; adding a 5th child
-         without a 5th track meant Grid assigned the flexible track (meant
-         for .messages) to #adventure-scene instead, crushing it to
-         height:0 — invisible even though correctly populated/unhidden. */
-      grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
       overflow: hidden;
       padding: env(safe-area-inset-top) 18px env(safe-area-inset-bottom);
     }
@@ -227,14 +220,17 @@
     }
     .docs-list li span { overflow-wrap: anywhere; }
     .docs-list button { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-size: 14px; flex: 0 0 auto; }
-    .adventure-scene { display: flex; justify-content: center; position: relative; margin: 0 0 8px; }
-    .adventure-scene[hidden] { display: none; }
-    .adventure-scene img { max-width: 100%; max-height: 220px; border-radius: 12px; object-fit: cover; }
-    .adventure-mute {
-      position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; border-radius: 50%;
-      border: 0; background: rgba(0, 0, 0, .5); color: #fff; font-size: 16px; cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-    }
+    /* The location's picture rides along with the message that describes
+       it — part of .messages' normal scrolling content — rather than a
+       separate fixed panel elsewhere in the page. A panel that's a
+       sibling of .messages in .app's grid has to fight that grid's row
+       track count every time it's added/removed from the layout (see the
+       git history on this file for the breakage that caused); embedding
+       the image in the bubble itself sidesteps that whole class of bug
+       and, as a side effect, keeps each location's picture in the
+       scrollback where it happened instead of only ever showing the
+       latest one. */
+    .bubble .location-image { display: block; max-width: 100%; max-height: 260px; border-radius: 12px; object-fit: cover; margin-bottom: 10px; }
     #adventure-toggle.active { background: var(--accent); color: #10251c; }
     dialog#settings-dialog {
       border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
@@ -375,6 +371,8 @@
         <button class="bell" id="metrics-toggle" type="button" aria-label="Мониторинг" title="Мониторинг" hidden>📊</button>
         <button class="bell" id="cameras-toggle" type="button" aria-label="Камеры" title="Камеры" hidden>📹</button>
         <button class="bell" id="adventure-toggle" type="button" aria-label="Игра" title="Игра" hidden>🎮</button>
+        <button class="bell" id="adventure-mute" type="button" aria-label="Звук локации" title="Звук локации" hidden>🔊</button>
+        <audio id="adventure-scene-audio" loop></audio>
         <button class="bell" id="merges-toggle" type="button" aria-label="Слияние счётчиков" title="Слияние счётчиков" hidden>🔗<span class="badge" id="merges-badge" hidden>0</span></button>
         <button class="bell" id="bell" type="button" aria-label="Позвать старпома" title="Позвать старпома">🔔</button>
         <button type="button" class="status" id="status" title="Онлайн/оффлайн: авто"><span class="dot"></span><span>Подключение…</span></button>
@@ -547,12 +545,6 @@
       <button class="chip" data-tool="web_search" data-ru="Найди в интернете: " data-en="Search the web for: " data-label-ru="Поиск" data-label-en="Search">Поиск</button>
       <button class="chip" data-tool="wikipedia" data-ru="Найди в Википедии: " data-en="Look up on Wikipedia: " data-label-ru="Википедия" data-label-en="Wikipedia">Википедия</button>
     </nav>
-
-    <div class="adventure-scene" id="adventure-scene" hidden>
-      <img id="adventure-scene-image" alt="">
-      <audio id="adventure-scene-audio" loop></audio>
-      <button type="button" class="adventure-mute" id="adventure-mute" aria-label="Звук локации">🔊</button>
-    </div>
 
     <section class="messages" id="messages" aria-live="polite">
       <div class="empty" id="empty"><strong id="empty-title">Чем помочь?</strong><span id="empty-body">Спроси о погоде, холодильнике, местоположении или состоянии системы.</span></div>
@@ -1061,9 +1053,9 @@
             sessionId = data.session_id;
             localStorage.setItem(sessionStorageKey, sessionId);
           }
-          addMessage('assistant', data.answer, '', value.trim(), isVoiceTurn);
+          const assistantRow = addMessage('assistant', data.answer, '', value.trim(), isVoiceTurn);
           if (data.location_id !== undefined && data.location_id !== null) {
-            updateAdventureScene(data.location_id);
+            attachLocationImage(assistantRow.querySelector('.bubble'), data.location_id);
           }
         }
       } catch (error) {
@@ -1751,7 +1743,7 @@
           deleteButton.textContent = text[language.value].adventureDelete;
           deleteButton.addEventListener('click', async () => {
             await fetch(`/api/adventure/sessions/${encodeURIComponent(session.name)}`, { method: 'DELETE' });
-            if (adventureSessionName === session.name) { adventureMode = false; adventureSessionName = null; updateAdventureToggle(); }
+            if (adventureSessionName === session.name) { adventureMode = false; adventureSessionName = null; updateAdventureToggle(); stopAdventureAudio(); }
             loadAdventureSessions();
           });
           actions.append(playButton, deleteButton);
@@ -1780,31 +1772,29 @@
       }
     }
 
-    // Only updates the button's own look — never touches #adventure-scene.
-    // It used to also force the scene hidden whenever adventureMode was
-    // false, but this is called from updateAdventureLanguage(), which
-    // refreshStatus() calls every 3s — that turned "the picture is shown"
-    // into "the picture flickers off again within 3 seconds," since
-    // nothing about a routine status refresh should touch the scene at
-    // all. Actually leaving game mode (the toggle's own click handler,
-    // and handleAdventureTurn on game_over) hides the scene explicitly.
+    // Only updates the button's own look — never touches adventure audio.
+    // It used to also force the location picture hidden whenever
+    // adventureMode was false, but this is called from
+    // updateAdventureLanguage(), which refreshStatus() calls every 3s —
+    // that turned "the picture is shown" into "the picture flickers off
+    // again within 3 seconds," since
+    // nothing about a routine status refresh should touch adventure audio
+    // at all. Actually leaving game mode (the toggle's own click handler)
+    // stops it explicitly, via stopAdventureAudio below.
     function updateAdventureToggle() {
       adventureToggle.classList.toggle('active', adventureMode);
       adventureToggle.title = adventureMode ? text[language.value].adventureExitTitle : text[language.value].adventureToggleTitle;
       adventureToggle.setAttribute('aria-label', adventureToggle.title);
     }
 
-    // Hiding #adventure-scene alone doesn't stop the <audio> inside it —
-    // playback isn't tied to element visibility (the same fact behind
-    // the earlier "sound plays but picture doesn't show" bug) — so every
-    // place that stops showing a location has to pause the audio
-    // explicitly too, or it just keeps looping in the background.
-    function stopAdventureScene() {
-      const scene = document.querySelector('#adventure-scene');
-      scene.hidden = true;
+    // Ambient audio keeps looping until told otherwise — playback isn't
+    // tied to any element's visibility — so every place that leaves game
+    // mode has to pause it explicitly, or it just keeps playing.
+    function stopAdventureAudio() {
       const audio = document.querySelector('#adventure-scene-audio');
       audio.pause();
       audio.removeAttribute('src');
+      document.querySelector('#adventure-mute').hidden = true;
     }
 
     adventureToggle.addEventListener('click', async () => {
@@ -1821,7 +1811,7 @@
         adventureMode = false;
         adventureSessionName = null;
         updateAdventureToggle();
-        stopAdventureScene();
+        stopAdventureAudio();
       } else {
         settingsToggle.click();
         document.querySelector('#settings-tab-adventure').click();
@@ -1858,7 +1848,7 @@
         // Cache-Control, so browsers apply heuristic caching — a hard
         // reload's cache bypass covers the page's own initial resources,
         // not necessarily a fetch() a script issues later (e.g. this
-        // retry, called from updateAdventureScene on demand). Without
+        // retry, called from attachLocationImage on demand). Without
         // this, a manifest cached from an earlier visit — before a
         // location existed, or from a stale build — can stick
         // indefinitely regardless of how many times the page is reloaded.
@@ -1870,8 +1860,16 @@
       }
     }
 
-    async function updateAdventureScene(locationId) {
-      const scene = document.querySelector('#adventure-scene');
+    // Inserts the location's picture into bubble (the assistant message
+    // for the turn that moved there) and starts its ambient loop. No
+    // separate always-present panel — a fixed sibling of .messages in
+    // .app's grid has to fight that grid's row count every time it's
+    // added or hidden (see git history for the breakage that caused),
+    // and embedding the image in the very message that describes the
+    // place sidesteps that whole class of bug — plus keeps each
+    // location's picture in the scrollback where it happened, instead of
+    // only ever showing the latest one.
+    async function attachLocationImage(bubble, locationId) {
       // The one bootstrap fetch (initAdventureManifest, called once at
       // page load) had no retry — if it ever failed once (a transient
       // network hiccup, or the page loaded before media_dir was wired
@@ -1881,22 +1879,31 @@
       // can still recover instead of needing a fresh page reload.
       if (!adventureManifest) await loadAdventureManifest();
       const entry = adventureManifest && adventureManifest[String(locationId)];
-      if (!entry) { scene.hidden = true; return; }
+      if (!entry) return;
 
-      // Image first, and scene.hidden cleared right after — audio is a
-      // bonus, never allowed to block showing the picture even if
-      // something in that block throws (audio.play() without a fresh
-      // user gesture can reject or, in some engines, throw outright).
-      const image = document.querySelector('#adventure-scene-image');
-      if (entry.image) { image.src = `/static/adventure/${entry.image}`; image.hidden = false; } else { image.hidden = true; }
-      scene.hidden = false;
+      if (entry.image) {
+        const img = document.createElement('img');
+        img.className = 'location-image';
+        img.alt = '';
+        img.src = `/static/adventure/${entry.image}`;
+        bubble.insertBefore(img, bubble.firstChild);
+      }
+      updateAdventureAudio(entry);
+    }
 
+    // Ambient audio is independent of any picture — it keeps looping
+    // across turns until the location (or its sound) actually changes,
+    // never blocking the image if something here throws (audio.play()
+    // without a fresh user gesture can reject or, in some engines, throw
+    // outright).
+    function updateAdventureAudio(entry) {
       try {
         const audio = document.querySelector('#adventure-scene-audio');
-        if (entry.audio) {
+        if (entry && entry.audio) {
           audio.src = `/static/adventure/${entry.audio}`;
           audio.muted = adventureAudioMuted;
           audio.play().catch(() => {});
+          document.querySelector('#adventure-mute').hidden = false;
         } else {
           audio.pause();
           audio.removeAttribute('src');
