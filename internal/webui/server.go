@@ -594,7 +594,16 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			messages = history
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
+	response := map[string]any{"messages": messages}
+	// Game mode (docs/adventure.md) is tracked server-side per session_id,
+	// but the header toggle's highlight is purely client-side JS state —
+	// without this, a page reload left the button looking off even though
+	// the conversation was still actually in game mode underneath.
+	if adventureSessionName, ok := s.adventureModeSession(sessionID); ok {
+		response["adventure_mode"] = true
+		response["adventure_session"] = adventureSessionName
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 type chatRequest struct {

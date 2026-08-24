@@ -38,7 +38,14 @@
       min-height: 0;
       margin: 0 auto;
       display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      /* header, nav.quick, #adventure-scene, .messages, form — five direct
+         children now, one explicit "auto" track each except .messages,
+         which gets the flexible/scrollable track. Before #adventure-scene
+         existed this had 4 tracks for 4 children; adding a 5th child
+         without a 5th track meant Grid assigned the flexible track (meant
+         for .messages) to #adventure-scene instead, crushing it to
+         height:0 — invisible even though correctly populated/unhidden. */
+      grid-template-rows: auto auto auto minmax(0, 1fr) auto;
       overflow: hidden;
       padding: env(safe-area-inset-top) 18px env(safe-area-inset-bottom);
     }
@@ -1787,6 +1794,19 @@
       adventureToggle.setAttribute('aria-label', adventureToggle.title);
     }
 
+    // Hiding #adventure-scene alone doesn't stop the <audio> inside it —
+    // playback isn't tied to element visibility (the same fact behind
+    // the earlier "sound plays but picture doesn't show" bug) — so every
+    // place that stops showing a location has to pause the audio
+    // explicitly too, or it just keeps looping in the background.
+    function stopAdventureScene() {
+      const scene = document.querySelector('#adventure-scene');
+      scene.hidden = true;
+      const audio = document.querySelector('#adventure-scene-audio');
+      audio.pause();
+      audio.removeAttribute('src');
+    }
+
     adventureToggle.addEventListener('click', async () => {
       if (adventureMode) {
         try {
@@ -1801,7 +1821,7 @@
         adventureMode = false;
         adventureSessionName = null;
         updateAdventureToggle();
-        document.querySelector('#adventure-scene').hidden = true;
+        stopAdventureScene();
       } else {
         settingsToggle.click();
         document.querySelector('#settings-tab-adventure').click();
@@ -1833,7 +1853,16 @@
     // user needs to see.
     async function loadAdventureManifest() {
       try {
-        const response = await fetch('/static/adventure/manifest.json');
+        // no-store: http.FileServer (internal/webui/adventure.go's
+        // media-dir route) sends Last-Modified but no explicit
+        // Cache-Control, so browsers apply heuristic caching — a hard
+        // reload's cache bypass covers the page's own initial resources,
+        // not necessarily a fetch() a script issues later (e.g. this
+        // retry, called from updateAdventureScene on demand). Without
+        // this, a manifest cached from an earlier visit — before a
+        // location existed, or from a stale build — can stick
+        // indefinitely regardless of how many times the page is reloaded.
+        const response = await fetch('/static/adventure/manifest.json', { cache: 'no-store' });
         if (!response.ok) { adventureManifest = null; return; }
         adventureManifest = await response.json();
       } catch {
@@ -1841,8 +1870,16 @@
       }
     }
 
-    function updateAdventureScene(locationId) {
+    async function updateAdventureScene(locationId) {
       const scene = document.querySelector('#adventure-scene');
+      // The one bootstrap fetch (initAdventureManifest, called once at
+      // page load) had no retry — if it ever failed once (a transient
+      // network hiccup, or the page loaded before media_dir was wired
+      // up server-side), adventureManifest stayed null for the rest of
+      // that browser tab's life, no matter how many times the player
+      // moved afterward. Retrying here means a later successful load
+      // can still recover instead of needing a fresh page reload.
+      if (!adventureManifest) await loadAdventureManifest();
       const entry = adventureManifest && adventureManifest[String(locationId)];
       if (!entry) { scene.hidden = true; return; }
 
@@ -2273,6 +2310,11 @@
       try {
         const response = await fetch(`/api/history?session_id=${encodeURIComponent(sessionId)}`);
         const data = await response.json();
+        if (data.adventure_mode) {
+          adventureMode = true;
+          adventureSessionName = data.adventure_session;
+          updateAdventureToggle();
+        }
         if (Array.isArray(data.messages) && data.messages.length) {
           let lastUser = '';
           data.messages.forEach(message => {
