@@ -28,6 +28,15 @@ RUN git clone --depth 1 --branch ${PIPER_REF} https://github.com/OHF-Voice/piper
 # verified against the exact pinned PIPER_REF above.
 COPY deploy/piper/wav-pcm16.patch /tmp/wav-pcm16.patch
 RUN git apply /tmp/wav-pcm16.patch
+# Patches piper_exe to insert a short silence (with a fade into/out of
+# it) between sentences instead of concatenating each sentence's raw
+# synthesis output back-to-back — the latter produces an audible click
+# after every sentence, since piper_synthesize_next returns one chunk
+# per sentence with no guarantee either end is near zero amplitude. See
+# deploy/piper/sentence-gap.patch and docs/voice.md. Applied on top of
+# wav-pcm16.patch (both touch the same file), same PIPER_REF pin above.
+COPY deploy/piper/sentence-gap.patch /tmp/sentence-gap.patch
+RUN git apply /tmp/sentence-gap.patch
 # CMAKE_INSTALL_PREFIX unused here: piper_exe/libpiper.so are read
 # straight out of the build tree below, matching how this was verified.
 RUN cmake -B libpiper/build -S libpiper -DCMAKE_BUILD_TYPE=Release && \

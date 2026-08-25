@@ -1,0 +1,81 @@
+diff --git a/libpiper/src/main/utils/wavfile.cpp b/libpiper/src/main/utils/wavfile.cpp
+index 337360f..4cadb49 100644
+--- a/libpiper/src/main/utils/wavfile.cpp
++++ b/libpiper/src/main/utils/wavfile.cpp
+@@ -17,6 +17,48 @@ std::vector<int16_t> floatToPCM16(const float *samples, std::size_t count) {
+   }
+   return pcm;
+ }
++
++// piper_synthesize_next returns one chunk per *sentence* — each is an
++// independent ONNX inference run over that sentence's own phoneme queue
++// entry (see piper.cpp's phoneme_id_queue) — with no guarantee either
++// end lands near zero amplitude. Concatenating them back-to-back (as
++// this function used to) produces an audible click at every sentence
++// boundary. A short silence gap, with a short linear fade into/out of
++// it on the neighboring chunks, turns that click into a natural pause.
++constexpr float kSentenceGapSeconds = 0.2F;
++constexpr float kFadeSeconds = 0.01F;
++
++// Ramps the given edge(s) of pcm linearly to/from silence so a chunk
++// boundary meets its neighboring silence gap smoothly instead of
++// jumping straight from whatever amplitude synthesis happened to end
++// (or start) on.
++void fadeEdges(std::vector<int16_t> &pcm, int sampleRate, bool fadeIn, bool fadeOut) {
++  std::size_t fadeSamples = std::min(
++      static_cast<std::size_t>(kFadeSeconds * sampleRate), pcm.size() / 2);
++  if (fadeSamples == 0) {
++    return;
++  }
++  if (fadeIn) {
++    for (std::size_t i = 0; i < fadeSamples; i++) {
++      float gain = static_cast<float>(i) / static_cast<float>(fadeSamples);
++      pcm[i] = static_cast<int16_t>(static_cast<float>(pcm[i]) * gain);
++    }
++  }
++  if (fadeOut) {
++    std::size_t total = pcm.size();
++    for (std::size_t i = 0; i < fadeSamples; i++) {
++      float gain = static_cast<float>(i) / static_cast<float>(fadeSamples);
++      pcm[total - 1 - i] = static_cast<int16_t>(static_cast<float>(pcm[total - 1 - i]) * gain);
++    }
++  }
++}
++
++void writeSilence(std::ostream &stream, int sampleRate) {
++  std::vector<int16_t> silence(static_cast<std::size_t>(kSentenceGapSeconds * sampleRate), 0);
++  stream.write(reinterpret_cast<const char *>(silence.data()),
++               // NOLINTNEXTLINE(bugprone-narrowing-conversions)
++               silence.size() * sizeof(int16_t));
++}
+ } // namespace
+ 
+ void textToWavFile(piper_synthesizer *piper, piper_synthesize_options *options,
+@@ -24,6 +66,7 @@ void textToWavFile(piper_synthesizer *piper, piper_synthesize_options *options,
+   piper_synthesize_start(piper, string, options /* NULL for defaults */);
+   piper_audio_chunk chunk;
+   bool isHeaderWritten = false;
++  bool isFirstChunk = true;
+   do {
+     piper_synthesize_next(piper, &chunk);
+     if (chunk.num_samples > 0) {
+@@ -32,9 +75,18 @@ void textToWavFile(piper_synthesizer *piper, piper_synthesize_options *options,
+         isHeaderWritten = true;
+       }
+       std::vector<int16_t> pcm = floatToPCM16(chunk.samples, chunk.num_samples);
++      // Fade in from the gap before this chunk (skipped for the very
++      // first chunk, which has no gap before it) and out into the gap
++      // after it (skipped for the last chunk, which has no gap after
++      // it).
++      fadeEdges(pcm, chunk.sample_rate, /*fadeIn=*/!isFirstChunk, /*fadeOut=*/!chunk.is_last);
++      if (!isFirstChunk) {
++        writeSilence(stream, chunk.sample_rate);
++      }
+       stream.write(reinterpret_cast<const char *>(pcm.data()),
+                    // NOLINTNEXTLINE(bugprone-narrowing-conversions)
+                    pcm.size() * sizeof(int16_t));
++      isFirstChunk = false;
+     }
+   } while (!chunk.is_last);
+ }
+\ No newline at end of file

@@ -9,4 +9,5 @@ config.yaml
 docs/
 deploy/
 !deploy/piper/wav-pcm16.patch
+!deploy/piper/sentence-gap.patch
 *.md

@@ -356,6 +356,24 @@ described here), meant to be `git apply`'d against the pinned
 occasionally in case a future `piper1-gpl` release adds a native PCM16
 output flag and makes the patch unnecessary. See `deploy/piper/README.md`.
 
+**Second patch: a click after every sentence.** Reported live (multi-
+sentence replies read aloud had an audible click after every period).
+Traced to `libpiper/src/piper.cpp`: `piper_synthesize_start` splits the
+input into one `phoneme_id_queue` entry per *sentence*, and
+`piper_synthesize_next` runs one independent ONNX inference per call —
+so `textToWavFile`'s per-`chunk` loop in `wavfile.cpp` was one chunk per
+sentence, written back-to-back with no gap and no guarantee either end
+of a chunk lands near zero amplitude. `piper_exe --help` confirmed there
+is no `--sentence_silence`-style flag on this build to paper over it
+from the CLI side. Fixed with a second patch,
+`deploy/piper/sentence-gap.patch` (applied after `wav-pcm16.patch`, same
+file, same `git apply` step in the Dockerfile): a 200ms silence gap
+between chunks, with a 10ms linear fade on the chunk edges next to that
+gap (into the gap at a chunk's end, out of it at the next chunk's
+start) so the join doesn't itself click. Kept as a separate patch file
+rather than folded into `wav-pcm16.patch` — one file per independent
+problem, same reasoning as not bundling unrelated commits.
+
 **Bonus finding: no custom C++ wrapper needed.** `libpiper`'s own
 `src/main/` builds a complete reference CLI (`piper_exe`, source at
 `libpiper/src/main/main.cpp`) with exactly the flags needed
