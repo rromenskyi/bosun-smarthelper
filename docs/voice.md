@@ -586,7 +586,7 @@ voice:
   tts:
     binary_path: "/usr/local/bin/piper_exe"
     model_path: "/home/bosun/models/tts/ru_RU-ruslan-medium.onnx"
-    english_model_path: "/home/bosun/models/tts/en_US-lessac-medium.onnx"
+    english_model_path: "/home/bosun/models/tts/en_US-ryan-medium.onnx"
     espeak_data_path: "/usr/local/share/espeak-ng-data"
 ```
 

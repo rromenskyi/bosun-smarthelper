@@ -327,7 +327,7 @@ type VoiceConfig struct {
 // WAV — see deploy/piper/wav-pcm16.patch) and a voice model. BinaryPath,
 // ModelPath, and EspeakDataPath are required together; ModelPath empty
 // disables the feature. EnglishModelPath is optional — set it to a
-// second Piper voice (e.g. en_US-lessac-medium.onnx) and text with no
+// second Piper voice (e.g. en_US-ryan-medium.onnx) and text with no
 // Cyrillic characters is read with that voice instead of ModelPath's,
 // so a Russian voice never has to read English text (the adventure
 // game's output, for one, is always English regardless of UI
