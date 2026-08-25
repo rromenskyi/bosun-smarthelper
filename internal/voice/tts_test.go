@@ -2,6 +2,7 @@ package voice
 
 import (
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,6 +99,55 @@ func TestLanguageAwareTTSRoutesByScript(t *testing.T) {
 	}
 	if russian.gotText == "" {
 		t.Error("mixed text with any Cyrillic should still route to Russian")
+	}
+}
+
+// buildWav constructs a minimal 44-byte-header PCM WAV, with the RIFF
+// and data chunk sizes set to declaredDataSize regardless of how much
+// PCM data actually follows — mimicking piper_exe's own placeholder
+// size (it can't seek back on its output stream to fix this up itself).
+func buildWav(pcmData []byte, declaredDataSize uint32) []byte {
+	wav := make([]byte, 0, 44+len(pcmData))
+	wav = append(wav, "RIFF"...)
+	riffSize := make([]byte, 4)
+	binary.LittleEndian.PutUint32(riffSize, declaredDataSize+36)
+	wav = append(wav, riffSize...)
+	wav = append(wav, "WAVEfmt "...)
+	wav = append(wav, 16, 0, 0, 0)      // fmt chunk size
+	wav = append(wav, 1, 0)             // PCM
+	wav = append(wav, 1, 0)             // mono
+	wav = append(wav, 0x22, 0x56, 0, 0) // 22050 Hz
+	wav = append(wav, 0x44, 0xac, 0, 0) // byte rate (placeholder)
+	wav = append(wav, 2, 0)             // block align
+	wav = append(wav, 16, 0)            // bits per sample
+	wav = append(wav, "data"...)
+	dataSize := make([]byte, 4)
+	binary.LittleEndian.PutUint32(dataSize, declaredDataSize)
+	wav = append(wav, dataSize...)
+	wav = append(wav, pcmData...)
+	return wav
+}
+
+func TestFixWavHeaderSizeCorrectsBogusPlaceholder(t *testing.T) {
+	pcm := []byte{1, 2, 3, 4, 5, 6, 7, 8} // 4 fake int16 samples
+	wav := buildWav(pcm, 2147479552)      // piper's real-world placeholder value
+
+	fixed := fixWavHeaderSize(wav)
+
+	gotRiffSize := binary.LittleEndian.Uint32(fixed[4:8])
+	gotDataSize := binary.LittleEndian.Uint32(fixed[40:44])
+	if wantRiff := uint32(len(fixed) - 8); gotRiffSize != wantRiff {
+		t.Errorf("RIFF size = %d, want %d", gotRiffSize, wantRiff)
+	}
+	if wantData := uint32(len(pcm)); gotDataSize != wantData {
+		t.Errorf("data chunk size = %d, want %d", gotDataSize, wantData)
+	}
+}
+
+func TestFixWavHeaderSizeIgnoresNonWav(t *testing.T) {
+	notWav := []byte("not a wav file at all")
+	if got := fixWavHeaderSize(notWav); string(got) != string(notWav) {
+		t.Error("non-WAV input should pass through unchanged")
 	}
 }
 

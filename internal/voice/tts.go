@@ -5,6 +5,7 @@ package voice
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -47,7 +48,37 @@ func (p *PiperTTS) Synthesize(ctx context.Context, text string) ([]byte, error) 
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("piper_exe: %w: %s", err, stderr.String())
 	}
-	return stdout.Bytes(), nil
+	return fixWavHeaderSize(stdout.Bytes()), nil
+}
+
+// fixWavHeaderSize corrects the RIFF and "data" chunk size fields to the
+// actual byte count. piper_exe writes a WAV to a stream it can't seek
+// back on (stdout, possibly a pipe), so writeWavStreamHeader declares a
+// large placeholder size upfront instead of the real one — but by the
+// time this function runs, the whole file is already buffered in
+// memory, so the real size is trivially known. Left uncorrected, this
+// looks fine to `file`/most players (which just read until EOF), but a
+// declared size wildly larger than the actual data confuses some
+// decoders — worth ruling out as a source of playback artifacts before
+// suspecting the audio samples themselves.
+func fixWavHeaderSize(wav []byte) []byte {
+	const riffHeaderSize = 8 // "RIFF" + 4-byte size field
+	if len(wav) < riffHeaderSize+4 || string(wav[0:4]) != "RIFF" || string(wav[8:12]) != "WAVE" {
+		return wav
+	}
+	binary.LittleEndian.PutUint32(wav[4:8], uint32(len(wav)-riffHeaderSize)) //nolint:gosec // WAV size fields are always 32-bit
+
+	pos := 12
+	for pos+8 <= len(wav) {
+		chunkID := string(wav[pos : pos+4])
+		chunkSize := binary.LittleEndian.Uint32(wav[pos+4 : pos+8])
+		if chunkID == "data" {
+			binary.LittleEndian.PutUint32(wav[pos+4:pos+8], uint32(len(wav)-(pos+8))) //nolint:gosec // WAV size fields are always 32-bit
+			break
+		}
+		pos += 8 + int(chunkSize)
+	}
+	return wav
 }
 
 // LanguageAwareTTS picks between two underlying voices per request —
