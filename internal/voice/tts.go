@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"unicode"
 )
 
 // TTSEngine synthesizes text to speech, returning WAV bytes.
@@ -47,4 +48,34 @@ func (p *PiperTTS) Synthesize(ctx context.Context, text string) ([]byte, error) 
 		return nil, fmt.Errorf("piper_exe: %w: %s", err, stderr.String())
 	}
 	return stdout.Bytes(), nil
+}
+
+// LanguageAwareTTS picks between two underlying voices per request —
+// Russian has no way to read English well (or vice versa), and this
+// avoids ever needing an LLM call just to decide which one to use. The
+// heuristic is a plain character check, not detection of "the" language
+// of the text: any Cyrillic at all routes to Russian, so a mixed
+// sentence still gets the Russian voice (better at mangling a stray
+// English word than an English voice mangling Russian ones).
+type LanguageAwareTTS struct {
+	Russian TTSEngine
+	// English is optional — if nil, every request just uses Russian,
+	// unchanged from before this type existed.
+	English TTSEngine
+}
+
+func (m *LanguageAwareTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
+	if m.English != nil && !hasCyrillic(text) {
+		return m.English.Synthesize(ctx, text)
+	}
+	return m.Russian.Synthesize(ctx, text)
+}
+
+func hasCyrillic(text string) bool {
+	for _, r := range text {
+		if unicode.Is(unicode.Cyrillic, r) {
+			return true
+		}
+	}
+	return false
 }

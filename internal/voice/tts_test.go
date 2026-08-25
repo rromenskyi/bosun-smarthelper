@@ -59,3 +59,56 @@ func TestPiperTTSSynthesizePropagatesCommandFailure(t *testing.T) {
 		t.Fatal("expected an error, got nil")
 	}
 }
+
+// recordingTTS is a stub TTSEngine that records the text it was asked to
+// synthesize, so tests can assert which of two engines LanguageAwareTTS
+// picked without needing real piper_exe scripts on each side.
+type recordingTTS struct {
+	gotText string
+}
+
+func (r *recordingTTS) Synthesize(_ context.Context, text string) ([]byte, error) {
+	r.gotText = text
+	return []byte("ok"), nil
+}
+
+func TestLanguageAwareTTSRoutesByScript(t *testing.T) {
+	russian := &recordingTTS{}
+	english := &recordingTTS{}
+	engine := &LanguageAwareTTS{Russian: russian, English: english}
+
+	if _, err := engine.Synthesize(context.Background(), "You are in a maze of twisty passages."); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if english.gotText == "" || russian.gotText != "" {
+		t.Errorf("English-only text should route to English, got russian=%q english=%q", russian.gotText, english.gotText)
+	}
+
+	russian.gotText, english.gotText = "", ""
+	if _, err := engine.Synthesize(context.Background(), "Капитан, курс проложен."); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if russian.gotText == "" || english.gotText != "" {
+		t.Errorf("Cyrillic text should route to Russian, got russian=%q english=%q", russian.gotText, english.gotText)
+	}
+
+	russian.gotText, english.gotText = "", ""
+	if _, err := engine.Synthesize(context.Background(), "There is a lamp здесь."); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if russian.gotText == "" {
+		t.Error("mixed text with any Cyrillic should still route to Russian")
+	}
+}
+
+func TestLanguageAwareTTSFallsBackWithoutEnglish(t *testing.T) {
+	russian := &recordingTTS{}
+	engine := &LanguageAwareTTS{Russian: russian}
+
+	if _, err := engine.Synthesize(context.Background(), "Pure English text."); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if russian.gotText == "" {
+		t.Error("with no English engine configured, everything should still go to Russian")
+	}
+}

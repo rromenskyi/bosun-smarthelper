@@ -324,12 +324,20 @@ type VoiceConfig struct {
 }
 
 // TTSConfig points at a built `piper_exe` (patched to emit 16-bit PCM
-// WAV — see deploy/piper/wav-pcm16.patch) and a voice model. All three
-// paths are required together; ModelPath empty disables the feature.
+// WAV — see deploy/piper/wav-pcm16.patch) and a voice model. BinaryPath,
+// ModelPath, and EspeakDataPath are required together; ModelPath empty
+// disables the feature. EnglishModelPath is optional — set it to a
+// second Piper voice (e.g. en_US-lessac-medium.onnx) and text with no
+// Cyrillic characters is read with that voice instead of ModelPath's,
+// so a Russian voice never has to read English text (the adventure
+// game's output, for one, is always English regardless of UI
+// language). Left empty, every request uses ModelPath, exactly as
+// before this field existed.
 type TTSConfig struct {
-	BinaryPath     string `mapstructure:"binary_path"`
-	ModelPath      string `mapstructure:"model_path"`
-	EspeakDataPath string `mapstructure:"espeak_data_path"`
+	BinaryPath       string `mapstructure:"binary_path"`
+	ModelPath        string `mapstructure:"model_path"`
+	EnglishModelPath string `mapstructure:"english_model_path"`
+	EspeakDataPath   string `mapstructure:"espeak_data_path"`
 }
 
 // STTConfig points at a running `whisper-server` (see

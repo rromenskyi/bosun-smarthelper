@@ -586,8 +586,21 @@ voice:
   tts:
     binary_path: "/usr/local/bin/piper_exe"
     model_path: "/home/bosun/models/tts/ru_RU-ruslan-medium.onnx"
+    english_model_path: "/home/bosun/models/tts/en_US-lessac-medium.onnx"
     espeak_data_path: "/usr/local/share/espeak-ng-data"
 ```
+
+`english_model_path` is optional — a Russian Piper voice reads English
+text badly (most concretely: the adventure game's engine output,
+docs/adventure.md, is always English regardless of UI language). Set
+it to a second Piper voice model and `internal/voice.LanguageAwareTTS`
+routes each request by a plain character check — any Cyrillic at all
+uses `model_path`'s voice, otherwise `english_model_path`'s — no LLM
+call needed to decide. Leave it empty and every request uses
+`model_path`, exactly as before this option existed. The model file
+itself is sourced the same way as the Russian ones — downloaded into
+the bind-mounted `data/models/tts/` (gitignored, never committed),
+e.g. from `rhasspy/piper-voices` on Hugging Face.
 
 `voice.vad`/`voice.audio` (silence-detection, PipeWire device selection)
 don't exist yet — still genuinely future work, gated on conversation mode

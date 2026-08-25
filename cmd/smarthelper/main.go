@@ -180,10 +180,21 @@ func serveCmd() *cobra.Command {
 			}
 			var ttsEngine voice.TTSEngine
 			if cfg.Voice.TTS.ModelPath != "" {
-				ttsEngine = &voice.PiperTTS{
+				primary := &voice.PiperTTS{
 					BinaryPath:     cfg.Voice.TTS.BinaryPath,
 					ModelPath:      cfg.Voice.TTS.ModelPath,
 					EspeakDataPath: cfg.Voice.TTS.EspeakDataPath,
+				}
+				ttsEngine = primary
+				if cfg.Voice.TTS.EnglishModelPath != "" {
+					ttsEngine = &voice.LanguageAwareTTS{
+						Russian: primary,
+						English: &voice.PiperTTS{
+							BinaryPath:     cfg.Voice.TTS.BinaryPath,
+							ModelPath:      cfg.Voice.TTS.EnglishModelPath,
+							EspeakDataPath: cfg.Voice.TTS.EspeakDataPath,
+						},
+					}
 				}
 				server.SetTTSEngine(ttsEngine)
 			}
