@@ -41,6 +41,40 @@ func TestPiperTTSSynthesize(t *testing.T) {
 	}
 }
 
+// echoingPiperScript stands in for piper_exe but, unlike
+// fakePiperScript, writes back whatever text it received on stdin
+// (prefixed) instead of a fixed sequence — so a test can assert on the
+// exact text Synthesize actually sent.
+func echoingPiperScript(t *testing.T) string {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "echoing-piper.sh")
+	content := "#!/bin/sh\nprintf 'GOT:'\ncat\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write echoing piper script: %v", err)
+	}
+	return script
+}
+
+func TestPiperTTSSynthesizeCollapsesEmbeddedNewlines(t *testing.T) {
+	// A literal newline fed straight into espeak's phonemizer produces an
+	// audible glitch, not a clean pause (confirmed by direct comparison —
+	// see the comment on whitespaceRun) — text with the adventure game's
+	// own hard-wrapped lines must never reach piper_exe with newlines
+	// still in it.
+	script := echoingPiperScript(t)
+	engine := &PiperTTS{BinaryPath: script, ModelPath: "m", EspeakDataPath: "e"}
+
+	audio, err := engine.Synthesize(context.Background(), "An east\npassage ends here.\n\nRough stone steps lead down.")
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	got := string(audio)
+	want := "GOT:An east passage ends here. Rough stone steps lead down."
+	if got != want {
+		t.Errorf("text sent to piper_exe = %q, want %q", got, want)
+	}
+}
+
 func TestPiperTTSSynthesizeRejectsEmptyText(t *testing.T) {
 	engine := &PiperTTS{BinaryPath: "/does/not/matter", ModelPath: "m", EspeakDataPath: "e"}
 	if _, err := engine.Synthesize(context.Background(), "   "); err == nil {

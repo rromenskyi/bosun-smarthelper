@@ -8,9 +8,25 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"unicode"
 )
+
+// whitespaceRun matches any run of whitespace, including newlines —
+// collapsing it to a single space is what stripMarkdownForSpeech's own
+// client-side cleanup (index.html) does NOT do (it only collapses
+// spaces/tabs), so this is the actual boundary that guarantees no raw
+// newline ever reaches espeak. Needed because reply text can contain
+// them legitimately (the adventure game's engine output hard-wraps
+// lines the way 1977 terminal games did) and a literal '\n' fed
+// straight into espeak's phonemizer produces an audible glitch — not a
+// clean pause — confirmed by comparing synthesis of the same sentence
+// with and without an embedded newline: the newline version has a
+// spurious ~36000-magnitude sample jump (versus ~8-12000 for normal
+// speech transients) exactly where the newline was, and even loses one
+// of its two expected sentence-boundary silence gaps.
+var whitespaceRun = regexp.MustCompile(`\s+`)
 
 // TTSEngine synthesizes text to speech, returning WAV bytes.
 type TTSEngine interface {
@@ -28,10 +44,12 @@ type PiperTTS struct {
 }
 
 // Synthesize pipes text to piper_exe's stdin and reads the WAV it writes
-// to stdout. Text is passed through unmodified — punctuation and case are
-// the LLM's intonation cues, not something to strip (see docs/voice.md).
+// to stdout. Punctuation and case are passed through unmodified — the
+// LLM's intonation cues, not something to strip (see docs/voice.md) —
+// but any run of whitespace, including newlines, collapses to a single
+// space first (see whitespaceRun).
 func (p *PiperTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
-	text = strings.TrimSpace(text)
+	text = strings.TrimSpace(whitespaceRun.ReplaceAllString(text, " "))
 	if text == "" {
 		return nil, fmt.Errorf("empty text")
 	}
