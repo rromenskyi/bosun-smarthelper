@@ -159,7 +159,12 @@ func (t *Tool) command(chatSessionID, command string) (any, error) {
 		return nil, errors.New("no active game session — use new_session or select_session first")
 	}
 
-	output, locationID, locationChanged, gameOver, err := t.store.Play(name, command)
+	// Language "" (English) here, not a UI language setting — this tool
+	// call path is always narrated by the main model afterward (unlike
+	// game mode's direct, zero-LLM path), so the model already speaks
+	// whatever language the conversation is in regardless of the raw
+	// engine text's own language.
+	output, locationID, locationChanged, gameOver, err := t.store.Play(name, command, "")
 	if err != nil {
 		return nil, fmt.Errorf("play %q: %w", name, err)
 	}

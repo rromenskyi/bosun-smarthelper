@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/rromenskyi/go-adventure v0.0.0-20260825025826-01a9eaa2bf59
+	github.com/rromenskyi/go-adventure v0.0.0-20260825031519-62ed7cfae13e
 	github.com/shirou/gopsutil/v4 v4.24.9
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0

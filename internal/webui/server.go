@@ -695,7 +695,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// narration step (internal/webui/adventure.go) is always exactly one
 	// plain call, never something that needs to stream or queue.
 	if adventureSessionName, ok := s.adventureModeSession(sessionID); ok {
-		s.handleAdventureTurn(w, ctx, sessionID, request.Message, adventureSessionName)
+		s.handleAdventureTurn(w, ctx, sessionID, request.Message, adventureSessionName, request.Language)
 		return
 	}
 

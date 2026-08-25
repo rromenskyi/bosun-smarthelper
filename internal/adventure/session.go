@@ -172,11 +172,19 @@ const emptyOutputFallback = "Nothing happens."
 // text, current location, whether the location changed this turn (so a
 // caller can decide whether to refresh art/ambient audio), and whether
 // the game has ended.
-func (s *Store) Play(name, command string) (output string, locationID int32, locationChanged bool, gameOver bool, err error) {
+// Play processes one command against the named session. language selects
+// which of a location's descriptions the engine renders ("ru" for
+// Russian, anything else — including "" — for English); it is not
+// persisted as part of the session, it's applied fresh from the
+// caller's own current language preference on every single turn, the
+// same way narration language is already chosen per turn rather than
+// stored in the save file. See go-adventure's advent.Game.Language.
+func (s *Store) Play(name, command, language string) (output string, locationID int32, locationChanged bool, gameOver bool, err error) {
 	game, err := s.LoadSession(name)
 	if err != nil {
 		return "", 0, false, false, err
 	}
+	game.Language = language
 	previousLoc := game.Loc
 
 	if err := game.ProcessCommand(command); err != nil {

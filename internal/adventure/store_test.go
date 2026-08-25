@@ -2,6 +2,7 @@ package adventure
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -61,7 +62,7 @@ func TestPlayPersistsStateAndHistory(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 
-	output, _, _, gameOver, err := s.Play("carol", "look")
+	output, _, _, gameOver, err := s.Play("carol", "look", "")
 	if err != nil {
 		t.Fatalf("Play failed: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestPlayPersistsStateAndHistory(t *testing.T) {
 		t.Error("game should not be over after a single look command")
 	}
 
-	output2, _, _, _, err := s.Play("carol", "inventory")
+	output2, _, _, _, err := s.Play("carol", "inventory", "")
 	if err != nil {
 		t.Fatalf("second Play failed: %v", err)
 	}
@@ -92,6 +93,40 @@ func TestPlayPersistsStateAndHistory(t *testing.T) {
 	}
 }
 
+// TestPlayThreadsLanguageThrough covers the actual point of Play's
+// language parameter: it's applied fresh on every call, not persisted
+// with the session, so the same session can move between languages
+// turn to turn (matching a UI language toggle, which is exactly what
+// drives this in production — see internal/webui/adventure.go).
+func TestPlayThreadsLanguageThrough(t *testing.T) {
+	s := openTestStore(t)
+	if _, err := s.CreateSession("polina", 42); err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+
+	// LOC_BUILDING (east from the start location) has Russian text —
+	// see go-adventure's adventure.yaml.
+	outputRu, _, _, _, err := s.Play("polina", "east", "ru")
+	if err != nil {
+		t.Fatalf("Play (ru) failed: %v", err)
+	}
+	if !strings.Contains(outputRu, "здания") {
+		t.Errorf("Play with language=ru = %q, want it to contain translated Russian text", outputRu)
+	}
+
+	if _, _, _, _, err := s.Play("polina", "west", ""); err != nil {
+		t.Fatalf("Play (back west) failed: %v", err)
+	}
+
+	outputEn, _, _, _, err := s.Play("polina", "east", "")
+	if err != nil {
+		t.Fatalf("Play (en) failed: %v", err)
+	}
+	if !strings.Contains(outputEn, "well house") {
+		t.Errorf("Play with language=\"\" = %q, want the English text", outputEn)
+	}
+}
+
 func TestPlayReportsLocationChange(t *testing.T) {
 	s := openTestStore(t)
 	if _, err := s.CreateSession("mover", 42); err != nil {
@@ -99,7 +134,7 @@ func TestPlayReportsLocationChange(t *testing.T) {
 	}
 
 	// "look" never moves the player.
-	_, _, changed, _, err := s.Play("mover", "look")
+	_, _, changed, _, err := s.Play("mover", "look", "")
 	if err != nil {
 		t.Fatalf("Play failed: %v", err)
 	}
@@ -119,7 +154,7 @@ func TestPlaySubstitutesFallbackForEmptyEngineOutput(t *testing.T) {
 	// upstream go-adventure parser gap, not something to fix by reaching
 	// into its dispatch logic here. Play must never hand the caller an
 	// empty string regardless of which input triggers it.
-	output, _, _, _, err := s.Play("empty1", "lamp")
+	output, _, _, _, err := s.Play("empty1", "lamp", "")
 	if err != nil {
 		t.Fatalf("Play failed: %v", err)
 	}
@@ -152,7 +187,7 @@ func TestSessionIsolation(t *testing.T) {
 		t.Fatalf("CreateSession erin failed: %v", err)
 	}
 
-	if _, _, _, _, err := s.Play("dave", "north"); err != nil {
+	if _, _, _, _, err := s.Play("dave", "north", ""); err != nil {
 		t.Fatalf("Play dave failed: %v", err)
 	}
 
@@ -198,7 +233,7 @@ func TestDeleteSessionCascadesHistoryAndMemos(t *testing.T) {
 	if _, err := s.CreateSession("henry", 1); err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
-	if _, _, _, _, err := s.Play("henry", "look"); err != nil {
+	if _, _, _, _, err := s.Play("henry", "look", ""); err != nil {
 		t.Fatalf("Play failed: %v", err)
 	}
 	if err := s.AddMemo("henry", "stuck near the grate"); err != nil {

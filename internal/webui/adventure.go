@@ -108,8 +108,8 @@ func (s *Server) handleAdventureMode(w http.ResponseWriter, r *http.Request) {
 // and even then, exactly one plain call, never a multi-step loop, so a
 // turn can never silently chain into more actions than the one the user
 // actually asked for (see docs/adventure.md for why that matters).
-func (s *Server) handleAdventureTurn(w http.ResponseWriter, ctx context.Context, sessionID, message, adventureSessionName string) {
-	output, locationID, changed, gameOver, err := s.adventureStore.Play(adventureSessionName, message)
+func (s *Server) handleAdventureTurn(w http.ResponseWriter, ctx context.Context, sessionID, message, adventureSessionName, language string) {
+	output, locationID, changed, gameOver, err := s.adventureStore.Play(adventureSessionName, message, language)
 	if err != nil {
 		s.logger.Warn("adventure turn failed", "session_id", sessionID, "error", err)
 		writeJSON(w, http.StatusBadGateway, chatResponse{Error: "adventure turn failed"})
