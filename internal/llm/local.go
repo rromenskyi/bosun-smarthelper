@@ -290,11 +290,12 @@ func (c *LocalClient) chatStreamOpenAI(ctx context.Context, messages []Message, 
 	}
 
 	reqBody := openAIRequest{
-		Model:       c.model,
-		Messages:    messages,
-		Tools:       openAITools,
-		Temperature: c.getTemperature(),
-		Stream:      true,
+		Model:         c.model,
+		Messages:      messages,
+		Tools:         openAITools,
+		Temperature:   c.getTemperature(),
+		Stream:        true,
+		StreamOptions: &openAIStreamOptions{IncludeUsage: true},
 	}
 	if len(tools) > 0 {
 		reqBody.ToolChoice = "auto"

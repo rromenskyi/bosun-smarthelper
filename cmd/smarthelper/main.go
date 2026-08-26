@@ -353,7 +353,7 @@ func chatCmd() *cobra.Command {
 			ag.SetPersona(cfg.Assistant.NameRU, cfg.Assistant.NameEN, cfg.Assistant.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
 
-			answer, err := ag.Ask(cmd.Context(), strings.Join(args, " "))
+			answer, _, err := ag.Ask(cmd.Context(), strings.Join(args, " "))
 			if err != nil {
 				return fmt.Errorf("ask: %w", err)
 			}

@@ -146,6 +146,7 @@
     .message-actions button:disabled { opacity: .5; cursor: wait; }
     .message-actions button.feedback-chosen { opacity: .4; cursor: default; }
     .message-actions button.feedback-chosen:hover { border-color: var(--line); }
+    .message-stats { color: var(--muted); font-size: 11px; margin-top: 4px; }
     .edit-textarea {
       width: 100%; min-width: 220px; resize: vertical; font: inherit; color: var(--text);
       background: rgba(8, 18, 14, .35); border: 1px solid var(--line); border-radius: 10px;
@@ -818,7 +819,7 @@
       button.classList.add('feedback-chosen');
     }
 
-    function addMessageActions(bubble, value, userText, autoSpeak = false) {
+    function addMessageActions(bubble, value, userText, autoSpeak = false, stats = null) {
       if (!value || !value.trim()) return;
       const actions = document.createElement('div');
       actions.className = 'message-actions';
@@ -859,7 +860,28 @@
       actions.appendChild(upButton);
       actions.appendChild(downButton);
 
-      bubble.appendChild(actions);
+      if (stats) {
+        const statsLine = document.createElement('div');
+        statsLine.className = 'message-stats';
+        statsLine.hidden = true;
+        const seconds = (stats.durationMs / 1000).toFixed(1);
+        statsLine.textContent = stats.totalTokens > 0
+          ? text[language.value].statsLine(seconds, stats.totalTokens, stats.promptTokens, stats.completionTokens)
+          : text[language.value].statsLineNoTokens(seconds);
+
+        const infoButton = document.createElement('button');
+        infoButton.type = 'button';
+        infoButton.textContent = 'ℹ️';
+        infoButton.title = text[language.value].infoTitle;
+        infoButton.setAttribute('aria-label', text[language.value].infoTitle);
+        infoButton.addEventListener('click', () => { statsLine.hidden = !statsLine.hidden; });
+        actions.appendChild(infoButton);
+
+        bubble.appendChild(actions);
+        bubble.appendChild(statsLine);
+      } else {
+        bubble.appendChild(actions);
+      }
     }
 
     // Editing a sent message doesn't rewrite history (the server-side
@@ -928,7 +950,7 @@
       textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
     }
 
-    function addMessage(role, value, extra = '', userText = '', autoSpeak = false) {
+    function addMessage(role, value, extra = '', userText = '', autoSpeak = false, stats = null) {
       empty.hidden = true;
       const row = document.createElement('div');
       row.className = `message ${role} ${extra}`;
@@ -939,7 +961,7 @@
       content.innerHTML = renderMessageHTML(value);
       bubble.appendChild(content);
       if (role === 'assistant' && !extra.includes('thinking') && !extra.includes('error')) {
-        addMessageActions(bubble, value, userText, autoSpeak);
+        addMessageActions(bubble, value, userText, autoSpeak, stats);
       }
       if (role === 'user') {
         addUserMessageActions(bubble, value);
@@ -986,6 +1008,9 @@
       // its own; startStep() below discards it outright once real work
       // actually begins.
       let queuedRow = null;
+      // Set from the "done" event, right before finalizeLiveBubble() reads
+      // it — see the ndjson loop below.
+      let doneStats = null;
 
       function clearQueued() {
         if (queuedRow) {
@@ -1006,7 +1031,7 @@
         const finalText = liveProse;
         liveBubble.innerHTML = renderMessageHTML(finalText);
         if (fold) liveBubble.appendChild(fold);
-        addMessageActions(liveBubble, finalText, value.trim(), isVoiceTurn);
+        addMessageActions(liveBubble, finalText, value.trim(), isVoiceTurn, doneStats);
         liveRow = null;
         liveBubble = null;
         liveProse = '';
@@ -1088,6 +1113,12 @@
                   sessionId = event.session_id;
                   localStorage.setItem(sessionStorageKey, sessionId);
                 }
+                doneStats = {
+                  durationMs: event.duration_ms || 0,
+                  promptTokens: event.prompt_tokens || 0,
+                  completionTokens: event.completion_tokens || 0,
+                  totalTokens: event.total_tokens || 0
+                };
               } else if (event.type === 'error') {
                 throw new Error(event.message || 'request failed');
               }
@@ -1104,7 +1135,17 @@
             sessionId = data.session_id;
             localStorage.setItem(sessionStorageKey, sessionId);
           }
-          const assistantRow = addMessage('assistant', data.answer, '', value.trim(), isVoiceTurn);
+          // duration_ms is absent for a game-mode turn (handleAdventureTurn
+          // bypasses the agent entirely, omitempty drops the zero value) —
+          // that's the signal to skip the ℹ️ icon rather than show one with
+          // nothing real to report.
+          const stats = data.duration_ms !== undefined ? {
+            durationMs: data.duration_ms || 0,
+            promptTokens: data.prompt_tokens || 0,
+            completionTokens: data.completion_tokens || 0,
+            totalTokens: data.total_tokens || 0
+          } : null;
+          const assistantRow = addMessage('assistant', data.answer, '', value.trim(), isVoiceTurn, stats);
           if (data.location_id !== undefined && data.location_id !== null) {
             attachLocationImage(assistantRow.querySelector('.bubble'), data.location_id);
           }

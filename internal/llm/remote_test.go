@@ -68,6 +68,7 @@ func TestRemoteClientChatStream(t *testing.T) {
 
 	sse := `data: {"model":"text","choices":[{"delta":{"content":"Сейчас "}}]}` + "\n" +
 		`data: {"model":"text","choices":[{"delta":{"content":"22.5°C."}}]}` + "\n" +
+		`data: {"model":"text","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}` + "\n" +
 		"data: [DONE]\n"
 
 	var requestBody openAIRequest
@@ -97,11 +98,18 @@ func TestRemoteClientChatStream(t *testing.T) {
 	if !requestBody.Stream {
 		t.Error("request did not ask for streaming")
 	}
+	if requestBody.StreamOptions == nil || !requestBody.StreamOptions.IncludeUsage {
+		t.Error("request did not ask for stream_options.include_usage — the response would never carry real token counts")
+	}
 	if response.Content != "Сейчас 22.5°C." {
 		t.Errorf("content = %q", response.Content)
 	}
 	if len(deltas) != 2 {
 		t.Fatalf("deltas = %d, want 2", len(deltas))
+	}
+	wantUsage := Usage{PromptTokens: 7, CompletionTokens: 3, TotalTokens: 10}
+	if response.Usage != wantUsage {
+		t.Errorf("usage = %+v, want %+v", response.Usage, wantUsage)
 	}
 }
 

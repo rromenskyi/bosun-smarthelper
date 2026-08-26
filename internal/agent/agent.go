@@ -91,8 +91,10 @@ type StepEvent struct {
 }
 
 // Ask sends a single user message through the conversation loop, executing
-// any tool calls the model requests, and returns its final text answer.
-func (a *Agent) Ask(ctx context.Context, userMessage string) (string, error) {
+// any tool calls the model requests, and returns its final text answer
+// plus the total token usage across every LLM call the turn made (summed
+// across the tool-loop — see AskWithHistoryStreaming).
+func (a *Agent) Ask(ctx context.Context, userMessage string) (string, llm.Usage, error) {
 	return a.AskWithHistory(ctx, userMessage, nil, "")
 }
 
@@ -106,7 +108,7 @@ func (a *Agent) AskWithHistory(
 	userMessage string,
 	history []HistoryMessage,
 	language string,
-) (string, error) {
+) (string, llm.Usage, error) {
 	return a.AskWithHistoryStreaming(ctx, userMessage, history, language, nil)
 }
 
@@ -118,13 +120,19 @@ func (a *Agent) AskWithHistory(
 // is known. onEvent may be nil (AskWithHistory does exactly that), and a
 // client that doesn't support streaming still works — its complete response
 // is delivered as one "delta" event instead.
+//
+// The returned llm.Usage is the sum of every LLM call's usage this turn
+// made — a turn can involve several (the tool-loop below), and a caller
+// asking "how many tokens did this turn cost" wants the total, not just
+// the last call's. It reflects whatever was accumulated even on an error
+// return, since real calls that actually happened still cost real tokens.
 func (a *Agent) AskWithHistoryStreaming(
 	ctx context.Context,
 	userMessage string,
 	history []HistoryMessage,
 	language string,
 	onEvent func(StepEvent),
-) (string, error) {
+) (string, llm.Usage, error) {
 	online := a.isOnline(ctx)
 	toolDefs := a.toolDefinitions(online)
 	messages := a.buildMessages(userMessage, history, language, online)
@@ -140,6 +148,7 @@ func (a *Agent) AskWithHistoryStreaming(
 	var detector repetitionDetector
 	var forwardedProse strings.Builder
 	var truncated bool
+	var totalUsage llm.Usage
 	onDelta := func(d llm.StreamDelta) {
 		if truncated {
 			return
@@ -179,8 +188,10 @@ func (a *Agent) AskWithHistoryStreaming(
 			// Not a real failure — whatever coherent prose was already
 			// forwarded before the model collapsed into repetition is the
 			// answer; there's nothing further worth waiting for from a
-			// response that's already degenerated.
-			return forwardedProse.String(), nil
+			// response that's already degenerated. resp may be nil or
+			// incomplete (the stream was cancelled mid-flight), so only
+			// prior iterations' usage is reported here.
+			return forwardedProse.String(), totalUsage, nil
 		}
 		if err != nil {
 			// A cancelled or expired context (user hit "stop", or the request
@@ -189,14 +200,17 @@ func (a *Agent) AskWithHistoryStreaming(
 			if ctx.Err() == nil {
 				a.errLog.Record("llm_chat", a.chatProvider(), err)
 			}
-			return "", fmt.Errorf("chat: %w", err)
+			return "", totalUsage, fmt.Errorf("chat: %w", err)
 		}
+		totalUsage.PromptTokens += resp.Usage.PromptTokens
+		totalUsage.CompletionTokens += resp.Usage.CompletionTokens
+		totalUsage.TotalTokens += resp.Usage.TotalTokens
 
 		if len(resp.ToolCalls) == 0 {
 			if strings.TrimSpace(resp.Content) == "" {
-				return "", fmt.Errorf("model returned an empty response")
+				return "", totalUsage, fmt.Errorf("model returned an empty response")
 			}
-			return resp.Content, nil
+			return resp.Content, totalUsage, nil
 		}
 
 		messages = append(messages, llm.Message{
@@ -217,7 +231,7 @@ func (a *Agent) AskWithHistoryStreaming(
 		}
 	}
 
-	return "", fmt.Errorf("exceeded %d tool-call iterations without a final answer", maxToolIterations)
+	return "", totalUsage, fmt.Errorf("exceeded %d tool-call iterations without a final answer", maxToolIterations)
 }
 
 func (a *Agent) buildMessages(userMessage string, history []HistoryMessage, language string, online bool) []llm.Message {

@@ -26,6 +26,45 @@ func TestParseOpenAISSEStream_PlainProse(t *testing.T) {
 	}
 }
 
+func TestParseOpenAISSEStream_CapturesFinalUsageChunk(t *testing.T) {
+	body := strings.NewReader(strings.Join([]string{
+		`data: {"model":"text","choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}`,
+		// The real final chunk when stream_options.include_usage was set:
+		// empty choices, top-level usage.
+		`data: {"model":"text","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":4,"total_tokens":15}}`,
+		`data: [DONE]`,
+		"",
+	}, "\n"))
+
+	response, err := parseOpenAISSEStream(body, func(StreamDelta) {}, false)
+	if err != nil {
+		t.Fatalf("parseOpenAISSEStream: %v", err)
+	}
+	if response.Content != "Hi" {
+		t.Errorf("content = %q", response.Content)
+	}
+	want := Usage{PromptTokens: 11, CompletionTokens: 4, TotalTokens: 15}
+	if response.Usage != want {
+		t.Errorf("usage = %+v, want %+v", response.Usage, want)
+	}
+}
+
+func TestParseOpenAISSEStream_NoUsageChunkLeavesZeroUsage(t *testing.T) {
+	body := strings.NewReader(strings.Join([]string{
+		`data: {"model":"text","choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n"))
+
+	response, err := parseOpenAISSEStream(body, func(StreamDelta) {}, false)
+	if err != nil {
+		t.Fatalf("parseOpenAISSEStream: %v", err)
+	}
+	if response.Usage != (Usage{}) {
+		t.Errorf("usage = %+v, want zero value when the server never sends one", response.Usage)
+	}
+}
+
 func TestParseOpenAISSEStream_ToolCallsReassembled(t *testing.T) {
 	body := strings.NewReader(strings.Join([]string{
 		`data: {"model":"text","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"loc"}}]}}]}`,

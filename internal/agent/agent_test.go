@@ -71,7 +71,7 @@ func TestAgent_AskWithHistoryStreaming_EmitsStepAndDeltaEvents(t *testing.T) {
 	ag := New(client, registry)
 
 	var events []StepEvent
-	answer, err := ag.AskWithHistoryStreaming(context.Background(), "weather?", nil, "", func(e StepEvent) {
+	answer, _, err := ag.AskWithHistoryStreaming(context.Background(), "weather?", nil, "", func(e StepEvent) {
 		events = append(events, e)
 	})
 	if err != nil {
@@ -135,7 +135,7 @@ func TestAgent_AskWithHistoryStreaming_TruncatesRunawayRepetition(t *testing.T) 
 	ag := New(client, tools.NewRegistry())
 
 	var delivered strings.Builder
-	answer, err := ag.AskWithHistoryStreaming(context.Background(), "как дела?", nil, "", func(e StepEvent) {
+	answer, _, err := ag.AskWithHistoryStreaming(context.Background(), "как дела?", nil, "", func(e StepEvent) {
 		if e.Type == "delta" && e.Delta.Kind == "prose" {
 			delivered.WriteString(e.Delta.Text)
 		}
@@ -162,7 +162,7 @@ func TestAgent_AskWithHistory_NilEventCallbackStillWorks(t *testing.T) {
 	client := &fakeStreamingClient{fakeClient: fakeClient{responses: []*llm.Response{{Content: "Hello there."}}}}
 	ag := New(client, tools.NewRegistry())
 
-	answer, err := ag.Ask(context.Background(), "hi")
+	answer, _, err := ag.Ask(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("Ask returned error: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestAgent_Ask_HidesNetworkToolsOffline(t *testing.T) {
 	registry.Register(tools.NewGPSTool(&config.GPSConfig{Type: "mock"}))
 	ag := New(client, registry, func(context.Context) bool { return false })
 
-	if _, err := ag.Ask(context.Background(), "help"); err != nil {
+	if _, _, err := ag.Ask(context.Background(), "help"); err != nil {
 		t.Fatalf("Ask returned error: %v", err)
 	}
 	if len(client.seenTools) != 1 || len(client.seenTools[0]) != 1 {
@@ -198,7 +198,7 @@ func TestAgent_Ask_NoToolCall(t *testing.T) {
 	}}
 	ag := New(client, tools.NewRegistry())
 
-	answer, err := ag.Ask(context.Background(), "hi")
+	answer, _, err := ag.Ask(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("Ask returned error: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestAgent_AskWithHistory(t *testing.T) {
 		{Role: "assistant", Content: "Nice to meet you."},
 		{Role: "tool", Content: "must be ignored"},
 	}
-	if _, err := ag.AskWithHistory(context.Background(), "What is my name?", history, "ru"); err != nil {
+	if _, _, err := ag.AskWithHistory(context.Background(), "What is my name?", history, "ru"); err != nil {
 		t.Fatalf("AskWithHistory returned error: %v", err)
 	}
 	messages := client.seen[0]
@@ -236,7 +236,7 @@ func TestAgent_AskWithHistory(t *testing.T) {
 func TestAgent_Ask_RejectsEmptyResponse(t *testing.T) {
 	client := &fakeClient{responses: []*llm.Response{{}}}
 	ag := New(client, tools.NewRegistry())
-	if _, err := ag.Ask(context.Background(), "hi"); err == nil {
+	if _, _, err := ag.Ask(context.Background(), "hi"); err == nil {
 		t.Fatal("expected an error for an empty model response")
 	}
 }
@@ -255,7 +255,7 @@ func TestAgent_Ask_WithToolCall(t *testing.T) {
 	registry.Register(tools.NewWeatherTool(&config.WeatherConfig{Type: "mock", MockTempC: 21.5, MockHumidity: 50}))
 	ag := New(client, registry)
 
-	answer, err := ag.Ask(context.Background(), "what's the weather?")
+	answer, _, err := ag.Ask(context.Background(), "what's the weather?")
 	if err != nil {
 		t.Fatalf("Ask returned error: %v", err)
 	}
@@ -284,6 +284,35 @@ func TestAgent_Ask_WithToolCall(t *testing.T) {
 	}
 }
 
+// TestAgent_Ask_SumsUsageAcrossToolLoop is a regression test for exactly
+// the mistake a naive implementation makes: returning only the *last*
+// LLM call's usage instead of the total across every call the turn made.
+// A tool-call round and a final-answer round each report their own
+// usage; the turn actually cost their sum.
+func TestAgent_Ask_SumsUsageAcrossToolLoop(t *testing.T) {
+	toolCall := llm.ToolCall{ID: "call_1", Type: "function"}
+	toolCall.Function.Name = "get_weather"
+	toolCall.Function.Arguments = "{}"
+
+	client := &fakeClient{responses: []*llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall}, Usage: llm.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}},
+		{Content: "It's 21.5°C outside.", Usage: llm.Usage{PromptTokens: 150, CompletionTokens: 8, TotalTokens: 158}},
+	}}
+
+	registry := tools.NewRegistry()
+	registry.Register(tools.NewWeatherTool(&config.WeatherConfig{Type: "mock", MockTempC: 21.5, MockHumidity: 50}))
+	ag := New(client, registry)
+
+	_, usage, err := ag.Ask(context.Background(), "what's the weather?")
+	if err != nil {
+		t.Fatalf("Ask returned error: %v", err)
+	}
+	want := llm.Usage{PromptTokens: 250, CompletionTokens: 28, TotalTokens: 278}
+	if usage != want {
+		t.Errorf("usage = %+v, want the sum of both calls %+v", usage, want)
+	}
+}
+
 func TestAgent_Ask_UnknownTool(t *testing.T) {
 	toolCall := llm.ToolCall{ID: "call_1", Type: "function"}
 	toolCall.Function.Name = "does_not_exist"
@@ -294,7 +323,7 @@ func TestAgent_Ask_UnknownTool(t *testing.T) {
 	}}
 	ag := New(client, tools.NewRegistry())
 
-	answer, err := ag.Ask(context.Background(), "do the impossible")
+	answer, _, err := ag.Ask(context.Background(), "do the impossible")
 	if err != nil {
 		t.Fatalf("Ask returned error: %v", err)
 	}
@@ -321,7 +350,7 @@ func TestAgent_RecordsToolAndChatFailuresToErrorLog(t *testing.T) {
 	ag := New(client, tools.NewRegistry())
 	ag.SetErrorLog(errLog)
 
-	if _, err := ag.Ask(context.Background(), "do the impossible"); err == nil {
+	if _, _, err := ag.Ask(context.Background(), "do the impossible"); err == nil {
 		t.Fatal("expected an error from the failing second Chat call")
 	}
 	errLog.Close()
@@ -356,7 +385,7 @@ func TestAgent_Ask_ExceedsIterationLimit(t *testing.T) {
 	registry.Register(tools.NewWeatherTool(&config.WeatherConfig{Type: "mock"}))
 	ag := New(client, registry)
 
-	if _, err := ag.Ask(context.Background(), "loop forever"); err == nil {
+	if _, _, err := ag.Ask(context.Background(), "loop forever"); err == nil {
 		t.Fatal("expected an error when the model never stops calling tools")
 	}
 }

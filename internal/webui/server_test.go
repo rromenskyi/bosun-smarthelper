@@ -20,11 +20,12 @@ type fakeAsker struct {
 	answer string
 	err    error
 	seen   string
+	usage  llm.Usage
 }
 
-func (f *fakeAsker) Ask(_ context.Context, message string) (string, error) {
+func (f *fakeAsker) Ask(_ context.Context, message string) (string, llm.Usage, error) {
 	f.seen = message
-	return f.answer, f.err
+	return f.answer, f.usage, f.err
 }
 
 func TestServerIndex(t *testing.T) {
@@ -52,6 +53,31 @@ func TestServerIndex(t *testing.T) {
 	}
 }
 
+// TestServerChatReturnsDurationAndUsage covers the non-streaming path
+// (Asker, not conversationAsker/streamingConversationAsker) — the
+// streaming path's equivalent is TestServerChatStreamingWritesNDJSONEvents.
+func TestServerChatReturnsDurationAndUsage(t *testing.T) {
+	asker := &fakeAsker{answer: "hi", usage: llm.Usage{PromptTokens: 5, CompletionTokens: 2, TotalTokens: 7}}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"hi"}`))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body chatResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.PromptTokens != 5 || body.CompletionTokens != 2 || body.TotalTokens != 7 {
+		t.Errorf("token fields = %+v, want the asker's usage", body)
+	}
+	if body.DurationMS < 0 {
+		t.Errorf("duration_ms = %d, want >= 0", body.DurationMS)
+	}
+}
+
 type conversationFakeAsker struct {
 	answers   []string
 	histories [][]agent.HistoryMessage
@@ -59,16 +85,16 @@ type conversationFakeAsker struct {
 	languages []string
 }
 
-func (f *conversationFakeAsker) Ask(_ context.Context, _ string) (string, error) {
-	return f.answers[0], nil
+func (f *conversationFakeAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
+	return f.answers[0], llm.Usage{}, nil
 }
 
-func (f *conversationFakeAsker) AskWithHistory(_ context.Context, message string, history []agent.HistoryMessage, language string) (string, error) {
+func (f *conversationFakeAsker) AskWithHistory(_ context.Context, message string, history []agent.HistoryMessage, language string) (string, llm.Usage, error) {
 	f.histories = append(f.histories, append([]agent.HistoryMessage(nil), history...))
 	f.messages = append(f.messages, message)
 	f.languages = append(f.languages, language)
 	answer := f.answers[len(f.histories)-1]
-	return answer, nil
+	return answer, llm.Usage{}, nil
 }
 
 // streamingFakeAsker implements streamingConversationAsker, replaying a
@@ -77,10 +103,11 @@ type streamingFakeAsker struct {
 	steps  [][]agent.StepEvent
 	answer string
 	calls  int
+	usage  llm.Usage
 }
 
-func (f *streamingFakeAsker) Ask(_ context.Context, _ string) (string, error) {
-	return f.answer, nil
+func (f *streamingFakeAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
+	return f.answer, f.usage, nil
 }
 
 func (f *streamingFakeAsker) AskWithHistoryStreaming(
@@ -89,17 +116,18 @@ func (f *streamingFakeAsker) AskWithHistoryStreaming(
 	_ []agent.HistoryMessage,
 	_ string,
 	onEvent func(agent.StepEvent),
-) (string, error) {
+) (string, llm.Usage, error) {
 	for _, event := range f.steps[f.calls] {
 		onEvent(event)
 	}
 	f.calls++
-	return f.answer, nil
+	return f.answer, f.usage, nil
 }
 
 func TestServerChatStreamingWritesNDJSONEvents(t *testing.T) {
 	asker := &streamingFakeAsker{
 		answer: "Сейчас 22.5°C.",
+		usage:  llm.Usage{PromptTokens: 42, CompletionTokens: 9, TotalTokens: 51},
 		steps: [][]agent.StepEvent{{
 			{Type: "step_start"},
 			{Type: "delta", Delta: llm.StreamDelta{Kind: "fold", Text: "→ {\"temperature_c\":22.5}"}},
@@ -144,6 +172,12 @@ func TestServerChatStreamingWritesNDJSONEvents(t *testing.T) {
 	}
 	if events[5].SessionID != "stream-test-1" {
 		t.Errorf("done event session_id = %q", events[5].SessionID)
+	}
+	if events[5].PromptTokens != 42 || events[5].CompletionTokens != 9 || events[5].TotalTokens != 51 {
+		t.Errorf("done event token fields = %+v, want the asker's usage", events[5])
+	}
+	if events[5].DurationMS < 0 {
+		t.Errorf("done event duration_ms = %d, want >= 0", events[5].DurationMS)
 	}
 
 	// The session store must hold the real final answer regardless of how
@@ -210,8 +244,8 @@ type slowStreamingAsker struct {
 	gap    time.Duration
 }
 
-func (f *slowStreamingAsker) Ask(_ context.Context, _ string) (string, error) {
-	return f.answer, nil
+func (f *slowStreamingAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
+	return f.answer, llm.Usage{}, nil
 }
 
 func (f *slowStreamingAsker) AskWithHistoryStreaming(
@@ -220,12 +254,12 @@ func (f *slowStreamingAsker) AskWithHistoryStreaming(
 	_ []agent.HistoryMessage,
 	_ string,
 	onEvent func(agent.StepEvent),
-) (string, error) {
+) (string, llm.Usage, error) {
 	onEvent(agent.StepEvent{Type: "step_start"})
 	time.Sleep(f.gap)
 	onEvent(agent.StepEvent{Type: "delta", Delta: llm.StreamDelta{Kind: "prose", Text: "ответ"}})
 	time.Sleep(f.gap)
-	return f.answer, nil
+	return f.answer, llm.Usage{}, nil
 }
 
 // TestServerChatStreamingSendsHeartbeatDuringSlowGeneration is a regression
@@ -293,8 +327,8 @@ func TestServerChatStreamingSendsHeartbeatDuringSlowGeneration(t *testing.T) {
 
 type streamingErrorAsker struct{}
 
-func (streamingErrorAsker) Ask(_ context.Context, _ string) (string, error) {
-	return "", errors.New("boom")
+func (streamingErrorAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
+	return "", llm.Usage{}, errors.New("boom")
 }
 
 func (streamingErrorAsker) AskWithHistoryStreaming(
@@ -303,9 +337,9 @@ func (streamingErrorAsker) AskWithHistoryStreaming(
 	_ []agent.HistoryMessage,
 	_ string,
 	onEvent func(agent.StepEvent),
-) (string, error) {
+) (string, llm.Usage, error) {
 	onEvent(agent.StepEvent{Type: "step_start"})
-	return "", errors.New("boom")
+	return "", llm.Usage{}, errors.New("boom")
 }
 
 func TestServerChatSessionHistoryAndClear(t *testing.T) {

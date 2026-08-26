@@ -27,6 +27,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/cameras"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/filedump"
+	"github.com/roman220/bosun-smarthelper/internal/llm"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
@@ -89,11 +90,11 @@ func ValidateBind(address string) error {
 
 // Asker is implemented by agent.Agent.
 type Asker interface {
-	Ask(ctx context.Context, message string) (string, error)
+	Ask(ctx context.Context, message string) (string, llm.Usage, error)
 }
 
 type conversationAsker interface {
-	AskWithHistory(ctx context.Context, message string, history []agent.HistoryMessage, language string) (string, error)
+	AskWithHistory(ctx context.Context, message string, history []agent.HistoryMessage, language string) (string, llm.Usage, error)
 }
 
 // streamingConversationAsker is checked separately from conversationAsker
@@ -107,7 +108,7 @@ type streamingConversationAsker interface {
 		history []agent.HistoryMessage,
 		language string,
 		onEvent func(agent.StepEvent),
-	) (string, error)
+	) (string, llm.Usage, error)
 }
 
 // streamEvent is one line of the newline-delimited JSON stream POST
@@ -121,6 +122,13 @@ type streamEvent struct {
 	SessionID string `json:"session_id,omitempty"`
 	Message   string `json:"message,omitempty"`
 	Position  int    `json:"position,omitempty"`
+
+	// DurationMS/*Tokens are only set on the final "done" event — see
+	// chatResponse's identical fields for what they mean.
+	DurationMS       int64 `json:"duration_ms,omitempty"`
+	PromptTokens     int   `json:"prompt_tokens,omitempty"`
+	CompletionTokens int   `json:"completion_tokens,omitempty"`
+	TotalTokens      int   `json:"total_tokens,omitempty"`
 }
 
 // Status describes the provider that would currently serve a request.
@@ -636,6 +644,16 @@ type chatResponse struct {
 	// turn — so the frontend knows exactly when to swap the location's
 	// art/ambient audio rather than re-fetching it on every message.
 	LocationID *int32 `json:"location_id,omitempty"`
+
+	// DurationMS/*Tokens are only set on a successful non-game-mode chat
+	// turn — the wall-clock time and aggregate llm.Usage the agent's
+	// tool-loop reported (see agent.AskWithHistoryStreaming), surfaced by
+	// index.html as the ℹ️ icon on the reply bubble. Never set on error,
+	// since there's nothing meaningful to report about a failed turn.
+	DurationMS       int64 `json:"duration_ms,omitempty"`
+	PromptTokens     int   `json:"prompt_tokens,omitempty"`
+	CompletionTokens int   `json:"completion_tokens,omitempty"`
+	TotalTokens      int   `json:"total_tokens,omitempty"`
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -769,12 +787,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var answer string
+	var usage llm.Usage
 	var err error
+	start := time.Now()
 	if conversational, ok := s.asker.(conversationAsker); ok {
-		answer, err = conversational.AskWithHistory(ctx, request.Message, history, language)
+		answer, usage, err = conversational.AskWithHistory(ctx, request.Message, history, language)
 	} else {
-		answer, err = s.asker.Ask(ctx, request.Message)
+		answer, usage, err = s.asker.Ask(ctx, request.Message)
 	}
+	duration := time.Since(start)
 	if err != nil {
 		status := http.StatusBadGateway
 		switch {
@@ -792,7 +813,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.saveAssistantReply(sessionID, answer)
-	writeJSON(w, http.StatusOK, chatResponse{Answer: answer, SessionID: sessionID})
+	writeJSON(w, http.StatusOK, chatResponse{
+		Answer:           answer,
+		SessionID:        sessionID,
+		DurationMS:       duration.Milliseconds(),
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+	})
 }
 
 // newNDJSONWriter sets the response up for newline-delimited JSON events
@@ -897,7 +925,8 @@ func (s *Server) handleChatStreaming(
 		heartbeatDone.Wait()
 	}()
 
-	answer, err := asker.AskWithHistoryStreaming(ctx, message, history, language, func(e agent.StepEvent) {
+	start := time.Now()
+	answer, usage, err := asker.AskWithHistoryStreaming(ctx, message, history, language, func(e agent.StepEvent) {
 		touch()
 		switch e.Type {
 		case "step_start":
@@ -906,6 +935,7 @@ func (s *Server) handleChatStreaming(
 			write(streamEvent{Type: "delta", Kind: e.Delta.Kind, Text: e.Delta.Text})
 		}
 	})
+	duration := time.Since(start)
 	if err != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.Canceled):
@@ -920,7 +950,14 @@ func (s *Server) handleChatStreaming(
 	}
 
 	s.saveAssistantReply(sessionID, answer)
-	write(streamEvent{Type: "done", SessionID: sessionID})
+	write(streamEvent{
+		Type:             "done",
+		SessionID:        sessionID,
+		DurationMS:       duration.Milliseconds(),
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+	})
 }
 
 type clearSessionRequest struct {

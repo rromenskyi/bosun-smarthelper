@@ -100,6 +100,15 @@ type openAIRequest struct {
 	ToolChoice  string          `json:"tool_choice,omitempty"`
 	Temperature float64         `json:"temperature,omitempty"`
 	Stream      bool            `json:"stream,omitempty"`
+	// StreamOptions is only meaningful with Stream true — without it, an
+	// OpenAI-compatible streaming response never carries a usage object
+	// at all (see openAIStreamChunk.Usage in sse.go), leaving token
+	// counts silently zero for the whole streaming path.
+	StreamOptions *openAIStreamOptions `json:"stream_options,omitempty"`
+}
+
+type openAIStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type openAIToolDef struct {
@@ -216,11 +225,12 @@ func (c *RemoteClient) ChatStream(ctx context.Context, messages []Message, tools
 	}
 
 	reqBody := openAIRequest{
-		Model:       c.model,
-		Messages:    messages,
-		Tools:       openAITools,
-		Temperature: c.getTemperature(),
-		Stream:      true,
+		Model:         c.model,
+		Messages:      messages,
+		Tools:         openAITools,
+		Temperature:   c.getTemperature(),
+		Stream:        true,
+		StreamOptions: &openAIStreamOptions{IncludeUsage: true},
 	}
 	if len(tools) > 0 {
 		reqBody.ToolChoice = "auto"

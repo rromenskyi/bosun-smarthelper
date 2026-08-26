@@ -113,6 +113,11 @@ type openAIStreamChunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	// Usage is only present on the final chunk, and only when the request
+	// set stream_options.include_usage — see openAIStreamOptions. That
+	// chunk's Choices is empty, so this must be read before the
+	// len(chunk.Choices) == 0 skip below, not after.
+	Usage *Usage `json:"usage"`
 }
 
 type toolCallAccumulator struct {
@@ -142,6 +147,7 @@ func parseOpenAISSEStream(body io.Reader, onDelta func(StreamDelta), detectFold 
 	toolCalls := make(map[int]*toolCallAccumulator)
 	var order []int
 	var model string
+	var usage Usage
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -159,6 +165,9 @@ func parseOpenAISSEStream(body io.Reader, onDelta func(StreamDelta), detectFold 
 		}
 		if chunk.Model != "" {
 			model = chunk.Model
+		}
+		if chunk.Usage != nil {
+			usage = *chunk.Usage
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -200,7 +209,7 @@ func parseOpenAISSEStream(body io.Reader, onDelta func(StreamDelta), detectFold 
 		detector.flush(onDelta)
 	}
 
-	response := &Response{Content: content.String(), Model: model}
+	response := &Response{Content: content.String(), Model: model, Usage: usage}
 	sort.Ints(order)
 	for _, idx := range order {
 		acc := toolCalls[idx]

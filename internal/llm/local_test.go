@@ -569,6 +569,42 @@ func TestLocalClientChatStreamOpenAI_FoldsToolCallXML(t *testing.T) {
 	}
 }
 
+func TestLocalClientChatStreamOpenAI_RequestsAndParsesUsage(t *testing.T) {
+	sse := `data: {"model":"default","choices":[{"delta":{"content":"21 C."}}]}` + "\n" +
+		`data: {"model":"default","choices":[],"usage":{"prompt_tokens":9,"completion_tokens":4,"total_tokens":13}}` + "\n" +
+		"data: [DONE]\n"
+
+	var requestBody openAIRequest
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	client, err := NewOpenAICompatibleLocalClient("http://lm-studio.test/v1", "default", "", 0.5, time.Second, true)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.streamClient.Transport = transport
+
+	response, err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "weather?"}}, nil, func(StreamDelta) {})
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v", err)
+	}
+	if requestBody.StreamOptions == nil || !requestBody.StreamOptions.IncludeUsage {
+		t.Error("request did not ask for stream_options.include_usage")
+	}
+	wantUsage := Usage{PromptTokens: 9, CompletionTokens: 4, TotalTokens: 13}
+	if response.Usage != wantUsage {
+		t.Errorf("usage = %+v, want %+v", response.Usage, wantUsage)
+	}
+}
+
 func TestLocalClientChatStreamDisabledFallsBackToBuffered(t *testing.T) {
 	// Some llama.cpp builds/models corrupt multi-byte UTF-8 in streaming
 	// mode; stream:false must route ChatStream through the buffered Chat
