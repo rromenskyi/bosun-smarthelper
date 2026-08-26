@@ -234,6 +234,12 @@
     }
     .filedump-rag-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; }
     .filedump-rag-options { display: flex; flex-direction: column; gap: 6px; }
+    /* Same [hidden]-specificity fix as .bell[hidden]/.settings-panel[hidden]
+       above — without it, the display:flex rule above wins the cascade
+       over the UA's own [hidden] { display: none }, so the checkbox's
+       toggle (filedump.js sets/clears the hidden attribute) has no
+       visible effect. */
+    .filedump-rag-options[hidden] { display: none; }
     .filedump-rag-options input[type="text"] {
       padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
       background: rgba(8, 18, 14, .5); color: var(--text);
