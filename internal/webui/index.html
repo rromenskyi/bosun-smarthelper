@@ -136,7 +136,7 @@
        which needs its own line to actually look like a display formula
        rather than an inline one wrapping awkwardly mid-sentence. */
     .bubble math[display="block"] { display: block; margin: 6px 0; }
-    .message-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .message-actions { display: flex; gap: 6px; margin-top: 8px; position: relative; }
     .message-actions button {
       padding: 2px 8px; border-radius: 8px;
       border: 1px solid var(--line); background: transparent; color: var(--muted);
@@ -146,7 +146,16 @@
     .message-actions button:disabled { opacity: .5; cursor: wait; }
     .message-actions button.feedback-chosen { opacity: .4; cursor: default; }
     .message-actions button.feedback-chosen:hover { border-color: var(--line); }
-    .message-stats { color: var(--muted); font-size: 11px; margin-top: 4px; }
+    /* A floating popover anchored above the ℹ️ button, not an inline line
+       pushing the rest of the bubble down — shown on hover (after a short
+       pause, see the JS delay) or on click/tap, since hover alone would
+       leave touch devices with no way to see it at all. */
+    .message-stats {
+      position: absolute; bottom: 100%; right: 0; margin-bottom: 6px;
+      background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+      padding: 6px 10px; color: var(--muted); font-size: 11px; white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, .35); z-index: 5;
+    }
     .edit-textarea {
       width: 100%; min-width: 220px; resize: vertical; font: inherit; color: var(--text);
       background: rgba(8, 18, 14, .35); border: 1px solid var(--line); border-radius: 10px;
@@ -874,14 +883,23 @@
         infoButton.textContent = 'ℹ️';
         infoButton.title = text[language.value].infoTitle;
         infoButton.setAttribute('aria-label', text[language.value].infoTitle);
+        // Hover (after a brief pause, so just passing over the icon
+        // doesn't flash it) shows the popover on desktop; click/tap still
+        // toggles it independently, since hover never fires on touch.
+        let hoverTimer = null;
+        infoButton.addEventListener('mouseenter', () => {
+          hoverTimer = setTimeout(() => { statsLine.hidden = false; }, 300);
+        });
+        infoButton.addEventListener('mouseleave', () => {
+          clearTimeout(hoverTimer);
+          statsLine.hidden = true;
+        });
         infoButton.addEventListener('click', () => { statsLine.hidden = !statsLine.hidden; });
         actions.appendChild(infoButton);
-
-        bubble.appendChild(actions);
-        bubble.appendChild(statsLine);
-      } else {
-        bubble.appendChild(actions);
+        actions.appendChild(statsLine);
       }
+
+      bubble.appendChild(actions);
     }
 
     // Editing a sent message doesn't rewrite history (the server-side
