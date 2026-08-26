@@ -436,4 +436,3 @@ func safeWithin(root, absPath string) error {
 	}
 	return nil
 }
-
