@@ -14,15 +14,27 @@ faulty compressor even if it never uses the word "fridge."
   embed as one vector without losing precision, so it's split into
   paragraph/sentence-bounded chunks (`chunkText` in
   `internal/documents/chunker.go`) and each chunk gets its own embedding.
-  Uploaded **only through the web UI** (`POST /api/documents`, plain-text
-  or PDF) — deliberately **not** an LLM-callable tool action. A weak local
-  model already struggles with a handful of tool definitions (see
-  `docs/token-budget.md`); adding upload/list/delete as tool actions would
-  grow the contract for a capability only a human ever needs (nobody asks
-  the assistant out loud to ingest a file). Search is the only document
-  capability exposed to the model, and it reuses the existing `memo` tool's
-  `search` action rather than registering a second tool — so the contract
-  doesn't grow at all.
+  Uploaded **only through the web UI** — the file dump's upload endpoint
+  (`POST /api/files/upload`, plain-text or PDF, with `add_to_rag=true` —
+  see `docs/filedump.md`) — deliberately **not** an LLM-callable tool
+  action. A weak local model already struggles with a handful of tool
+  definitions (see `docs/token-budget.md`); adding upload/list/delete as
+  tool actions would grow the contract for a capability only a human ever
+  needs (nobody asks the assistant out loud to ingest a file). Search is
+  the only document capability exposed to the model, and it reuses the
+  existing `memo` tool's `search` action rather than registering a second
+  tool — so the contract doesn't grow at all.
+
+  Every `Record` also carries a `SourcePath` — the file dump tree folder
+  it was uploaded from (e.g. `docs/ford/generator-repair`), empty for
+  anything uploaded before that feature existed or added through
+  `POST /api/documents/pages`'s scripted path. A document `search` result
+  includes it as `source_path` when non-empty, so the model can tell two
+  similarly-described pieces of equipment apart by where their manual
+  came from (a Ford's generator vs. a generic 150cc engine's) instead of
+  just returning "the manual" with no origin. See `docs/filedump.md` for
+  how a file's folder becomes its documents' `SourcePath`, including what
+  happens to it when the file is later moved.
 
 ## Images: diagrams, with OCR where possible
 
@@ -87,8 +99,9 @@ found after the fact has to be fixed by hand (clear that chunk's
 
 ## PDF ingestion
 
-`POST /api/documents` also accepts a PDF (detected by its `%PDF-` magic
-bytes). `internal/webui/pdf.go` shells out to poppler-utils
+`POST /api/files/upload` with `add_to_rag=true` also accepts a PDF
+(detected by its `%PDF-` magic bytes). `internal/webui/pdf.go` shells out
+to poppler-utils
 (`pdfinfo`/`pdftotext`/`pdftoppm` — installed in the Docker image, see the
 Dockerfile) page by page: a page with a real text layer becomes a text
 `PageInput`; a page below `minPDFPageTextChars` (a scanned page, or one
@@ -233,6 +246,9 @@ llm:
 
 documents:
   path: ""  # empty uses ~/.local/share/bosun/documents.json
+
+filedump:
+  path: ""  # empty disables the file dump entirely — see docs/filedump.md
 
 memo:
   path: ""

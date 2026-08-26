@@ -72,7 +72,7 @@ func mcpCmd() *cobra.Command {
 			}
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			registry, _, _ := buildRegistry(cfg, logger)
+			registry, _, _, _ := buildRegistry(cfg, logger)
 
 			server := mcp.NewServer(cfg.MCP.ServerName, version, registry, logger)
 			server.SetErrorLog(openErrorLog(cfg, logger))
@@ -142,7 +142,7 @@ func serveCmd() *cobra.Command {
 			live := settingsStore.Get()
 			router.SetTemperatures(live.RemoteTemperature, live.LocalTemperature)
 
-			registry, docStore, adventureStore := buildRegistry(cfg, logger)
+			registry, docStore, adventureStore, fileDumpStore := buildRegistry(cfg, logger)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(live.NameRU, live.NameEN, live.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
@@ -177,6 +177,9 @@ func serveCmd() *cobra.Command {
 			}
 			if cfg.Adventure.MediaDir != "" {
 				server.SetAdventureMediaDir(cfg.Adventure.MediaDir)
+			}
+			if fileDumpStore != nil {
+				server.SetFileDumpStore(fileDumpStore)
 			}
 			var ttsEngine voice.TTSEngine
 			if cfg.Voice.TTS.ModelPath != "" {
@@ -345,7 +348,7 @@ func chatCmd() *cobra.Command {
 			// when online, falling back to the local model when offline.
 			router.CheckConnectivity(cmd.Context())
 
-			registry, _, _ := buildRegistry(cfg, logger)
+			registry, _, _, _ := buildRegistry(cfg, logger)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(cfg.Assistant.NameRU, cfg.Assistant.NameEN, cfg.Assistant.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))

@@ -89,6 +89,11 @@ top-level tour has room for. Grouped by what you're trying to do.
   public repo ([go-adventure](https://github.com/rromenskyi/go-adventure));
   `internal/adventure` here is SQLite session persistence plus an LLM
   tool. Off by default.
+- **[filedump.md](filedump.md)** — a 📄 button for a general-purpose,
+  drag-and-drop-organizable file tree (any file type, stored as-is,
+  real folders), with a per-upload checkbox to also feed a file into
+  `memo-search.md`'s RAG document store, tagged with the folder it came
+  from. Off by default.
 
 ## How it behaves, and why
 

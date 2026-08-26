@@ -57,16 +57,16 @@ func TestAttachOrphanedImagesMergesGoodMatch(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), embed)
 	ctx := context.Background()
 
-	textSummary, err := store.AddPages(ctx, "Wiper Systems", []PageInput{{Text: "wiper motor procedure"}})
+	textSummary, err := store.AddPages(ctx, "Wiper Systems", []PageInput{{Text: "wiper motor procedure"}}, "")
 	if err != nil {
 		t.Fatalf("add text doc: %v", err)
 	}
 	if _, err := store.AddPages(ctx, "Wiper Systems (Diagrams)", []PageInput{
 		{Text: "wiper motor diagram", ImageURL: "/document-images/wiper.png"},
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatalf("add image doc: %v", err)
 	}
-	if _, err := store.AddPages(ctx, "Cookbook", []PageInput{{Text: "unrelated bread recipe"}}); err != nil {
+	if _, err := store.AddPages(ctx, "Cookbook", []PageInput{{Text: "unrelated bread recipe"}}, ""); err != nil {
 		t.Fatalf("add unrelated doc: %v", err)
 	}
 
@@ -117,12 +117,12 @@ func TestAttachOrphanedImagesLeavesUnmatchedBelowThreshold(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), embed)
 	ctx := context.Background()
 
-	if _, err := store.AddPages(ctx, "Manual", []PageInput{{Text: "completely unrelated procedure"}}); err != nil {
+	if _, err := store.AddPages(ctx, "Manual", []PageInput{{Text: "completely unrelated procedure"}}, ""); err != nil {
 		t.Fatalf("add text doc: %v", err)
 	}
 	imageSummary, err := store.AddPages(ctx, "Manual (Diagrams)", []PageInput{
 		{Text: "some diagram caption", ImageURL: "/document-images/x.png"},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("add image doc: %v", err)
 	}
@@ -154,14 +154,14 @@ func TestAttachOrphanedImagesDoesNotDoubleAttachToSameTextChunk(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), embed)
 	ctx := context.Background()
 
-	textSummary, err := store.AddPages(ctx, "Manual", []PageInput{{Text: "shared procedure text"}})
+	textSummary, err := store.AddPages(ctx, "Manual", []PageInput{{Text: "shared procedure text"}}, "")
 	if err != nil {
 		t.Fatalf("add text doc: %v", err)
 	}
 	if _, err := store.AddPages(ctx, "Manual (Diagrams)", []PageInput{
 		{Text: "first diagram caption", ImageURL: "/document-images/first.png"},
 		{Text: "second diagram caption", ImageURL: "/document-images/second.png"},
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatalf("add image doc: %v", err)
 	}
 
@@ -194,7 +194,7 @@ func TestAttachOrphanedImagesRemovesAlreadyEmptyDocumentFromEarlierRun(t *testin
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
 	ctx := context.Background()
 
-	emptySummary, err := store.AddPages(ctx, "Already Empty (Diagrams)", []PageInput{{Text: "placeholder"}})
+	emptySummary, err := store.AddPages(ctx, "Already Empty (Diagrams)", []PageInput{{Text: "placeholder"}}, "")
 	if err != nil {
 		t.Fatalf("add placeholder doc: %v", err)
 	}

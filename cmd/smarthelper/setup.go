@@ -8,6 +8,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/embeddings"
 	"github.com/roman220/bosun-smarthelper/internal/errlog"
+	"github.com/roman220/bosun-smarthelper/internal/filedump"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
 )
 
@@ -32,8 +33,11 @@ func openErrorLog(cfg *config.Config, logger *slog.Logger) *errlog.Logger {
 // and game-mode chat branch (see docs/adventure.md) — the adventure
 // tool registered here is the opportunistic, LLM-decides path; game
 // mode's own direct-to-store path (bypassing the tool loop) is where
-// cfg.Adventure.NarrateLocal/NarrateRemote actually applies.
-func buildRegistry(cfg *config.Config, logger *slog.Logger) (*tools.Registry, *documents.Store, *adventure.Store) {
+// cfg.Adventure.NarrateLocal/NarrateRemote actually applies. It also
+// returns the file dump store (nil unless cfg.FileDump.Path is set —
+// see docs/filedump.md), a human-only, web-UI-only feature like
+// documents, never exposed as an LLM tool.
+func buildRegistry(cfg *config.Config, logger *slog.Logger) (*tools.Registry, *documents.Store, *adventure.Store, *filedump.Store) {
 	docStore := documents.NewStore(cfg.Documents.Path, embeddings.NewClient(&cfg.LLM.Embeddings))
 	memoTool := tools.NewMemoTool(&cfg.Memo, &cfg.LLM.Embeddings)
 	memoTool.SetDocumentStore(docStore)
@@ -62,5 +66,15 @@ func buildRegistry(cfg *config.Config, logger *slog.Logger) (*tools.Registry, *d
 		}
 	}
 
-	return registry, docStore, adventureStore
+	var fileDumpStore *filedump.Store
+	if cfg.FileDump.Path != "" {
+		store, err := filedump.NewStore(cfg.FileDump.Path)
+		if err != nil {
+			logger.Warn("could not open file dump store; file dump disabled", "error", err)
+		} else {
+			fileDumpStore = store
+		}
+	}
+
+	return registry, docStore, adventureStore, fileDumpStore
 }

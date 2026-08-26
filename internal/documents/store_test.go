@@ -21,7 +21,7 @@ func TestStoreAddListDelete(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
 	ctx := context.Background()
 
-	summary, err := store.Add(ctx, "Car manual", "Fuse 12 controls the headlights.\n\nFuse 7 controls the radio.")
+	summary, err := store.Add(ctx, "Car manual", "Fuse 12 controls the headlights.\n\nFuse 7 controls the radio.", "")
 	if err != nil {
 		t.Fatalf("add document: %v", err)
 	}
@@ -55,10 +55,10 @@ func TestStoreAddListDelete(t *testing.T) {
 func TestStoreAddRejectsBlankTitleOrText(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
 	ctx := context.Background()
-	if _, err := store.Add(ctx, "", "some text"); err == nil {
+	if _, err := store.Add(ctx, "", "some text", ""); err == nil {
 		t.Error("expected an error for a blank title")
 	}
-	if _, err := store.Add(ctx, "title", "   "); err == nil {
+	if _, err := store.Add(ctx, "title", "   ", ""); err == nil {
 		t.Error("expected an error for blank text")
 	}
 }
@@ -66,10 +66,10 @@ func TestStoreAddRejectsBlankTitleOrText(t *testing.T) {
 func TestStoreSearchFallsBackToSubstringWithoutEmbeddings(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
 	ctx := context.Background()
-	if _, err := store.Add(ctx, "Car manual", "Fuse 12 controls the headlights."); err != nil {
+	if _, err := store.Add(ctx, "Car manual", "Fuse 12 controls the headlights.", ""); err != nil {
 		t.Fatalf("add document: %v", err)
 	}
-	if _, err := store.Add(ctx, "Recipe", "Add two cups of flour."); err != nil {
+	if _, err := store.Add(ctx, "Recipe", "Add two cups of flour.", ""); err != nil {
 		t.Fatalf("add document: %v", err)
 	}
 
@@ -111,10 +111,10 @@ func TestStoreSearchRanksBySemanticSimilarity(t *testing.T) {
 
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), embed)
 	ctx := context.Background()
-	if _, err := store.Add(ctx, "Car manual", "headlight fuse text"); err != nil {
+	if _, err := store.Add(ctx, "Car manual", "headlight fuse text", ""); err != nil {
 		t.Fatalf("add document: %v", err)
 	}
-	if _, err := store.Add(ctx, "Recipe", "flour recipe text"); err != nil {
+	if _, err := store.Add(ctx, "Recipe", "flour recipe text", ""); err != nil {
 		t.Fatalf("add document: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func TestStoreAddPagesWithImage(t *testing.T) {
 	summary, err := store.AddPages(ctx, "Fuse diagrams", []PageInput{
 		{Text: "Fuse panel: Locations", ImageURL: "/document-images/fuse-panel.png"},
 		{Text: "Fuse panel: Application and ID"},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("add pages: %v", err)
 	}
@@ -161,11 +161,11 @@ func TestStoreSearchScopesToDocumentID(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
 	ctx := context.Background()
 
-	carSummary, err := store.Add(ctx, "Car manual", "the headlight fuse is number 12")
+	carSummary, err := store.Add(ctx, "Car manual", "the headlight fuse is number 12", "")
 	if err != nil {
 		t.Fatalf("add car manual: %v", err)
 	}
-	if _, err := store.Add(ctx, "Boat manual", "the headlight fuse is number 3"); err != nil {
+	if _, err := store.Add(ctx, "Boat manual", "the headlight fuse is number 3", ""); err != nil {
 		t.Fatalf("add boat manual: %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestStoreSearchScopesToDocumentID(t *testing.T) {
 func TestStoreSearchUnknownDocumentIDReturnsNoResults(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
 	ctx := context.Background()
-	if _, err := store.Add(ctx, "Car manual", "the headlight fuse is number 12"); err != nil {
+	if _, err := store.Add(ctx, "Car manual", "the headlight fuse is number 12", ""); err != nil {
 		t.Fatalf("add document: %v", err)
 	}
 
@@ -191,6 +191,67 @@ func TestStoreSearchUnknownDocumentIDReturnsNoResults(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Errorf("results = %#v, want none for an unknown document_id", results)
+	}
+}
+
+func TestStoreAddSourcePathSurfacesInSearch(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	ctx := context.Background()
+
+	if _, err := store.Add(ctx, "Ford generator manual", "the fuel filter is under the seat", "docs/ford/generator-repair"); err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+	if _, err := store.Add(ctx, "Generic manual", "the fuel filter is under the seat", ""); err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+
+	results, err := store.Search(ctx, "fuel filter", 5, "")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	var sawFord, sawGeneric bool
+	for _, r := range results {
+		switch r.DocumentTitle {
+		case "Ford generator manual":
+			if r.SourcePath != "docs/ford/generator-repair" {
+				t.Errorf("Ford result SourcePath = %q, want docs/ford/generator-repair", r.SourcePath)
+			}
+			sawFord = true
+		case "Generic manual":
+			if r.SourcePath != "" {
+				t.Errorf("Generic result SourcePath = %q, want empty", r.SourcePath)
+			}
+			sawGeneric = true
+		}
+	}
+	if !sawFord || !sawGeneric {
+		t.Fatalf("results = %#v, want both documents", results)
+	}
+}
+
+func TestStoreUpdateSourcePath(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	ctx := context.Background()
+
+	summary, err := store.Add(ctx, "Ford generator manual", "the fuel filter is under the seat", "docs/ford/generator-repair")
+	if err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+
+	if err := store.UpdateSourcePath(summary.ID, "archive/ford/generator-repair"); err != nil {
+		t.Fatalf("update source path: %v", err)
+	}
+
+	results, err := store.Search(ctx, "fuel filter", 5, summary.ID)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) != 1 || results[0].SourcePath != "archive/ford/generator-repair" {
+		t.Fatalf("results = %#v, want SourcePath archive/ford/generator-repair", results)
+	}
+
+	if err := store.UpdateSourcePath("does-not-exist", "x"); err == nil {
+		t.Error("expected an error updating an unknown document")
 	}
 }
 

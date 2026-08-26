@@ -1,9 +1,8 @@
 package webui
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,48 +30,19 @@ func TestServerDocumentsDisabledByDefault(t *testing.T) {
 	if listBody["enabled"] != false {
 		t.Errorf("enabled = %v, want false", listBody["enabled"])
 	}
-
-	uploadRequest := httptest.NewRequest(http.MethodPost, "/api/documents", nil)
-	uploadResponse := httptest.NewRecorder()
-	server.Handler().ServeHTTP(uploadResponse, uploadRequest)
-	if uploadResponse.Code != http.StatusNotImplemented {
-		t.Errorf("upload status = %d, want 501", uploadResponse.Code)
-	}
 }
 
-func TestServerDocumentsUploadListDelete(t *testing.T) {
+// TestServerDocumentsListDelete covers list/delete over HTTP — upload now
+// only happens via POST /api/files/upload (see filedump_test.go), so a
+// record is seeded directly through the store here instead.
+func TestServerDocumentsListDelete(t *testing.T) {
 	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
-	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
+	docStore := documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	server.SetDocumentStore(docStore)
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	if err := writer.WriteField("title", "Car manual"); err != nil {
-		t.Fatalf("write title field: %v", err)
-	}
-	part, err := writer.CreateFormFile("file", "manual.txt")
+	summary, err := docStore.Add(context.Background(), "Car manual", "Fuse 12 controls the headlights.", "")
 	if err != nil {
-		t.Fatalf("create form file: %v", err)
-	}
-	if _, err := part.Write([]byte("Fuse 12 controls the headlights.")); err != nil {
-		t.Fatalf("write file content: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-
-	uploadRequest := httptest.NewRequest(http.MethodPost, "/api/documents", &body)
-	uploadRequest.Header.Set("Content-Type", writer.FormDataContentType())
-	uploadResponse := httptest.NewRecorder()
-	server.Handler().ServeHTTP(uploadResponse, uploadRequest)
-	if uploadResponse.Code != http.StatusOK {
-		t.Fatalf("upload status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
-	}
-	var summary documents.Summary
-	if err := json.NewDecoder(uploadResponse.Body).Decode(&summary); err != nil {
-		t.Fatalf("decode upload response: %v", err)
-	}
-	if summary.Title != "Car manual" || summary.ChunkCount != 1 {
-		t.Errorf("summary = %#v", summary)
+		t.Fatalf("seed document: %v", err)
 	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/documents", nil)
@@ -101,126 +71,6 @@ func TestServerDocumentsUploadListDelete(t *testing.T) {
 	server.Handler().ServeHTTP(deleteAgainResponse, httptest.NewRequest(http.MethodDelete, "/api/documents/"+summary.ID, nil))
 	if deleteAgainResponse.Code != http.StatusNotFound {
 		t.Errorf("second delete status = %d, want 404", deleteAgainResponse.Code)
-	}
-}
-
-func TestServerDocumentUploadRequiresFile(t *testing.T) {
-	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
-	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	_ = writer.WriteField("title", "No file")
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-	request := httptest.NewRequest(http.MethodPost, "/api/documents", &body)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", response.Code)
-	}
-}
-
-func TestServerDocumentUploadRejectsInvalidOCRLanguage(t *testing.T) {
-	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
-	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	_ = writer.WriteField("title", "Test manual")
-	_ = writer.WriteField("ocr_language", "english; rm -rf /")
-	part, err := writer.CreateFormFile("file", "manual.txt")
-	if err != nil {
-		t.Fatalf("create form file: %v", err)
-	}
-	if _, err := part.Write([]byte("some text")); err != nil {
-		t.Fatalf("write file content: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-
-	request := httptest.NewRequest(http.MethodPost, "/api/documents", &body)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", response.Code)
-	}
-}
-
-func TestServerDocumentUploadRejectsBinaryContent(t *testing.T) {
-	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
-	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "manual.pdf")
-	if err != nil {
-		t.Fatalf("create form file: %v", err)
-	}
-	// %PDF header plus an invalid UTF-8 byte sequence, like a real PDF's
-	// binary body — must be rejected, not silently ingested as garbage text.
-	if _, err := part.Write([]byte("%PDF-1.4\n\xff\xfe\x00binary")); err != nil {
-		t.Fatalf("write file content: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-
-	request := httptest.NewRequest(http.MethodPost, "/api/documents", &body)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", response.Code)
-	}
-
-	list, err := server.documents.List()
-	if err != nil {
-		t.Fatalf("list documents: %v", err)
-	}
-	if len(list) != 0 {
-		t.Errorf("documents = %#v, want none stored after a rejected upload", list)
-	}
-}
-
-func TestServerDocumentUploadAcceptsPDF(t *testing.T) {
-	requirePoppler(t)
-	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
-	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	if err := writer.WriteField("title", "Test manual"); err != nil {
-		t.Fatalf("write title field: %v", err)
-	}
-	part, err := writer.CreateFormFile("file", "manual.pdf")
-	if err != nil {
-		t.Fatalf("create form file: %v", err)
-	}
-	if _, err := part.Write([]byte(onePageTextPDF)); err != nil {
-		t.Fatalf("write file content: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-
-	request := httptest.NewRequest(http.MethodPost, "/api/documents", &body)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-	var summary documents.Summary
-	if err := json.NewDecoder(response.Body).Decode(&summary); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if summary.Title != "Test manual" || summary.ChunkCount != 1 {
-		t.Errorf("summary = %#v", summary)
 	}
 }
 

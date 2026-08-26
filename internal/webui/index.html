@@ -196,23 +196,7 @@
     .clear { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
     @keyframes appear { from { opacity: 0; transform: translateY(5px); } }
     @keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
-    dialog#docs-dialog {
-      border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
-      color: var(--text); width: min(90vw, 420px); padding: 18px;
-    }
-    dialog#docs-dialog::backdrop { background: rgba(0, 0, 0, .5); }
-    dialog#docs-dialog h2 { margin: 0 0 6px; font-size: 16px; }
-    .docs-hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
-    #docs-upload-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-    #docs-upload-form input[type="text"] {
-      padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
-      background: rgba(8, 18, 14, .5); color: var(--text);
-    }
-    #docs-upload-form button {
-      padding: 8px 10px; border-radius: 10px; border: 0;
-      background: var(--accent); color: #10251c; font-weight: 700; cursor: pointer;
-    }
-    #docs-upload-form button:disabled { opacity: .5; cursor: wait; }
+.docs-hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
     .docs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
     .docs-list li {
       display: flex; justify-content: space-between; align-items: center; gap: 8px;
@@ -220,6 +204,51 @@
     }
     .docs-list li span { overflow-wrap: anywhere; }
     .docs-list button { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-size: 14px; flex: 0 0 auto; }
+    dialog#filedump-dialog {
+      border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
+      color: var(--text); width: min(92vw, 520px); max-height: 85vh; overflow-y: auto; padding: 18px;
+    }
+    dialog#filedump-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+    dialog#filedump-dialog h2 { margin: 0 0 10px; font-size: 16px; }
+    .filedump-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .filedump-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: 13px; }
+    .filedump-breadcrumb button {
+      border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 2px 4px; font-size: 13px;
+    }
+    .filedump-breadcrumb button:last-child { color: var(--text); font-weight: 700; cursor: default; }
+    .filedump-breadcrumb button.filedump-drop-target { background: var(--panel); border-radius: 6px; }
+    .filedump-breadcrumb span { color: var(--muted); }
+    #filedump-new-folder {
+      border: 1px solid var(--line); background: transparent; color: var(--text);
+      border-radius: 999px; padding: 4px 12px; font-size: 12px; cursor: pointer; flex: 0 0 auto;
+    }
+    .filedump-dropzone {
+      border: 1px dashed var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 12px;
+      display: flex; flex-direction: column; gap: 8px; transition: background .15s, border-color .15s;
+    }
+    .filedump-dropzone.dragover { border-color: var(--accent); background: rgba(126, 211, 33, .08); }
+    .filedump-drop-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+    .filedump-drop-line button {
+      border: 0; background: transparent; color: var(--accent-strong); cursor: pointer; font-size: 12px;
+      text-decoration: underline; padding: 0;
+    }
+    .filedump-rag-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+    .filedump-rag-options { display: flex; flex-direction: column; gap: 6px; }
+    .filedump-rag-options input[type="text"] {
+      padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
+      background: rgba(8, 18, 14, .5); color: var(--text);
+    }
+    .filedump-list li.filedump-row { cursor: default; }
+    .filedump-list li.filedump-row.filedump-folder { cursor: pointer; }
+    .filedump-list li.filedump-row.filedump-drop-target { border-color: var(--accent); background: rgba(126, 211, 33, .08); }
+    .filedump-list li.filedump-row.filedump-dragging { opacity: .4; }
+    .filedump-row-name { display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+    .filedump-row-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+    .filedump-rag-badge {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: 0 0 auto;
+    }
+    .filedump-row a { color: var(--text); text-decoration: none; }
+    .filedump-row a:hover { text-decoration: underline; }
     /* The location's picture rides along with the message that describes
        it — part of .messages' normal scrolling content — rather than a
        separate fixed panel elsewhere in the page. A panel that's a
@@ -374,7 +403,7 @@
       </div>
       <div class="header-actions">
         <button class="bell" id="settings-toggle" type="button" aria-label="Настройки" title="Настройки">⚙️</button>
-        <button class="bell" id="docs-toggle" type="button" aria-label="Документы" title="Документы">📄</button>
+        <button class="bell" id="filedump-toggle" type="button" aria-label="Файлы" title="Файлы">📄</button>
         <button class="bell" id="metrics-toggle" type="button" aria-label="Мониторинг" title="Мониторинг" hidden>📊</button>
         <button class="bell" id="cameras-toggle" type="button" aria-label="Камеры" title="Камеры" hidden>📹</button>
         <button class="bell" id="adventure-toggle" type="button" aria-label="Игра" title="Игра" hidden>🎮</button>
@@ -386,21 +415,33 @@
       </div>
     </header>
 
-    <dialog id="docs-dialog">
-      <h2 id="docs-title">Документы</h2>
-      <p class="docs-hint" id="docs-hint">Загрузи текстовый файл (PDF нужно сперва сконвертировать в текст) — старпом сможет находить в нём ответы.</p>
-      <form id="docs-upload-form">
-        <input type="text" id="doc-title" placeholder="Название (необязательно)">
-        <select id="doc-ocr-language">
-          <option value="eng">OCR: English</option>
-          <option value="rus">OCR: Русский</option>
-          <option value="eng+rus">OCR: English + Русский</option>
-        </select>
-        <input type="file" id="doc-file" accept=".txt,text/plain,.pdf,application/pdf" required>
-        <button type="submit" id="docs-upload-button">Загрузить</button>
-      </form>
-      <ul class="docs-list" id="docs-list"></ul>
-      <button type="button" class="clear" id="docs-close">Закрыть</button>
+    <dialog id="filedump-dialog">
+      <h2 id="filedump-title">Файлы</h2>
+      <div class="filedump-toolbar">
+        <div class="filedump-breadcrumb" id="filedump-breadcrumb"></div>
+        <button type="button" id="filedump-new-folder">+ Папка</button>
+      </div>
+      <div class="filedump-dropzone" id="filedump-dropzone">
+        <div class="filedump-drop-line">
+          <span id="filedump-drop-hint">Перетащи файлы сюда или</span>
+          <button type="button" id="filedump-choose-files">выбери файлы</button>
+          <input type="file" id="filedump-file-input" multiple hidden>
+        </div>
+        <label class="filedump-rag-toggle">
+          <input type="checkbox" id="filedump-add-to-rag">
+          <span id="filedump-rag-label">Добавить в базу знаний старпома</span>
+        </label>
+        <div class="filedump-rag-options" id="filedump-rag-options" hidden>
+          <input type="text" id="filedump-doc-title" placeholder="Название (необязательно)">
+          <select id="filedump-ocr-language">
+            <option value="eng">OCR: English</option>
+            <option value="rus">OCR: Русский</option>
+            <option value="eng+rus">OCR: English + Русский</option>
+          </select>
+        </div>
+      </div>
+      <ul class="docs-list filedump-list" id="filedump-list"></ul>
+      <button type="button" class="clear" id="filedump-close">Закрыть</button>
     </dialog>
 
     <dialog id="settings-dialog">
@@ -581,6 +622,7 @@
   <script type="module">
     import { text } from './static/shared.js';
     import { updateCamerasLanguage, initCameras } from './static/cameras.js';
+    import { updateFileDumpLanguage, initFileDump } from './static/filedump.js';
 
     // Ship's bell chime (CC0 / public domain): "Ship Bell" by Sojan,
     // https://freesound.org/s/353232/
@@ -594,10 +636,6 @@
     const language = document.querySelector('#language');
     const bell = document.querySelector('#bell');
     const bellAudio = new Audio(BELL_SOUND);
-    const docsToggle = document.querySelector('#docs-toggle');
-    const docsDialog = document.querySelector('#docs-dialog');
-    const docsList = document.querySelector('#docs-list');
-    const docsUploadForm = document.querySelector('#docs-upload-form');
     const settingsToggle = document.querySelector('#settings-toggle');
     const settingsDialog = document.querySelector('#settings-dialog');
     const settingsForm = document.querySelector('#settings-form');
@@ -1169,13 +1207,7 @@
       document.querySelector('#status').title = text[locale].overrideTitle(currentOverride);
       if (waitingBubble) waitingBubble.textContent = text[locale][`${currentProvider}Waiting`];
       document.querySelectorAll('.chip').forEach(button => { button.textContent = button.dataset[`label${locale === 'ru' ? 'Ru' : 'En'}`]; });
-      docsToggle.title = text[locale].docsToggleTitle;
-      docsToggle.setAttribute('aria-label', text[locale].docsToggleTitle);
-      document.querySelector('#docs-title').textContent = text[locale].docsTitle;
-      document.querySelector('#docs-hint').textContent = text[locale].docsHint;
-      document.querySelector('#doc-title').placeholder = text[locale].docsTitlePlaceholder;
-      document.querySelector('#docs-upload-button').textContent = text[locale].docsUpload;
-      document.querySelector('#docs-close').textContent = text[locale].docsClose;
+      updateFileDumpLanguage(locale);
       settingsToggle.title = text[locale].settingsToggleTitle;
       settingsToggle.setAttribute('aria-label', text[locale].settingsToggleTitle);
       document.querySelector('#settings-title').textContent = text[locale].settingsTitle;
@@ -1413,70 +1445,6 @@
       bell.classList.add('ringing');
       const replies = text[language.value].bellReplies;
       addMessage('assistant', replies[Math.floor(Math.random() * replies.length)]);
-    });
-
-    async function loadDocuments() {
-      let data;
-      try {
-        const response = await fetch('/api/documents');
-        data = await response.json();
-      } catch {
-        return;
-      }
-      if (!data.enabled) {
-        docsToggle.hidden = true;
-        return;
-      }
-      docsList.innerHTML = '';
-      if (!data.documents.length) {
-        const empty = document.createElement('li');
-        empty.textContent = text[language.value].docsEmpty;
-        docsList.appendChild(empty);
-        return;
-      }
-      for (const doc of data.documents) {
-        const item = document.createElement('li');
-        const label = document.createElement('span');
-        label.textContent = `${doc.title} (${doc.chunk_count})`;
-        const deleteButton = document.createElement('button');
-        deleteButton.type = 'button';
-        deleteButton.textContent = '✕';
-        deleteButton.title = text[language.value].docsDeleteTitle;
-        deleteButton.addEventListener('click', async () => {
-          deleteButton.disabled = true;
-          await fetch(`/api/documents/${doc.id}`, { method: 'DELETE' }).catch(() => {});
-          loadDocuments();
-        });
-        item.appendChild(label);
-        item.appendChild(deleteButton);
-        docsList.appendChild(item);
-      }
-    }
-    docsToggle.addEventListener('click', () => { loadDocuments(); docsDialog.showModal(); });
-    document.querySelector('#docs-close').addEventListener('click', () => docsDialog.close());
-    docsUploadForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const fileInput = document.querySelector('#doc-file');
-      const titleInput = document.querySelector('#doc-title');
-      if (!fileInput.files.length) return;
-      const formData = new FormData();
-      formData.append('file', fileInput.files[0]);
-      if (titleInput.value.trim()) formData.append('title', titleInput.value.trim());
-      formData.append('ocr_language', document.querySelector('#doc-ocr-language').value);
-      const uploadButton = document.querySelector('#docs-upload-button');
-      uploadButton.disabled = true;
-      try {
-        const response = await fetch('/api/documents', { method: 'POST', body: formData });
-        if (response.ok) {
-          fileInput.value = '';
-          titleInput.value = '';
-          loadDocuments();
-        }
-      } catch {
-        // Best-effort: connectivity issues already surface via the status pill.
-      } finally {
-        uploadButton.disabled = false;
-      }
     });
 
     async function loadSettings() {
@@ -2371,7 +2339,7 @@
 
     hydrateHistory();
     refreshStatus();
-    loadDocuments();
+    initFileDump();
     loadSettings();
     initCameras();
     loadAdventureManifest();

@@ -239,7 +239,7 @@ func TestMemoToolSearchMergesDocumentResults(t *testing.T) {
 	if _, err := tool.Execute(ctx, map[string]any{"action": "write", "key": "shopping", "content": "Buy milk"}); err != nil {
 		t.Fatalf("write memo: %v", err)
 	}
-	if _, err := docStore.Add(ctx, "Car manual", "Fuse 12 controls the headlights."); err != nil {
+	if _, err := docStore.Add(ctx, "Car manual", "Fuse 12 controls the headlights.", "docs/ford/generator-repair"); err != nil {
 		t.Fatalf("add document: %v", err)
 	}
 
@@ -252,6 +252,33 @@ func TestMemoToolSearchMergesDocumentResults(t *testing.T) {
 	if len(results) != 1 || results[0]["source"] != "document" || results[0]["document_title"] != "Car manual" {
 		t.Fatalf("results = %#v, want a single document match", results)
 	}
+	if results[0]["source_path"] != "docs/ford/generator-repair" {
+		t.Errorf("source_path = %v, want docs/ford/generator-repair", results[0]["source_path"])
+	}
+}
+
+func TestMemoToolSearchDocumentResultOmitsSourcePathWhenEmpty(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	docStore := documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	tool.SetDocumentStore(docStore)
+	ctx := context.Background()
+
+	if _, err := docStore.Add(ctx, "Car manual", "Fuse 12 controls the headlights.", ""); err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "search", "query": "headlights"})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	view := result.(map[string]any)
+	results := view["results"].([]map[string]any)
+	if len(results) != 1 {
+		t.Fatalf("results = %#v, want 1 match", results)
+	}
+	if _, ok := results[0]["source_path"]; ok {
+		t.Errorf("results[0] = %#v, want no source_path key for a legacy document with no source", results[0])
+	}
 }
 
 func TestMemoToolTopicsListsUploadedDocuments(t *testing.T) {
@@ -260,7 +287,7 @@ func TestMemoToolTopicsListsUploadedDocuments(t *testing.T) {
 	tool.SetDocumentStore(docStore)
 	ctx := context.Background()
 
-	summary, err := docStore.Add(ctx, "Car manual", "Fuse 12 controls the headlights.")
+	summary, err := docStore.Add(ctx, "Car manual", "Fuse 12 controls the headlights.", "")
 	if err != nil {
 		t.Fatalf("add document: %v", err)
 	}
@@ -298,11 +325,11 @@ func TestMemoToolSearchScopesToDocumentID(t *testing.T) {
 	tool.SetDocumentStore(docStore)
 	ctx := context.Background()
 
-	carSummary, err := docStore.Add(ctx, "Car manual", "the headlight fuse is number 12")
+	carSummary, err := docStore.Add(ctx, "Car manual", "the headlight fuse is number 12", "")
 	if err != nil {
 		t.Fatalf("add car manual: %v", err)
 	}
-	if _, err := docStore.Add(ctx, "Boat manual", "the headlight fuse is number 3"); err != nil {
+	if _, err := docStore.Add(ctx, "Boat manual", "the headlight fuse is number 3", ""); err != nil {
 		t.Fatalf("add boat manual: %v", err)
 	}
 

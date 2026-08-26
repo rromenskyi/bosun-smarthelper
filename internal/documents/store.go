@@ -44,6 +44,12 @@ type Record struct {
 	Title     string  `json:"title"`
 	CreatedAt string  `json:"created_at"`
 	Chunks    []Chunk `json:"chunks"`
+	// SourcePath is the internal/filedump tree path this document was
+	// ingested from (e.g. "docs/ford/generator-repair"), empty for
+	// anything uploaded before that feature existed or added through
+	// handleDocumentAddPages' scripted path — search results fall back
+	// to just the title in that case, same as always.
+	SourcePath string `json:"source_path,omitempty"`
 }
 
 // Summary is a Record without chunk text/embeddings, for listing.
@@ -58,6 +64,7 @@ type Summary struct {
 type ScoredChunk struct {
 	DocumentID    string  `json:"document_id"`
 	DocumentTitle string  `json:"document_title"`
+	SourcePath    string  `json:"source_path,omitempty"`
 	Text          string  `json:"text"`
 	ImageURL      string  `json:"image_url,omitempty"`
 	Score         float64 `json:"relevance"`
@@ -97,8 +104,10 @@ func NewStore(path string, embed *embeddings.Client) *Store {
 	return &Store{path: path, embed: embed}
 }
 
-// Add chunks and embeds text, then stores it under title.
-func (s *Store) Add(ctx context.Context, title, text string) (Summary, error) {
+// Add chunks and embeds text, then stores it under title. sourcePath is the
+// internal/filedump tree path this text was ingested from, or "" for
+// anything not coming through that feature.
+func (s *Store) Add(ctx context.Context, title, text, sourcePath string) (Summary, error) {
 	pieces := chunkText(text)
 	if len(pieces) == 0 {
 		return Summary{}, fmt.Errorf("document text is empty")
@@ -107,14 +116,17 @@ func (s *Store) Add(ctx context.Context, title, text string) (Summary, error) {
 	for i, piece := range pieces {
 		pages[i] = PageInput{Text: piece}
 	}
-	return s.AddPages(ctx, title, pages)
+	return s.AddPages(ctx, title, pages, sourcePath)
 }
 
 // AddPages stores one Chunk per PageInput, each embedded independently —
 // unlike Add, chunk boundaries are the caller's, not chunkText's. Used for
 // ingesting pre-segmented sources (e.g. one manual page per PageInput) that
-// may carry an image with little or no text of their own.
-func (s *Store) AddPages(ctx context.Context, title string, pages []PageInput) (Summary, error) {
+// may carry an image with little or no text of their own. sourcePath is the
+// internal/filedump tree path this document was ingested from, or "" for
+// anything not coming through that feature (e.g. handleDocumentAddPages'
+// scripted import path).
+func (s *Store) AddPages(ctx context.Context, title string, pages []PageInput, sourcePath string) (Summary, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return Summary{}, fmt.Errorf("document title is required")
@@ -127,7 +139,7 @@ func (s *Store) AddPages(ctx context.Context, title string, pages []PageInput) (
 	if err != nil {
 		return Summary{}, fmt.Errorf("generate document id: %w", err)
 	}
-	record := Record{ID: id, Title: title, CreatedAt: time.Now().Format(time.RFC3339)}
+	record := Record{ID: id, Title: title, CreatedAt: time.Now().Format(time.RFC3339), SourcePath: sourcePath}
 	for _, page := range pages {
 		chunk := Chunk{Text: page.Text, ImageURL: page.ImageURL}
 		if s.embed != nil && strings.TrimSpace(page.Text) != "" {
@@ -165,6 +177,26 @@ func (s *Store) List() ([]Summary, error) {
 	}
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].CreatedAt > summaries[j].CreatedAt })
 	return summaries, nil
+}
+
+// UpdateSourcePath rewrites a document's SourcePath — called by
+// internal/filedump when a move/rename carries a RAG-linked file to a new
+// tree location, so search results keep pointing at where the file
+// actually lives instead of going stale.
+func (s *Store) UpdateSourcePath(id, path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.load()
+	if err != nil {
+		return err
+	}
+	record, ok := data.Documents[id]
+	if !ok {
+		return fmt.Errorf("document %q was not found", id)
+	}
+	record.SourcePath = path
+	data.Documents[id] = record
+	return s.save(data)
 }
 
 // Delete removes a document by ID.
@@ -216,7 +248,14 @@ func (s *Store) Search(ctx context.Context, query string, limit int, documentID 
 						continue
 					}
 					score := embeddings.CosineSimilarity(queryVector, chunk.Embedding)
-					results = append(results, ScoredChunk{record.ID, record.Title, chunk.Text, chunk.ImageURL, score})
+					results = append(results, ScoredChunk{
+						DocumentID:    record.ID,
+						DocumentTitle: record.Title,
+						SourcePath:    record.SourcePath,
+						Text:          chunk.Text,
+						ImageURL:      chunk.ImageURL,
+						Score:         score,
+					})
 				}
 			}
 		}
@@ -226,7 +265,14 @@ func (s *Store) Search(ctx context.Context, query string, limit int, documentID 
 		for _, record := range data.Documents {
 			for _, chunk := range record.Chunks {
 				if strings.Contains(strings.ToLower(chunk.Text), lowerQuery) {
-					results = append(results, ScoredChunk{record.ID, record.Title, chunk.Text, chunk.ImageURL, 1})
+					results = append(results, ScoredChunk{
+						DocumentID:    record.ID,
+						DocumentTitle: record.Title,
+						SourcePath:    record.SourcePath,
+						Text:          chunk.Text,
+						ImageURL:      chunk.ImageURL,
+						Score:         1,
+					})
 				}
 			}
 		}

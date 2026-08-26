@@ -26,6 +26,7 @@ type Config struct {
 	Sandbox   SandboxConfig   `mapstructure:"sandbox"`
 	Adventure AdventureConfig `mapstructure:"adventure"`
 	Cameras   []CameraConfig  `mapstructure:"cameras"`
+	FileDump  FileDumpConfig  `mapstructure:"filedump"`
 }
 
 // AdventureConfig is the optional text-adventure game feature (see
@@ -47,6 +48,17 @@ type AdventureConfig struct {
 	NarrateLocal  bool   `mapstructure:"narrate_local"`
 	NarrateRemote bool   `mapstructure:"narrate_remote"`
 	MediaDir      string `mapstructure:"media_dir"`
+}
+
+// FileDumpConfig is the optional raw-file storage tree feature (see
+// docs/filedump.md) — internal/filedump.Store is constructed, and its
+// routes registered, only when Path is non-empty; empty means the
+// feature is off, same convention as AdventureConfig.MediaDir. Unlike
+// DocumentsConfig.Path (which always resolves to a default when empty,
+// since document search is always on), there's no default here — a raw
+// browsable file tree is opt-in, not something to create unasked.
+type FileDumpConfig struct {
+	Path string `mapstructure:"path"`
 }
 
 // CameraConfig is one WiFi camera — see docs/cameras.md. Config-only, not

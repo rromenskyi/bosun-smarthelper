@@ -2,7 +2,6 @@
 package webui
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"embed"
@@ -27,6 +26,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/backup"
 	"github.com/roman220/bosun-smarthelper/internal/cameras"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
+	"github.com/roman220/bosun-smarthelper/internal/filedump"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
@@ -170,6 +170,9 @@ type Server struct {
 	adventureNarrateLocal  bool
 	adventureNarrateRemote bool
 	adventureMediaDir      string
+
+	fileDumpStore *filedump.Store
+	fileDumpDir   string
 }
 
 // generationHandle is the in-flight state for one session's chat request —
@@ -445,9 +448,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/adventure/sessions/{name}", s.handleAdventureSessionDelete)
 	mux.HandleFunc("POST /api/session/clear", s.handleSessionClear)
 	mux.HandleFunc("GET /api/documents", s.handleDocumentsList)
-	mux.HandleFunc("POST /api/documents", s.handleDocumentUpload)
 	mux.HandleFunc("POST /api/documents/pages", s.handleDocumentAddPages)
 	mux.HandleFunc("DELETE /api/documents/{id}", s.handleDocumentDelete)
+	mux.HandleFunc("GET /api/files", s.handleFileDumpList)
+	mux.HandleFunc("POST /api/files/folder", s.handleFileDumpFolder)
+	mux.HandleFunc("POST /api/files/upload", s.handleFileDumpUpload)
+	mux.HandleFunc("POST /api/files/move", s.handleFileDumpMove)
+	mux.HandleFunc("DELETE /api/files", s.handleFileDumpDelete)
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("POST /api/settings", s.handleSettingsUpdate)
 	mux.HandleFunc("GET /ca.pem", s.handleCACert)
@@ -478,6 +485,12 @@ func (s *Server) Handler() http.Handler {
 		// just a plain host directory bind-mounted in, same reasoning as
 		// documentImagesDir above.
 		mux.Handle("GET /static/adventure/", http.StripPrefix("/static/adventure/", http.FileServer(http.Dir(s.adventureMediaDir))))
+	}
+	if s.fileDumpDir != "" {
+		// Same reasoning as documentImagesDir/adventureMediaDir above: a
+		// plain host directory served as-is, registered as a more specific
+		// pattern than the embedded "/static/" handler.
+		mux.Handle("GET /files/", http.StripPrefix("/files/", http.FileServer(http.Dir(s.fileDumpDir))))
 	}
 	return securityHeaders(mux)
 }
@@ -949,86 +962,6 @@ func (s *Server) handleDocumentsList(w http.ResponseWriter, r *http.Request) {
 // pdfMagic is the standard PDF file signature.
 var pdfMagic = []byte("%PDF-")
 
-// handleDocumentUpload accepts a plain-text or PDF file via a multipart
-// form with "title" and "file" fields. A PDF is split page by page
-// (poppler-utils): pages with an extractable text layer become text
-// chunks, pages without one (diagrams, scans) become a rendered image —
-// see pdf.go and docs/memo-search.md for what that does and doesn't cover
-// (no OCR). This is a human-only path: the agent's tool contract never
-// exposes document ingestion, only search, to keep the tool schema small
-// for weak local models.
-func (s *Server) handleDocumentUpload(w http.ResponseWriter, r *http.Request) {
-	if s.documents == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "document search is not configured"})
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxDocumentUploadBytes)
-	if err := r.ParseMultipartForm(maxDocumentUploadBytes); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid upload"})
-		return
-	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
-		return
-	}
-	defer file.Close()
-	title := strings.TrimSpace(r.FormValue("title"))
-	if title == "" {
-		title = header.Filename
-	}
-	// Which language(s) tesseract OCRs scanned/diagram pages with — see
-	// pdf.go's defaultOCRLanguage for why this isn't hardcoded to more than
-	// one language: a document actually in another language needs this
-	// set explicitly, since guessing wrong (or always combining languages
-	// "to be safe") measurably hurts OCR quality.
-	ocrLanguage := strings.TrimSpace(r.FormValue("ocr_language"))
-	if ocrLanguage == "" {
-		ocrLanguage = defaultOCRLanguage
-	} else if !validOCRLanguage.MatchString(ocrLanguage) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ocr_language must look like a tesseract language code, e.g. eng, rus, or eng+rus"})
-		return
-	}
-	content, err := io.ReadAll(file)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read file"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
-	defer cancel()
-
-	if bytes.HasPrefix(content, pdfMagic) {
-		pages, err := extractPDFPages(ctx, content, s.documentImagesDir, "/document-images/", ocrLanguage)
-		if err != nil {
-			s.logger.Error("extract pdf", "error", err)
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not process PDF"})
-			return
-		}
-		summary, err := s.documents.AddPages(ctx, title, pages)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, summary)
-		return
-	}
-	// Only plain text and PDF are supported — any other binary file would
-	// otherwise silently "upload" as garbage, since there's no
-	// format-specific parsing for it.
-	if !utf8.Valid(content) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file must be plain UTF-8 text or a PDF"})
-		return
-	}
-
-	summary, err := s.documents.Add(ctx, title, string(content))
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, summary)
-}
-
 type addPagesRequest struct {
 	Title string `json:"title"`
 	Pages []struct {
@@ -1041,7 +974,8 @@ type addPagesRequest struct {
 // button) for callers that already have pre-segmented pages with their own
 // image references — e.g. a bulk import script that extracted a source
 // site's HTML pages and copied its diagram images into documentImagesDir
-// itself. Ordinary uploads go through handleDocumentUpload instead.
+// itself. Ordinary uploads go through handleFileDumpUpload instead (see
+// filedump.go), with add_to_rag=true.
 func (s *Server) handleDocumentAddPages(w http.ResponseWriter, r *http.Request) {
 	if s.documents == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "document search is not configured"})
@@ -1066,7 +1000,7 @@ func (s *Server) handleDocumentAddPages(w http.ResponseWriter, r *http.Request) 
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
 	defer cancel()
-	summary, err := s.documents.AddPages(ctx, request.Title, pages)
+	summary, err := s.documents.AddPages(ctx, request.Title, pages, "")
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
