@@ -1112,7 +1112,19 @@
       } catch (error) {
         clearQueued();
         finalizeLiveBubble();
-        addMessage('assistant', text[language.value][error.name === 'AbortError' ? 'cancelled' : 'error'], 'error');
+        const isAbort = error.name === 'AbortError';
+        if (!isAbort) {
+          // The generic on-screen message below can't say why it failed —
+          // report the real error so it's at least visible in the server
+          // log afterward instead of leaving zero trace anywhere.
+          console.error('chat request failed', error);
+          fetch('/api/client-error', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: error.name, message: error.message, context: 'ask' })
+          }).catch(() => {});
+        }
+        addMessage('assistant', text[language.value][isAbort ? 'cancelled' : 'error'], 'error');
       } finally {
         busy = false;
         activeAbortController = null;

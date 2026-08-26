@@ -461,6 +461,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tts", s.handleTTS)
 	mux.HandleFunc("POST /api/stt", s.handleSTT)
 	mux.HandleFunc("POST /api/feedback", s.handleFeedback)
+	mux.HandleFunc("POST /api/client-error", s.handleClientError)
 	mux.HandleFunc("POST /api/provider-override", s.handleProviderOverride)
 	mux.HandleFunc("GET /api/metrics/list", s.handleMetricsList)
 	mux.HandleFunc("GET /api/metrics", s.handleMetricsQuery)
