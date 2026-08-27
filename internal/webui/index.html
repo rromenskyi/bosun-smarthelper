@@ -874,8 +874,11 @@
         statsLine.className = 'message-stats';
         statsLine.hidden = true;
         const seconds = (stats.durationMs / 1000).toFixed(1);
+        const tps = stats.durationMs > 0 && stats.completionTokens > 0
+          ? (stats.completionTokens / (stats.durationMs / 1000)).toFixed(1)
+          : '';
         statsLine.textContent = stats.totalTokens > 0
-          ? text[language.value].statsLine(seconds, stats.totalTokens, stats.promptTokens, stats.completionTokens, stats.model)
+          ? text[language.value].statsLine(seconds, stats.totalTokens, stats.promptTokens, stats.completionTokens, stats.model, tps)
           : text[language.value].statsLineNoTokens(seconds, stats.model);
 
         const infoButton = document.createElement('button');
