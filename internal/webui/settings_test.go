@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/roman220/bosun-smarthelper/internal/llm"
+	"github.com/roman220/bosun-smarthelper/internal/agent"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 )
 
@@ -21,8 +21,8 @@ type personaFakeAsker struct {
 	nameRU, nameEN, stylePrompt string
 }
 
-func (f *personaFakeAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
-	return "", llm.Usage{}, nil
+func (f *personaFakeAsker) Ask(_ context.Context, _ string) (string, agent.TurnStats, error) {
+	return "", agent.TurnStats{}, nil
 }
 
 func (f *personaFakeAsker) SetPersona(nameRU, nameEN, stylePrompt string) {

@@ -20,10 +20,10 @@ type fakeAsker struct {
 	answer string
 	err    error
 	seen   string
-	usage  llm.Usage
+	usage  agent.TurnStats
 }
 
-func (f *fakeAsker) Ask(_ context.Context, message string) (string, llm.Usage, error) {
+func (f *fakeAsker) Ask(_ context.Context, message string) (string, agent.TurnStats, error) {
 	f.seen = message
 	return f.answer, f.usage, f.err
 }
@@ -57,7 +57,11 @@ func TestServerIndex(t *testing.T) {
 // (Asker, not conversationAsker/streamingConversationAsker) — the
 // streaming path's equivalent is TestServerChatStreamingWritesNDJSONEvents.
 func TestServerChatReturnsDurationAndUsage(t *testing.T) {
-	asker := &fakeAsker{answer: "hi", usage: llm.Usage{PromptTokens: 5, CompletionTokens: 2, TotalTokens: 7}}
+	asker := &fakeAsker{answer: "hi", usage: agent.TurnStats{
+		Usage:        llm.Usage{PromptTokens: 5, CompletionTokens: 2, TotalTokens: 7},
+		Model:        "text",
+		BackendModel: "groq",
+	}}
 	server := NewServer(asker, nil, time.Second, "ru", nil)
 	request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"hi"}`))
 	response := httptest.NewRecorder()
@@ -76,6 +80,9 @@ func TestServerChatReturnsDurationAndUsage(t *testing.T) {
 	if body.DurationMS < 0 {
 		t.Errorf("duration_ms = %d, want >= 0", body.DurationMS)
 	}
+	if body.Model != "groq" {
+		t.Errorf("model = %q, want groq (BackendModel over the generic Model alias)", body.Model)
+	}
 }
 
 type conversationFakeAsker struct {
@@ -85,16 +92,16 @@ type conversationFakeAsker struct {
 	languages []string
 }
 
-func (f *conversationFakeAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
-	return f.answers[0], llm.Usage{}, nil
+func (f *conversationFakeAsker) Ask(_ context.Context, _ string) (string, agent.TurnStats, error) {
+	return f.answers[0], agent.TurnStats{}, nil
 }
 
-func (f *conversationFakeAsker) AskWithHistory(_ context.Context, message string, history []agent.HistoryMessage, language string) (string, llm.Usage, error) {
+func (f *conversationFakeAsker) AskWithHistory(_ context.Context, message string, history []agent.HistoryMessage, language string) (string, agent.TurnStats, error) {
 	f.histories = append(f.histories, append([]agent.HistoryMessage(nil), history...))
 	f.messages = append(f.messages, message)
 	f.languages = append(f.languages, language)
 	answer := f.answers[len(f.histories)-1]
-	return answer, llm.Usage{}, nil
+	return answer, agent.TurnStats{}, nil
 }
 
 // streamingFakeAsker implements streamingConversationAsker, replaying a
@@ -103,10 +110,10 @@ type streamingFakeAsker struct {
 	steps  [][]agent.StepEvent
 	answer string
 	calls  int
-	usage  llm.Usage
+	usage  agent.TurnStats
 }
 
-func (f *streamingFakeAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
+func (f *streamingFakeAsker) Ask(_ context.Context, _ string) (string, agent.TurnStats, error) {
 	return f.answer, f.usage, nil
 }
 
@@ -116,7 +123,7 @@ func (f *streamingFakeAsker) AskWithHistoryStreaming(
 	_ []agent.HistoryMessage,
 	_ string,
 	onEvent func(agent.StepEvent),
-) (string, llm.Usage, error) {
+) (string, agent.TurnStats, error) {
 	for _, event := range f.steps[f.calls] {
 		onEvent(event)
 	}
@@ -127,7 +134,10 @@ func (f *streamingFakeAsker) AskWithHistoryStreaming(
 func TestServerChatStreamingWritesNDJSONEvents(t *testing.T) {
 	asker := &streamingFakeAsker{
 		answer: "Сейчас 22.5°C.",
-		usage:  llm.Usage{PromptTokens: 42, CompletionTokens: 9, TotalTokens: 51},
+		usage: agent.TurnStats{
+			Usage: llm.Usage{PromptTokens: 42, CompletionTokens: 9, TotalTokens: 51},
+			Model: "default",
+		},
 		steps: [][]agent.StepEvent{{
 			{Type: "step_start"},
 			{Type: "delta", Delta: llm.StreamDelta{Kind: "fold", Text: "→ {\"temperature_c\":22.5}"}},
@@ -178,6 +188,9 @@ func TestServerChatStreamingWritesNDJSONEvents(t *testing.T) {
 	}
 	if events[5].DurationMS < 0 {
 		t.Errorf("done event duration_ms = %d, want >= 0", events[5].DurationMS)
+	}
+	if events[5].Model != "default" {
+		t.Errorf("done event model = %q, want default (no BackendModel set, so it falls back to Model)", events[5].Model)
 	}
 
 	// The session store must hold the real final answer regardless of how
@@ -244,8 +257,8 @@ type slowStreamingAsker struct {
 	gap    time.Duration
 }
 
-func (f *slowStreamingAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
-	return f.answer, llm.Usage{}, nil
+func (f *slowStreamingAsker) Ask(_ context.Context, _ string) (string, agent.TurnStats, error) {
+	return f.answer, agent.TurnStats{}, nil
 }
 
 func (f *slowStreamingAsker) AskWithHistoryStreaming(
@@ -254,12 +267,12 @@ func (f *slowStreamingAsker) AskWithHistoryStreaming(
 	_ []agent.HistoryMessage,
 	_ string,
 	onEvent func(agent.StepEvent),
-) (string, llm.Usage, error) {
+) (string, agent.TurnStats, error) {
 	onEvent(agent.StepEvent{Type: "step_start"})
 	time.Sleep(f.gap)
 	onEvent(agent.StepEvent{Type: "delta", Delta: llm.StreamDelta{Kind: "prose", Text: "ответ"}})
 	time.Sleep(f.gap)
-	return f.answer, llm.Usage{}, nil
+	return f.answer, agent.TurnStats{}, nil
 }
 
 // TestServerChatStreamingSendsHeartbeatDuringSlowGeneration is a regression
@@ -327,8 +340,8 @@ func TestServerChatStreamingSendsHeartbeatDuringSlowGeneration(t *testing.T) {
 
 type streamingErrorAsker struct{}
 
-func (streamingErrorAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
-	return "", llm.Usage{}, errors.New("boom")
+func (streamingErrorAsker) Ask(_ context.Context, _ string) (string, agent.TurnStats, error) {
+	return "", agent.TurnStats{}, errors.New("boom")
 }
 
 func (streamingErrorAsker) AskWithHistoryStreaming(
@@ -337,9 +350,9 @@ func (streamingErrorAsker) AskWithHistoryStreaming(
 	_ []agent.HistoryMessage,
 	_ string,
 	onEvent func(agent.StepEvent),
-) (string, llm.Usage, error) {
+) (string, agent.TurnStats, error) {
 	onEvent(agent.StepEvent{Type: "step_start"})
-	return "", llm.Usage{}, errors.New("boom")
+	return "", agent.TurnStats{}, errors.New("boom")
 }
 
 func TestServerChatSessionHistoryAndClear(t *testing.T) {

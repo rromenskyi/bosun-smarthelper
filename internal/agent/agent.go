@@ -90,11 +90,36 @@ type StepEvent struct {
 	Delta llm.StreamDelta
 }
 
+// TurnStats summarizes one Ask* call: aggregate token usage across every
+// LLM call the turn's tool-loop made, plus which model actually answered.
+// Model is whatever the provider's own response reported (llm.Response.Model)
+// — for a local provider this is normally the real model identity; for a
+// provider sitting behind a generic alias (this deployment's remote proxy
+// uses "text"/"coding"/etc.) it's just the alias. BackendModel, when
+// non-empty, is what llm.Response.BackendModel reported instead — a more
+// specific identity the proxy chose to reveal via a response header, not
+// derivable from the alias alone.
+type TurnStats struct {
+	Usage        llm.Usage
+	Model        string
+	BackendModel string
+}
+
+// DisplayModel is the more specific of Model/BackendModel — prefer
+// BackendModel when the provider reported one, since Model alone may just
+// be a generic alias.
+func (s TurnStats) DisplayModel() string {
+	if s.BackendModel != "" {
+		return s.BackendModel
+	}
+	return s.Model
+}
+
 // Ask sends a single user message through the conversation loop, executing
 // any tool calls the model requests, and returns its final text answer
-// plus the total token usage across every LLM call the turn made (summed
-// across the tool-loop — see AskWithHistoryStreaming).
-func (a *Agent) Ask(ctx context.Context, userMessage string) (string, llm.Usage, error) {
+// plus TurnStats — aggregate token usage and which model answered, summed/
+// taken across every LLM call the turn made (see AskWithHistoryStreaming).
+func (a *Agent) Ask(ctx context.Context, userMessage string) (string, TurnStats, error) {
 	return a.AskWithHistory(ctx, userMessage, nil, "")
 }
 
@@ -108,7 +133,7 @@ func (a *Agent) AskWithHistory(
 	userMessage string,
 	history []HistoryMessage,
 	language string,
-) (string, llm.Usage, error) {
+) (string, TurnStats, error) {
 	return a.AskWithHistoryStreaming(ctx, userMessage, history, language, nil)
 }
 
@@ -121,18 +146,22 @@ func (a *Agent) AskWithHistory(
 // client that doesn't support streaming still works — its complete response
 // is delivered as one "delta" event instead.
 //
-// The returned llm.Usage is the sum of every LLM call's usage this turn
-// made — a turn can involve several (the tool-loop below), and a caller
-// asking "how many tokens did this turn cost" wants the total, not just
-// the last call's. It reflects whatever was accumulated even on an error
-// return, since real calls that actually happened still cost real tokens.
+// The returned TurnStats.Usage is the sum of every LLM call's usage this
+// turn made — a turn can involve several (the tool-loop below), and a
+// caller asking "how many tokens did this turn cost" wants the total, not
+// just the last call's. Model/BackendModel are instead taken from the
+// *last* successful call, since every call in one turn shares the same
+// configured provider/model — there's nothing to sum there. TurnStats
+// reflects whatever was accumulated even on an error return, since real
+// calls that actually happened still cost real tokens and did answer from
+// some real model.
 func (a *Agent) AskWithHistoryStreaming(
 	ctx context.Context,
 	userMessage string,
 	history []HistoryMessage,
 	language string,
 	onEvent func(StepEvent),
-) (string, llm.Usage, error) {
+) (string, TurnStats, error) {
 	online := a.isOnline(ctx)
 	toolDefs := a.toolDefinitions(online)
 	messages := a.buildMessages(userMessage, history, language, online)
@@ -148,7 +177,7 @@ func (a *Agent) AskWithHistoryStreaming(
 	var detector repetitionDetector
 	var forwardedProse strings.Builder
 	var truncated bool
-	var totalUsage llm.Usage
+	var stats TurnStats
 	onDelta := func(d llm.StreamDelta) {
 		if truncated {
 			return
@@ -190,8 +219,8 @@ func (a *Agent) AskWithHistoryStreaming(
 			// answer; there's nothing further worth waiting for from a
 			// response that's already degenerated. resp may be nil or
 			// incomplete (the stream was cancelled mid-flight), so only
-			// prior iterations' usage is reported here.
-			return forwardedProse.String(), totalUsage, nil
+			// prior iterations' stats are reported here.
+			return forwardedProse.String(), stats, nil
 		}
 		if err != nil {
 			// A cancelled or expired context (user hit "stop", or the request
@@ -200,17 +229,23 @@ func (a *Agent) AskWithHistoryStreaming(
 			if ctx.Err() == nil {
 				a.errLog.Record("llm_chat", a.chatProvider(), err)
 			}
-			return "", totalUsage, fmt.Errorf("chat: %w", err)
+			return "", stats, fmt.Errorf("chat: %w", err)
 		}
-		totalUsage.PromptTokens += resp.Usage.PromptTokens
-		totalUsage.CompletionTokens += resp.Usage.CompletionTokens
-		totalUsage.TotalTokens += resp.Usage.TotalTokens
+		stats.Usage.PromptTokens += resp.Usage.PromptTokens
+		stats.Usage.CompletionTokens += resp.Usage.CompletionTokens
+		stats.Usage.TotalTokens += resp.Usage.TotalTokens
+		if resp.Model != "" {
+			stats.Model = resp.Model
+		}
+		if resp.BackendModel != "" {
+			stats.BackendModel = resp.BackendModel
+		}
 
 		if len(resp.ToolCalls) == 0 {
 			if strings.TrimSpace(resp.Content) == "" {
-				return "", totalUsage, fmt.Errorf("model returned an empty response")
+				return "", stats, fmt.Errorf("model returned an empty response")
 			}
-			return resp.Content, totalUsage, nil
+			return resp.Content, stats, nil
 		}
 
 		messages = append(messages, llm.Message{
@@ -231,7 +266,7 @@ func (a *Agent) AskWithHistoryStreaming(
 		}
 	}
 
-	return "", totalUsage, fmt.Errorf("exceeded %d tool-call iterations without a final answer", maxToolIterations)
+	return "", stats, fmt.Errorf("exceeded %d tool-call iterations without a final answer", maxToolIterations)
 }
 
 func (a *Agent) buildMessages(userMessage string, history []HistoryMessage, language string, online bool) []llm.Message {

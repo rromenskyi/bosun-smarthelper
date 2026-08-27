@@ -875,8 +875,8 @@
         statsLine.hidden = true;
         const seconds = (stats.durationMs / 1000).toFixed(1);
         statsLine.textContent = stats.totalTokens > 0
-          ? text[language.value].statsLine(seconds, stats.totalTokens, stats.promptTokens, stats.completionTokens)
-          : text[language.value].statsLineNoTokens(seconds);
+          ? text[language.value].statsLine(seconds, stats.totalTokens, stats.promptTokens, stats.completionTokens, stats.model)
+          : text[language.value].statsLineNoTokens(seconds, stats.model);
 
         const infoButton = document.createElement('button');
         infoButton.type = 'button';
@@ -1135,7 +1135,8 @@
                   durationMs: event.duration_ms || 0,
                   promptTokens: event.prompt_tokens || 0,
                   completionTokens: event.completion_tokens || 0,
-                  totalTokens: event.total_tokens || 0
+                  totalTokens: event.total_tokens || 0,
+                  model: event.model || ''
                 };
               } else if (event.type === 'error') {
                 throw new Error(event.message || 'request failed');
@@ -1161,7 +1162,8 @@
             durationMs: data.duration_ms || 0,
             promptTokens: data.prompt_tokens || 0,
             completionTokens: data.completion_tokens || 0,
-            totalTokens: data.total_tokens || 0
+            totalTokens: data.total_tokens || 0,
+            model: data.model || ''
           } : null;
           const assistantRow = addMessage('assistant', data.answer, '', value.trim(), isVoiceTurn, stats);
           if (data.location_id !== undefined && data.location_id !== null) {

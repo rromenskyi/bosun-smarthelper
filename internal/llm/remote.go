@@ -202,10 +202,11 @@ func (c *RemoteClient) Chat(ctx context.Context, messages []Message, tools []Too
 
 	choice := openAIResp.Choices[0]
 	response := &Response{
-		Content:   choice.Message.Content,
-		ToolCalls: choice.Message.ToolCalls,
-		Model:     openAIResp.Model,
-		Usage:     openAIResp.Usage,
+		Content:      choice.Message.Content,
+		ToolCalls:    choice.Message.ToolCalls,
+		Model:        openAIResp.Model,
+		Usage:        openAIResp.Usage,
+		BackendModel: resp.Header.Get("X-Backend-Model"),
 	}
 
 	return response, nil
@@ -269,5 +270,10 @@ func (c *RemoteClient) ChatStream(ctx context.Context, messages []Message, tools
 		}
 	}
 
-	return parseOpenAISSEStream(resp.Body, onDelta, false)
+	response, err := parseOpenAISSEStream(resp.Body, onDelta, false)
+	if err != nil {
+		return nil, err
+	}
+	response.BackendModel = resp.Header.Get("X-Backend-Model")
+	return response, nil
 }

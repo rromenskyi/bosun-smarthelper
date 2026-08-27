@@ -295,21 +295,42 @@ func TestAgent_Ask_SumsUsageAcrossToolLoop(t *testing.T) {
 	toolCall.Function.Arguments = "{}"
 
 	client := &fakeClient{responses: []*llm.Response{
-		{ToolCalls: []llm.ToolCall{toolCall}, Usage: llm.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}},
-		{Content: "It's 21.5°C outside.", Usage: llm.Usage{PromptTokens: 150, CompletionTokens: 8, TotalTokens: 158}},
+		{ToolCalls: []llm.ToolCall{toolCall}, Model: "text", Usage: llm.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}},
+		{Content: "It's 21.5°C outside.", Model: "text", Usage: llm.Usage{PromptTokens: 150, CompletionTokens: 8, TotalTokens: 158}},
 	}}
 
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewWeatherTool(&config.WeatherConfig{Type: "mock", MockTempC: 21.5, MockHumidity: 50}))
 	ag := New(client, registry)
 
-	_, usage, err := ag.Ask(context.Background(), "what's the weather?")
+	_, stats, err := ag.Ask(context.Background(), "what's the weather?")
 	if err != nil {
 		t.Fatalf("Ask returned error: %v", err)
 	}
-	want := llm.Usage{PromptTokens: 250, CompletionTokens: 28, TotalTokens: 278}
-	if usage != want {
-		t.Errorf("usage = %+v, want the sum of both calls %+v", usage, want)
+	wantUsage := llm.Usage{PromptTokens: 250, CompletionTokens: 28, TotalTokens: 278}
+	if stats.Usage != wantUsage {
+		t.Errorf("usage = %+v, want the sum of both calls %+v", stats.Usage, wantUsage)
+	}
+	if stats.Model != "text" {
+		t.Errorf("model = %q, want text", stats.Model)
+	}
+}
+
+// TestAgent_Ask_DisplayModelPrefersBackendModel covers TurnStats.DisplayModel:
+// a proxy that reports a more specific backend identity via
+// llm.Response.BackendModel should win over the generic Model alias.
+func TestAgent_Ask_DisplayModelPrefersBackendModel(t *testing.T) {
+	client := &fakeClient{responses: []*llm.Response{
+		{Content: "hi there", Model: "text", BackendModel: "groq"},
+	}}
+	ag := New(client, tools.NewRegistry())
+
+	_, stats, err := ag.Ask(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Ask returned error: %v", err)
+	}
+	if stats.DisplayModel() != "groq" {
+		t.Errorf("DisplayModel() = %q, want groq (BackendModel over the generic Model alias)", stats.DisplayModel())
 	}
 }
 

@@ -27,7 +27,6 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/cameras"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/filedump"
-	"github.com/roman220/bosun-smarthelper/internal/llm"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
@@ -90,11 +89,11 @@ func ValidateBind(address string) error {
 
 // Asker is implemented by agent.Agent.
 type Asker interface {
-	Ask(ctx context.Context, message string) (string, llm.Usage, error)
+	Ask(ctx context.Context, message string) (string, agent.TurnStats, error)
 }
 
 type conversationAsker interface {
-	AskWithHistory(ctx context.Context, message string, history []agent.HistoryMessage, language string) (string, llm.Usage, error)
+	AskWithHistory(ctx context.Context, message string, history []agent.HistoryMessage, language string) (string, agent.TurnStats, error)
 }
 
 // streamingConversationAsker is checked separately from conversationAsker
@@ -108,7 +107,7 @@ type streamingConversationAsker interface {
 		history []agent.HistoryMessage,
 		language string,
 		onEvent func(agent.StepEvent),
-	) (string, llm.Usage, error)
+	) (string, agent.TurnStats, error)
 }
 
 // streamEvent is one line of the newline-delimited JSON stream POST
@@ -123,12 +122,13 @@ type streamEvent struct {
 	Message   string `json:"message,omitempty"`
 	Position  int    `json:"position,omitempty"`
 
-	// DurationMS/*Tokens are only set on the final "done" event — see
+	// DurationMS/*Tokens/Model are only set on the final "done" event — see
 	// chatResponse's identical fields for what they mean.
-	DurationMS       int64 `json:"duration_ms,omitempty"`
-	PromptTokens     int   `json:"prompt_tokens,omitempty"`
-	CompletionTokens int   `json:"completion_tokens,omitempty"`
-	TotalTokens      int   `json:"total_tokens,omitempty"`
+	DurationMS       int64  `json:"duration_ms,omitempty"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	TotalTokens      int    `json:"total_tokens,omitempty"`
+	Model            string `json:"model,omitempty"`
 }
 
 // Status describes the provider that would currently serve a request.
@@ -645,15 +645,17 @@ type chatResponse struct {
 	// art/ambient audio rather than re-fetching it on every message.
 	LocationID *int32 `json:"location_id,omitempty"`
 
-	// DurationMS/*Tokens are only set on a successful non-game-mode chat
-	// turn — the wall-clock time and aggregate llm.Usage the agent's
-	// tool-loop reported (see agent.AskWithHistoryStreaming), surfaced by
-	// index.html as the ℹ️ icon on the reply bubble. Never set on error,
-	// since there's nothing meaningful to report about a failed turn.
-	DurationMS       int64 `json:"duration_ms,omitempty"`
-	PromptTokens     int   `json:"prompt_tokens,omitempty"`
-	CompletionTokens int   `json:"completion_tokens,omitempty"`
-	TotalTokens      int   `json:"total_tokens,omitempty"`
+	// DurationMS/*Tokens/Model are only set on a successful non-game-mode
+	// chat turn — the wall-clock time and agent.TurnStats the tool-loop
+	// reported (see agent.AskWithHistoryStreaming), surfaced by index.html
+	// as the ℹ️ icon on the reply bubble. Model is TurnStats.DisplayModel()
+	// — the most specific identity available. Never set on error, since
+	// there's nothing meaningful to report about a failed turn.
+	DurationMS       int64  `json:"duration_ms,omitempty"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	TotalTokens      int    `json:"total_tokens,omitempty"`
+	Model            string `json:"model,omitempty"`
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -787,13 +789,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var answer string
-	var usage llm.Usage
+	var stats agent.TurnStats
 	var err error
 	start := time.Now()
 	if conversational, ok := s.asker.(conversationAsker); ok {
-		answer, usage, err = conversational.AskWithHistory(ctx, request.Message, history, language)
+		answer, stats, err = conversational.AskWithHistory(ctx, request.Message, history, language)
 	} else {
-		answer, usage, err = s.asker.Ask(ctx, request.Message)
+		answer, stats, err = s.asker.Ask(ctx, request.Message)
 	}
 	duration := time.Since(start)
 	if err != nil {
@@ -817,9 +819,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		Answer:           answer,
 		SessionID:        sessionID,
 		DurationMS:       duration.Milliseconds(),
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		TotalTokens:      usage.TotalTokens,
+		PromptTokens:     stats.Usage.PromptTokens,
+		CompletionTokens: stats.Usage.CompletionTokens,
+		TotalTokens:      stats.Usage.TotalTokens,
+		Model:            stats.DisplayModel(),
 	})
 }
 
@@ -926,7 +929,7 @@ func (s *Server) handleChatStreaming(
 	}()
 
 	start := time.Now()
-	answer, usage, err := asker.AskWithHistoryStreaming(ctx, message, history, language, func(e agent.StepEvent) {
+	answer, stats, err := asker.AskWithHistoryStreaming(ctx, message, history, language, func(e agent.StepEvent) {
 		touch()
 		switch e.Type {
 		case "step_start":
@@ -954,9 +957,10 @@ func (s *Server) handleChatStreaming(
 		Type:             "done",
 		SessionID:        sessionID,
 		DurationMS:       duration.Milliseconds(),
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		TotalTokens:      usage.TotalTokens,
+		PromptTokens:     stats.Usage.PromptTokens,
+		CompletionTokens: stats.Usage.CompletionTokens,
+		TotalTokens:      stats.Usage.TotalTokens,
+		Model:            stats.DisplayModel(),
 	})
 }
 

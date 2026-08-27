@@ -62,6 +62,36 @@ func TestRemoteClientChat(t *testing.T) {
 	}
 }
 
+func TestRemoteClientChatCapturesBackendModelHeader(t *testing.T) {
+	const keyEnv = "SMARTHELPER_TEST_REMOTE_BACKEND_KEY"
+	t.Setenv(keyEnv, "remote-secret")
+
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "X-Backend-Model": []string{"groq"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"model":"text",
+				"choices":[{"index":0,"message":{"role":"assistant","content":"hi"}}],
+				"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+			}`)),
+		}, nil
+	})
+
+	client, err := NewRemoteClient("https://remote.test/v1/", "text", keyEnv, "", 0.8, time.Second)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+	response, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if response.BackendModel != "groq" {
+		t.Errorf("BackendModel = %q, want groq", response.BackendModel)
+	}
+}
+
 func TestRemoteClientChatStream(t *testing.T) {
 	const keyEnv = "SMARTHELPER_TEST_REMOTE_STREAM_KEY"
 	t.Setenv(keyEnv, "remote-secret")
@@ -78,7 +108,7 @@ func TestRemoteClientChatStream(t *testing.T) {
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Backend-Model": []string{"groq"}},
 			Body:       io.NopCloser(strings.NewReader(sse)),
 		}, nil
 	})
@@ -110,6 +140,9 @@ func TestRemoteClientChatStream(t *testing.T) {
 	wantUsage := Usage{PromptTokens: 7, CompletionTokens: 3, TotalTokens: 10}
 	if response.Usage != wantUsage {
 		t.Errorf("usage = %+v, want %+v", response.Usage, wantUsage)
+	}
+	if response.BackendModel != "groq" {
+		t.Errorf("BackendModel = %q, want groq", response.BackendModel)
 	}
 }
 

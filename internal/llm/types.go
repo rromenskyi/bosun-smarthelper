@@ -29,6 +29,12 @@ type Response struct {
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	Model     string     `json:"model"`
 	Usage     Usage      `json:"usage"`
+	// BackendModel, when non-empty, is a more specific identity than
+	// Model — a reverse proxy in front of the provider can report the
+	// real backend behind a generic model alias via an X-Backend-Model
+	// response header (RemoteClient reads it), since Model itself just
+	// echoes back whatever alias the request asked for.
+	BackendModel string `json:"-"`
 }
 
 // Usage tracks token usage

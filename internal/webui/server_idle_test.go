@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/roman220/bosun-smarthelper/internal/llm"
+	"github.com/roman220/bosun-smarthelper/internal/agent"
 )
 
 // blockingAsker holds a chat request open until release is closed, so a
@@ -19,10 +19,10 @@ type blockingAsker struct {
 	release chan struct{}
 }
 
-func (a *blockingAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
+func (a *blockingAsker) Ask(_ context.Context, _ string) (string, agent.TurnStats, error) {
 	close(a.started)
 	<-a.release
-	return "done", llm.Usage{}, nil
+	return "done", agent.TurnStats{}, nil
 }
 
 func startBlockingChat(t *testing.T, server *Server, asker *blockingAsker) {

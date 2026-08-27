@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/roman220/bosun-smarthelper/internal/agent"
-	"github.com/roman220/bosun-smarthelper/internal/llm"
 )
 
 // blockingStreamingAsker holds each call open until release is closed,
@@ -27,17 +26,17 @@ func newBlockingStreamingAsker() *blockingStreamingAsker {
 	return &blockingStreamingAsker{started: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (a *blockingStreamingAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
-	return "done", llm.Usage{}, nil
+func (a *blockingStreamingAsker) Ask(_ context.Context, _ string) (string, agent.TurnStats, error) {
+	return "done", agent.TurnStats{}, nil
 }
 
 func (a *blockingStreamingAsker) AskWithHistoryStreaming(
 	_ context.Context, _ string, _ []agent.HistoryMessage, _ string, onEvent func(agent.StepEvent),
-) (string, llm.Usage, error) {
+) (string, agent.TurnStats, error) {
 	onEvent(agent.StepEvent{Type: "step_start"})
 	a.startedOnce.Do(func() { close(a.started) })
 	<-a.release
-	return "done", llm.Usage{}, nil
+	return "done", agent.TurnStats{}, nil
 }
 
 func postChat(server *Server, message, sessionID string) *httptest.ResponseRecorder {
@@ -128,20 +127,20 @@ func newCancelAwareStreamingAsker() *cancelAwareStreamingAsker {
 	return &cancelAwareStreamingAsker{started: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (a *cancelAwareStreamingAsker) Ask(_ context.Context, _ string) (string, llm.Usage, error) {
-	return "done", llm.Usage{}, nil
+func (a *cancelAwareStreamingAsker) Ask(_ context.Context, _ string) (string, agent.TurnStats, error) {
+	return "done", agent.TurnStats{}, nil
 }
 
 func (a *cancelAwareStreamingAsker) AskWithHistoryStreaming(
 	ctx context.Context, _ string, _ []agent.HistoryMessage, _ string, onEvent func(agent.StepEvent),
-) (string, llm.Usage, error) {
+) (string, agent.TurnStats, error) {
 	onEvent(agent.StepEvent{Type: "step_start"})
 	a.startedOnce.Do(func() { close(a.started) })
 	select {
 	case <-a.release:
-		return "done", llm.Usage{}, nil
+		return "done", agent.TurnStats{}, nil
 	case <-ctx.Done():
-		return "", llm.Usage{}, ctx.Err()
+		return "", agent.TurnStats{}, ctx.Err()
 	}
 }
 
