@@ -1237,7 +1237,14 @@
           const last = messages[messages.length - 1];
           if (last && last.role === 'assistant') {
             row.remove();
-            addMessage('assistant', last.content, '', userText);
+            const stats = last.duration_ms !== undefined ? {
+              durationMs: last.duration_ms || 0,
+              promptTokens: last.prompt_tokens || 0,
+              completionTokens: last.completion_tokens || 0,
+              totalTokens: last.total_tokens || 0,
+              model: last.model || ''
+            } : null;
+            addMessage('assistant', last.content, '', userText, false, stats);
             resolved = true;
             break;
           }
@@ -2388,7 +2395,18 @@
               lastUser = message.content;
               addMessage('user', message.content);
             } else {
-              addMessage('assistant', message.content, '', lastUser);
+              // duration_ms absent means no real stats were ever recorded
+              // for this message (game mode, or history saved before this
+              // feature existed) — same signal ask() itself uses to skip
+              // the ℹ️ icon, so a restored message behaves identically.
+              const stats = message.duration_ms !== undefined ? {
+                durationMs: message.duration_ms || 0,
+                promptTokens: message.prompt_tokens || 0,
+                completionTokens: message.completion_tokens || 0,
+                totalTokens: message.total_tokens || 0,
+                model: message.model || ''
+              } : null;
+              addMessage('assistant', message.content, '', lastUser, false, stats);
             }
           });
           const last = data.messages[data.messages.length - 1];

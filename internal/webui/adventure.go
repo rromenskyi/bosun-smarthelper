@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/roman220/bosun-smarthelper/internal/adventure"
+	"github.com/roman220/bosun-smarthelper/internal/agent"
 	"github.com/roman220/bosun-smarthelper/internal/llm"
 )
 
@@ -126,7 +127,12 @@ func (s *Server) handleAdventureTurn(w http.ResponseWriter, ctx context.Context,
 	}
 
 	s.saveUserMessage(sessionID, message)
-	s.saveAssistantReply(sessionID, reply)
+	// Zero-value TurnStats/duration: game mode bypasses the agent entirely
+	// (see the doc comment above), so there's no real LLM turn to report
+	// stats for — HistoryMessage's omitempty tags mean this is
+	// indistinguishable from "never set" once persisted, which is exactly
+	// what should suppress the ℹ️ icon for a restored game-mode message.
+	s.saveAssistantReply(sessionID, reply, agent.TurnStats{}, 0)
 
 	response := chatResponse{Answer: reply, SessionID: sessionID}
 	if changed {

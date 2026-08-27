@@ -34,9 +34,21 @@ type ChatClient interface {
 
 // HistoryMessage is a completed user or assistant message retained between
 // turns. Internal tool protocol messages are intentionally not persisted.
+//
+// DurationMS/*Tokens/Model are only ever set on an assistant message, and
+// only carry what TurnStats reported for it (see internal/webui/server.go's
+// saveAssistantReply) — buildMessages below only reads Role/Content when
+// replaying history back to the LLM, so these fields ride along purely for
+// internal/webui's GET /api/history to restore the ℹ️ stats icon after a
+// page reload, without needing a separate persisted store.
 type HistoryMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	DurationMS       int64  `json:"duration_ms,omitempty"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	TotalTokens      int    `json:"total_tokens,omitempty"`
+	Model            string `json:"model,omitempty"`
 }
 
 // Agent runs the LLM ⇄ tools conversation loop for a single request.

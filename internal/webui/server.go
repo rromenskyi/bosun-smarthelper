@@ -814,7 +814,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, chatResponse{Error: "assistant request failed"})
 		return
 	}
-	s.saveAssistantReply(sessionID, answer)
+	s.saveAssistantReply(sessionID, answer, stats, duration.Milliseconds())
 	writeJSON(w, http.StatusOK, chatResponse{
 		Answer:           answer,
 		SessionID:        sessionID,
@@ -952,7 +952,7 @@ func (s *Server) handleChatStreaming(
 		return
 	}
 
-	s.saveAssistantReply(sessionID, answer)
+	s.saveAssistantReply(sessionID, answer, stats, duration.Milliseconds())
 	write(streamEvent{
 		Type:             "done",
 		SessionID:        sessionID,
@@ -1121,13 +1121,27 @@ func (s *Server) saveUserMessage(sessionID, userMessage string) {
 	s.persistLocked()
 }
 
-func (s *Server) saveAssistantReply(sessionID, answer string) {
+// saveAssistantReply persists the assistant's half of a turn. stats/
+// durationMS are the zero value for a caller with nothing to report (game
+// mode, an asker that doesn't return TurnStats) — HistoryMessage's
+// omitempty tags mean that's indistinguishable from "never set" once
+// serialized, which is exactly the fallback index.html's hydrateHistory
+// already wants (no ℹ️ icon for a restored message with no real stats).
+func (s *Server) saveAssistantReply(sessionID, answer string, stats agent.TurnStats, durationMS int64) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	now := time.Now()
 	s.purgeExpiredLocked(now)
 	session := s.sessions[sessionID]
-	session.History = append(session.History, agent.HistoryMessage{Role: "assistant", Content: answer})
+	session.History = append(session.History, agent.HistoryMessage{
+		Role:             "assistant",
+		Content:          answer,
+		DurationMS:       durationMS,
+		PromptTokens:     stats.Usage.PromptTokens,
+		CompletionTokens: stats.Usage.CompletionTokens,
+		TotalTokens:      stats.Usage.TotalTokens,
+		Model:            stats.DisplayModel(),
+	})
 	session.History = trimHistory(session.History, s.sessionOptions.Remote.Turns, s.sessionOptions.Remote.MaxChars)
 	session.UpdatedAt = now
 	s.sessions[sessionID] = session

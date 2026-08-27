@@ -539,6 +539,50 @@ func TestServerHistoryEndpointHydratesTranscript(t *testing.T) {
 	}
 }
 
+// TestServerHistoryEndpointPersistsStats is a regression test for a real
+// report: reloading the page made the ℹ️ stats icon disappear, because
+// stats were never actually persisted alongside the saved turn — only
+// handed straight to the live response.
+func TestServerHistoryEndpointPersistsStats(t *testing.T) {
+	asker := &fakeAsker{answer: "hi", usage: agent.TurnStats{
+		Usage:        llm.Usage{PromptTokens: 5, CompletionTokens: 2, TotalTokens: 7},
+		BackendModel: "groq:qwen3.6-27b",
+	}}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	handler := server.Handler()
+
+	chatRequest := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"message":"hi","session_id":"history-stats-test"}`))
+	chatResponse := httptest.NewRecorder()
+	handler.ServeHTTP(chatResponse, chatRequest)
+	if chatResponse.Code != http.StatusOK {
+		t.Fatalf("chat status = %d", chatResponse.Code)
+	}
+
+	historyRequest := httptest.NewRequest(http.MethodGet, "/api/history?session_id=history-stats-test", nil)
+	historyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(historyResponse, historyRequest)
+
+	var payload struct {
+		Messages []agent.HistoryMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(historyResponse.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode history response: %v", err)
+	}
+	if len(payload.Messages) != 2 {
+		t.Fatalf("messages = %#v, want 2", payload.Messages)
+	}
+	assistantMsg := payload.Messages[1]
+	if assistantMsg.PromptTokens != 5 || assistantMsg.CompletionTokens != 2 || assistantMsg.TotalTokens != 7 {
+		t.Errorf("persisted token fields = %+v, want the asker's usage", assistantMsg)
+	}
+	if assistantMsg.Model != "groq:qwen3.6-27b" {
+		t.Errorf("persisted model = %q, want groq:qwen3.6-27b", assistantMsg.Model)
+	}
+	if assistantMsg.DurationMS < 0 {
+		t.Errorf("persisted duration_ms = %d, want >= 0", assistantMsg.DurationMS)
+	}
+}
+
 func TestServerSessionClearRemovesPersistedSession(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "sessions.json")
 	options := SessionOptions{TTL: time.Hour, MaxSessions: 10, StorePath: storePath}
