@@ -201,25 +201,43 @@ func serveCmd() *cobra.Command {
 				}
 				server.SetTTSEngine(ttsEngine)
 			}
+			// Remote is preferred while online (RoutedSTT), falling back to
+			// local on any failure — same shape as the chat router just
+			// above, driven by the same connectivity check, not a separate
+			// manual setting. See config.STTConfig's doc comment for why.
+			var localSTT, remoteSTT voice.STTEngine
 			if cfg.Voice.STT.BaseURL != "" {
-				if cfg.Voice.STT.APIKeyEnv != "" {
-					apiKey := os.Getenv(cfg.Voice.STT.APIKeyEnv)
-					if apiKey == "" {
-						logger.Warn("voice.stt.api_key_env is set but the env var is empty; STT disabled", "env", cfg.Voice.STT.APIKeyEnv)
-					} else {
-						server.SetSTTEngine(&voice.RemoteSTT{
-							BaseURL:  cfg.Voice.STT.BaseURL,
-							Model:    cfg.Voice.STT.Model,
-							APIKey:   apiKey,
-							Language: cfg.Voice.STT.Language,
-						})
-					}
-				} else {
-					server.SetSTTEngine(&voice.WhisperCppSTT{
-						BaseURL:  cfg.Voice.STT.BaseURL,
-						Language: cfg.Voice.STT.Language,
-					})
+				localSTT = &voice.WhisperCppSTT{
+					BaseURL:  cfg.Voice.STT.BaseURL,
+					Language: cfg.Voice.STT.Language,
 				}
+			}
+			if cfg.Voice.STT.Remote.BaseURL != "" {
+				if cfg.Voice.STT.Remote.APIKeyEnv == "" {
+					logger.Warn("voice.stt.remote.base_url is set but api_key_env is empty; remote STT disabled")
+				} else if apiKey := os.Getenv(cfg.Voice.STT.Remote.APIKeyEnv); apiKey == "" {
+					logger.Warn("voice.stt.remote.api_key_env is set but the env var is empty; remote STT disabled", "env", cfg.Voice.STT.Remote.APIKeyEnv)
+				} else {
+					remoteSTT = &voice.RemoteSTT{
+						BaseURL:  cfg.Voice.STT.Remote.BaseURL,
+						Model:    cfg.Voice.STT.Remote.Model,
+						APIKey:   apiKey,
+						Language: cfg.Voice.STT.Language,
+					}
+				}
+			}
+			switch {
+			case remoteSTT != nil && localSTT != nil:
+				server.SetSTTEngine(&voice.RoutedSTT{
+					Remote:           remoteSTT,
+					Local:            localSTT,
+					NetworkAvailable: router.NetworkAvailable,
+					Logger:           logger,
+				})
+			case remoteSTT != nil:
+				server.SetSTTEngine(remoteSTT)
+			case localSTT != nil:
+				server.SetSTTEngine(localSTT)
 			}
 
 			if cfg.Metrics.Enabled {

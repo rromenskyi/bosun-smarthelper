@@ -143,24 +143,46 @@ an OpenAI-compatible `/audio/transcriptions` endpoint instead — e.g.
 this deployment's own reverse proxy (already used for remote chat, see
 `docs/`'s LLM router notes) fronting Groq's hosted Whisper API, which
 runs large-v3-turbo-class accuracy at real API latency, no local CPU
-cost at all. Selected via config, not a separate Go type switch at the
-call site — `voice.stt.api_key_env` empty (the default) keeps today's
-local `WhisperCppSTT` behavior unchanged; setting it switches
-`cmd/smarthelper/main.go`'s wiring to `RemoteSTT` instead, which also
-needs `voice.stt.model` (the remote endpoint's model name, e.g.
-`whisper-large-v3-turbo`) since — unlike a local whisper-server, which
-only ever serves the one model it loaded — a remote endpoint can serve
-several. Same `Transcribe(ctx, wav) (Transcript, error)` interface
-either way, so nothing above `internal/voice` (the `/api/stt` handler,
-docs below) needs to know or care which one is active.
+cost at all.
+
+Rather than a manual "which STT provider" setting, it's wired up the
+same way as the chat LLM's remote/local split
+(`internal/llm.Router`): **`internal/voice.RoutedSTT`** prefers Remote
+while online and falls back to Local on any failure — including a
+genuinely offline host — logging the fallback (unlike the chat
+router's silent one, since a failed transcription hasn't shown the
+user anything yet, so there's nothing to lose by explaining why local
+was used instead). This isn't a separate manual toggle because the A/B
+testing above already answered the only question a toggle would ask:
+there's no local model on this CPU worth switching *to* — tiny is
+fastest and about as garbled as it gets, base is barely better for
+meaningfully more latency, and large-v3-turbo is accurate but 8+
+minutes per short clip. The only real quality win lives on the remote
+path, and only while there's a network to reach it — so `tiny` stays
+the offline fallback model, and remote is preferred automatically
+whenever it's reachable.
+
+`voice.stt.remote.base_url` empty (the default) means no remote STT is
+configured at all — `cmd/smarthelper/main.go` wires up local-only
+`WhisperCppSTT`, unchanged from before this existed. Setting it (along
+with `remote.api_key_env`) switches to `RoutedSTT`, preferring Remote
+while `internal/llm.Router`'s shared `NetworkAvailable` check reports
+online. `remote.model` is required for a real remote endpoint since —
+unlike a local whisper-server, which only ever serves the one model it
+loaded — a remote endpoint can serve several. Same
+`Transcribe(ctx, wav) (Transcript, error)` interface throughout, so
+nothing above `internal/voice` (the `/api/stt` handler, docs below)
+needs to know or care which engine actually served a given request.
 
 ```yaml
 voice:
   stt:
-    base_url: "https://your-proxy.example/v1"  # OpenAI-compatible /audio/transcriptions
-    model: "whisper-large-v3-turbo"
-    api_key_env: "YOUR_PROXY_API_KEY"           # empty = local whisper-server instead
+    base_url: "http://127.0.0.1:1236"  # local whisper-server, offline fallback
     language: "ru"
+    remote:
+      base_url: "https://your-proxy.example/v1"  # OpenAI-compatible /audio/transcriptions
+      model: "whisper-large-v3-turbo"
+      api_key_env: "YOUR_PROXY_API_KEY"           # empty = remote STT disabled, local-only
 ```
 
 **Bosun's `POST /api/stt`** (`internal/webui/voice.go`'s `handleSTT`,

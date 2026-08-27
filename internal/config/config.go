@@ -357,17 +357,36 @@ type TTSConfig struct {
 // TTS's per-request subprocess, since whisper.cpp's model load time is
 // significant enough to be worth keeping resident. BaseURL empty (the
 // default) disables /api/stt entirely.
-// STTConfig points at a whisper.cpp-compatible transcription endpoint.
-// APIKeyEnv empty (the default) means BaseURL is a local whisper-server
-// instance (internal/voice.WhisperCppSTT, no auth, no Model field).
-// APIKeyEnv set switches to internal/voice.RemoteSTT instead — an
-// OpenAI-compatible /audio/transcriptions endpoint (e.g. this
-// deployment's own reverse proxy fronting Groq's hosted Whisper API),
-// which needs both authentication and a Model name since a remote
-// endpoint can serve more than one.
+//
+// Remote, when its own BaseURL is also set, isn't a replacement for the
+// local instance but a preferred-while-online companion to it —
+// internal/voice.RoutedSTT tries Remote first while
+// llm.Router.NetworkAvailable reports online, falling back to the local
+// whisper-server on any failure (including genuinely offline). Same
+// "prefer remote, degrade gracefully, driven by one shared connectivity
+// check" shape as the chat LLM router, deliberately not a separate
+// manual toggle — direct A/B testing on this host's CPU found no local
+// model worth switching *to* (tiny is fastest and base isn't
+// meaningfully more accurate for the added latency; large-v3-turbo is
+// accurate but 8+ minutes per short clip), so the real accuracy win only
+// exists on the remote path, and only while there's a network to reach
+// it.
 type STTConfig struct {
+	BaseURL  string          `mapstructure:"base_url"`
+	Language string          `mapstructure:"language"`
+	Remote   RemoteSTTConfig `mapstructure:"remote"`
+}
+
+// RemoteSTTConfig configures internal/voice.RemoteSTT — an
+// OpenAI-compatible /audio/transcriptions endpoint (e.g. this
+// deployment's own reverse proxy fronting Groq's hosted Whisper API).
+// BaseURL empty (the default) means no remote STT is configured at all;
+// STT stays local-only, exactly like before this existed. Model is
+// required for a real remote endpoint (unlike a local whisper-server,
+// which only ever serves the one model it loaded, a remote endpoint can
+// serve several).
+type RemoteSTTConfig struct {
 	BaseURL   string `mapstructure:"base_url"`
-	Language  string `mapstructure:"language"`
 	Model     string `mapstructure:"model"`
 	APIKeyEnv string `mapstructure:"api_key_env"`
 }

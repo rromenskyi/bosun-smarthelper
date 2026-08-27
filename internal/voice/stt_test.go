@@ -2,6 +2,7 @@ package voice
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -122,5 +123,88 @@ func TestRemoteSTTTranscribePropagatesServerError(t *testing.T) {
 	engine := &RemoteSTT{BaseURL: server.URL, APIKey: "bad-key"}
 	if _, err := engine.Transcribe(context.Background(), []byte("audio")); err == nil {
 		t.Error("expected an error for a non-200 response")
+	}
+}
+
+type fakeSTTEngine struct {
+	transcript Transcript
+	err        error
+	calls      int
+}
+
+func (f *fakeSTTEngine) Transcribe(ctx context.Context, wav []byte) (Transcript, error) {
+	f.calls++
+	return f.transcript, f.err
+}
+
+func TestRoutedSTTPrefersRemoteWhileOnline(t *testing.T) {
+	remote := &fakeSTTEngine{transcript: Transcript{Text: "from remote"}}
+	local := &fakeSTTEngine{transcript: Transcript{Text: "from local"}}
+	router := &RoutedSTT{Remote: remote, Local: local, NetworkAvailable: func(context.Context) bool { return true }}
+
+	transcript, err := router.Transcribe(context.Background(), []byte("audio"))
+	if err != nil {
+		t.Fatalf("Transcribe: %v", err)
+	}
+	if transcript.Text != "from remote" {
+		t.Errorf("text = %q, want from remote", transcript.Text)
+	}
+	if remote.calls != 1 || local.calls != 0 {
+		t.Errorf("remote.calls = %d, local.calls = %d, want 1 and 0", remote.calls, local.calls)
+	}
+}
+
+func TestRoutedSTTFallsBackToLocalWhenOffline(t *testing.T) {
+	remote := &fakeSTTEngine{transcript: Transcript{Text: "from remote"}}
+	local := &fakeSTTEngine{transcript: Transcript{Text: "from local"}}
+	router := &RoutedSTT{Remote: remote, Local: local, NetworkAvailable: func(context.Context) bool { return false }}
+
+	transcript, err := router.Transcribe(context.Background(), []byte("audio"))
+	if err != nil {
+		t.Fatalf("Transcribe: %v", err)
+	}
+	if transcript.Text != "from local" {
+		t.Errorf("text = %q, want from local", transcript.Text)
+	}
+	if remote.calls != 0 || local.calls != 1 {
+		t.Errorf("remote.calls = %d, local.calls = %d, want 0 and 1", remote.calls, local.calls)
+	}
+}
+
+func TestRoutedSTTFallsBackToLocalWhenRemoteFails(t *testing.T) {
+	remote := &fakeSTTEngine{err: errors.New("remote boom")}
+	local := &fakeSTTEngine{transcript: Transcript{Text: "from local"}}
+	router := &RoutedSTT{Remote: remote, Local: local, NetworkAvailable: func(context.Context) bool { return true }}
+
+	transcript, err := router.Transcribe(context.Background(), []byte("audio"))
+	if err != nil {
+		t.Fatalf("Transcribe: %v", err)
+	}
+	if transcript.Text != "from local" {
+		t.Errorf("text = %q, want from local", transcript.Text)
+	}
+	if remote.calls != 1 || local.calls != 1 {
+		t.Errorf("remote.calls = %d, local.calls = %d, want 1 and 1", remote.calls, local.calls)
+	}
+}
+
+func TestRoutedSTTReturnsRemoteErrorWhenNoLocalConfigured(t *testing.T) {
+	remote := &fakeSTTEngine{err: errors.New("remote boom")}
+	router := &RoutedSTT{Remote: remote, NetworkAvailable: func(context.Context) bool { return true }}
+
+	if _, err := router.Transcribe(context.Background(), []byte("audio")); err == nil {
+		t.Error("expected the remote error to propagate when no local engine is configured")
+	}
+}
+
+func TestRoutedSTTErrorsWhenOfflineAndNoLocalConfigured(t *testing.T) {
+	remote := &fakeSTTEngine{transcript: Transcript{Text: "from remote"}}
+	router := &RoutedSTT{Remote: remote, NetworkAvailable: func(context.Context) bool { return false }}
+
+	if _, err := router.Transcribe(context.Background(), []byte("audio")); err == nil {
+		t.Error("expected an error when offline with no local engine configured")
+	}
+	if remote.calls != 0 {
+		t.Errorf("remote.calls = %d, want 0 (never worth trying while offline)", remote.calls)
 	}
 }

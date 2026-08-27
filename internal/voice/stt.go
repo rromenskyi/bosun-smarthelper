@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 )
@@ -168,4 +169,52 @@ func (w *RemoteSTT) Transcribe(ctx context.Context, wav []byte) (Transcript, err
 		return Transcript{}, fmt.Errorf("decode remote STT response: %w", err)
 	}
 	return Transcript{Text: parsed.Text, Language: w.Language}, nil
+}
+
+// RoutedSTT prefers Remote while online, falling back to Local on any
+// failure (including a NetworkAvailable-reported offline state) — same
+// "prefer remote, degrade gracefully, one shared connectivity check"
+// shape as llm.Router's chat provider selection, deliberately not a
+// separate manual setting: direct A/B testing found no local model on
+// this class of CPU worth switching *to*, so the real choice is just
+// "is there a network to reach the good one right now."
+//
+// Unlike llm.Router's chat fallback (silent by design — a partial
+// streamed answer can't be un-shown), a failed transcription has shown
+// the user nothing yet, so a fallback here is logged: past experience
+// this session with the chat router's own silent fallback made "why did
+// this answer come from local" needlessly hard to diagnose after the
+// fact, and there's no reason to repeat that here.
+type RoutedSTT struct {
+	Remote           STTEngine
+	Local            STTEngine
+	NetworkAvailable func(context.Context) bool
+	Logger           *slog.Logger
+}
+
+func (r *RoutedSTT) logger() *slog.Logger {
+	if r.Logger != nil {
+		return r.Logger
+	}
+	return slog.Default()
+}
+
+func (r *RoutedSTT) Transcribe(ctx context.Context, wav []byte) (Transcript, error) {
+	if r.Remote == nil {
+		return r.Local.Transcribe(ctx, wav)
+	}
+	online := r.NetworkAvailable == nil || r.NetworkAvailable(ctx)
+	if online {
+		transcript, err := r.Remote.Transcribe(ctx, wav)
+		if err == nil {
+			return transcript, nil
+		}
+		if r.Local == nil {
+			return Transcript{}, err
+		}
+		r.logger().Warn("remote STT failed; falling back to local", "error", err)
+	} else if r.Local == nil {
+		return Transcript{}, fmt.Errorf("remote STT unavailable (offline) and no local STT configured")
+	}
+	return r.Local.Transcribe(ctx, wav)
 }
