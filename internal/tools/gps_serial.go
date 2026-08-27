@@ -98,7 +98,13 @@ func readNMEAFix(r io.Reader, maxLines int) (map[string]any, error) {
 		return nil, fmt.Errorf("read NMEA stream: %w", err)
 	}
 	if !havePosition {
-		return nil, fmt.Errorf("no GPS fix yet — check antenna placement and try again")
+		// Deliberately no "try again"-style phrasing: this string reaches
+		// the LLM verbatim as a tool result (executeToolAsJSON), and a
+		// tool-calling model reads an instruction to retry literally —
+		// confirmed live, a "где я" question burned all 5 tool-call
+		// iterations re-calling get_gps on repeat "no fix" errors instead
+		// of ever answering. State the fact, not a suggested next step.
+		return nil, fmt.Errorf("no GPS fix currently available (no antenna signal)")
 	}
 
 	// A stationary receiver still reports tiny nonzero speeds (GPS
