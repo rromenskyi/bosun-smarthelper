@@ -233,11 +233,50 @@ func TestAgent_AskWithHistory(t *testing.T) {
 	}
 }
 
-func TestAgent_Ask_RejectsEmptyResponse(t *testing.T) {
-	client := &fakeClient{responses: []*llm.Response{{}}}
+// TestAgent_Ask_RejectsEmptyResponseAfterRetries covers the exhausted-retry
+// path: every attempt (the first call plus maxEmptyResponseRetries retries)
+// comes back empty, so the turn genuinely fails — but only after actually
+// retrying, and the final error names the last finish_reason seen (a real
+// diagnostic need: a reasoning model's <think> preamble alone hitting the
+// token limit shows up here as "length", distinguishing it from other
+// causes without needing to reproduce the incident by hand).
+func TestAgent_Ask_RejectsEmptyResponseAfterRetries(t *testing.T) {
+	client := &fakeClient{responses: []*llm.Response{
+		{FinishReason: "length"},
+		{FinishReason: "length"},
+		{FinishReason: "length"},
+	}}
 	ag := New(client, tools.NewRegistry())
-	if _, _, err := ag.Ask(context.Background(), "hi"); err == nil {
-		t.Fatal("expected an error for an empty model response")
+	_, _, err := ag.Ask(context.Background(), "hi")
+	if err == nil {
+		t.Fatal("expected an error for a persistently empty model response")
+	}
+	if !strings.Contains(err.Error(), "length") {
+		t.Errorf("error = %q, want it to name the last finish_reason (length)", err.Error())
+	}
+	if client.calls != maxEmptyResponseRetries+1 {
+		t.Errorf("calls = %d, want %d (the first attempt plus %d retries)", client.calls, maxEmptyResponseRetries+1, maxEmptyResponseRetries)
+	}
+}
+
+// TestAgent_Ask_RetriesEmptyResponseThenSucceeds covers the common case:
+// a transient empty completion followed by a real answer should just work,
+// not fail the whole turn.
+func TestAgent_Ask_RetriesEmptyResponseThenSucceeds(t *testing.T) {
+	client := &fakeClient{responses: []*llm.Response{
+		{FinishReason: "length"},
+		{Content: "Aye, Captain!"},
+	}}
+	ag := New(client, tools.NewRegistry())
+	answer, _, err := ag.Ask(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Ask returned error: %v", err)
+	}
+	if answer != "Aye, Captain!" {
+		t.Errorf("answer = %q, want the second attempt's content", answer)
+	}
+	if client.calls != 2 {
+		t.Errorf("calls = %d, want 2", client.calls)
 	}
 }
 

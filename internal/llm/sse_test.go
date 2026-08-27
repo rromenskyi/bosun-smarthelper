@@ -65,6 +65,22 @@ func TestParseOpenAISSEStream_NoUsageChunkLeavesZeroUsage(t *testing.T) {
 	}
 }
 
+func TestParseOpenAISSEStream_CapturesFinishReason(t *testing.T) {
+	body := strings.NewReader(strings.Join([]string{
+		`data: {"model":"text","choices":[{"delta":{},"finish_reason":"length"}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n"))
+
+	response, err := parseOpenAISSEStream(body, func(StreamDelta) {}, false)
+	if err != nil {
+		t.Fatalf("parseOpenAISSEStream: %v", err)
+	}
+	if response.FinishReason != "length" {
+		t.Errorf("FinishReason = %q, want length", response.FinishReason)
+	}
+}
+
 func TestParseOpenAISSEStream_ToolCallsReassembled(t *testing.T) {
 	body := strings.NewReader(strings.Join([]string{
 		`data: {"model":"text","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"loc"}}]}}]}`,

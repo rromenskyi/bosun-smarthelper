@@ -27,6 +27,15 @@ const systemPrompt = `Be concise. Use available tools for live data, sensors, an
 // spin forever.
 const maxToolIterations = 5
 
+// maxEmptyResponseRetries bounds how many times AskWithHistoryStreaming
+// retries a call that returned no tool calls and no content — a rare but
+// real provider quirk (confirmed live: a reasoning model whose response
+// was entirely consumed by its own <think> preamble before hitting the
+// token limit, leaving nothing else behind — see llm.Response.FinishReason).
+// The identical request is simply resent; nothing about the conversation
+// changed, so there's nothing to fix before trying again.
+const maxEmptyResponseRetries = 2
+
 // ChatClient is the subset of llm.Client (or llm.Router) the agent needs.
 type ChatClient interface {
 	Chat(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) (*llm.Response, error)
@@ -207,6 +216,8 @@ func (a *Agent) AskWithHistoryStreaming(
 		}
 	}
 
+	var emptyResponseRetries int
+	var lastFinishReason string
 	for i := 0; i < maxToolIterations; i++ {
 		if onEvent != nil {
 			onEvent(StepEvent{Type: "step_start"})
@@ -255,7 +266,22 @@ func (a *Agent) AskWithHistoryStreaming(
 
 		if len(resp.ToolCalls) == 0 {
 			if strings.TrimSpace(resp.Content) == "" {
-				return "", stats, fmt.Errorf("model returned an empty response")
+				if resp.FinishReason != "" {
+					lastFinishReason = resp.FinishReason
+				}
+				if emptyResponseRetries < maxEmptyResponseRetries {
+					// Same messages, nothing to fix — a transient empty
+					// completion isn't evidence anything about the request
+					// itself was wrong. Doesn't reset detector/forwardedProse
+					// specially; the top of the next iteration already does.
+					emptyResponseRetries++
+					continue
+				}
+				err := fmt.Errorf("model returned an empty response after %d retries (last finish_reason: %q)", emptyResponseRetries, lastFinishReason)
+				if ctx.Err() == nil {
+					a.errLog.Record("llm_chat", a.chatProvider(), err)
+				}
+				return "", stats, err
 			}
 			return resp.Content, stats, nil
 		}

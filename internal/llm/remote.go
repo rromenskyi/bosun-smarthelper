@@ -207,6 +207,7 @@ func (c *RemoteClient) Chat(ctx context.Context, messages []Message, tools []Too
 		Model:        openAIResp.Model,
 		Usage:        openAIResp.Usage,
 		BackendModel: resp.Header.Get("X-Backend-Model"),
+		FinishReason: choice.FinishReason,
 	}
 
 	return response, nil

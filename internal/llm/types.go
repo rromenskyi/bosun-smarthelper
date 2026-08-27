@@ -35,6 +35,17 @@ type Response struct {
 	// response header (RemoteClient reads it), since Model itself just
 	// echoes back whatever alias the request asked for.
 	BackendModel string `json:"-"`
+	// FinishReason is the provider's own reason the response ended
+	// ("stop", "length", "tool_calls", ...) — kept purely for
+	// diagnostics: an occasional empty Content with no ToolCalls is a
+	// real (if rare) provider quirk, and knowing whether it was
+	// "length" (truncated before producing any visible output — plausible
+	// for a reasoning model whose <think> block alone can exceed the
+	// token budget) versus something else is the difference between "the
+	// token limit is too tight" and "the provider returned garbage" the
+	// next time this happens. See agent.AskWithHistoryStreaming's
+	// empty-response retry.
+	FinishReason string `json:"-"`
 }
 
 // Usage tracks token usage

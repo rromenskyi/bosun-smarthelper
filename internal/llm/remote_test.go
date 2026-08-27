@@ -62,6 +62,32 @@ func TestRemoteClientChat(t *testing.T) {
 	}
 }
 
+func TestRemoteClientChatCapturesFinishReason(t *testing.T) {
+	const keyEnv = "SMARTHELPER_TEST_REMOTE_FINISH_KEY"
+	t.Setenv(keyEnv, "remote-secret")
+
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(`{
+			"model":"text",
+			"choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"length"}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`), nil
+	})
+
+	client, err := NewRemoteClient("https://remote.test/v1/", "text", keyEnv, "", 0.8, time.Second)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.client.Transport = transport
+	response, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if response.FinishReason != "length" {
+		t.Errorf("FinishReason = %q, want length", response.FinishReason)
+	}
+}
+
 func TestRemoteClientChatCapturesBackendModelHeader(t *testing.T) {
 	const keyEnv = "SMARTHELPER_TEST_REMOTE_BACKEND_KEY"
 	t.Setenv(keyEnv, "remote-secret")

@@ -148,6 +148,7 @@ func parseOpenAISSEStream(body io.Reader, onDelta func(StreamDelta), detectFold 
 	var order []int
 	var model string
 	var usage Usage
+	var finishReason string
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -171,6 +172,9 @@ func parseOpenAISSEStream(body io.Reader, onDelta func(StreamDelta), detectFold 
 		}
 		if len(chunk.Choices) == 0 {
 			continue
+		}
+		if chunk.Choices[0].FinishReason != "" {
+			finishReason = chunk.Choices[0].FinishReason
 		}
 		delta := chunk.Choices[0].Delta
 
@@ -209,7 +213,7 @@ func parseOpenAISSEStream(body io.Reader, onDelta func(StreamDelta), detectFold 
 		detector.flush(onDelta)
 	}
 
-	response := &Response{Content: content.String(), Model: model, Usage: usage}
+	response := &Response{Content: content.String(), Model: model, Usage: usage, FinishReason: finishReason}
 	sort.Ints(order)
 	for _, idx := range order {
 		acc := toolCalls[idx]
