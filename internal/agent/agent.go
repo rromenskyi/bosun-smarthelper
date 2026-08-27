@@ -296,7 +296,7 @@ func (a *Agent) AskWithHistoryStreaming(
 
 		for _, call := range resp.ToolCalls {
 			result := a.executeToolAsJSON(ctx, call, a.isOnline(ctx))
-			onDelta(llm.StreamDelta{Kind: "fold", Text: "\n→ " + result})
+			onDelta(llm.StreamDelta{Kind: "fold", Text: "\n🔧 " + call.Function.Name + "\n→ " + result})
 			messages = append(messages, llm.Message{
 				Role:       "tool",
 				Content:    result,

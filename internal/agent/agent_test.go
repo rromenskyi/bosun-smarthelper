@@ -93,6 +93,9 @@ func TestAgent_AskWithHistoryStreaming_EmitsStepAndDeltaEvents(t *testing.T) {
 	if events[1].Delta.Kind != "fold" || !strings.Contains(events[1].Delta.Text, "temperature_c") {
 		t.Errorf("tool-result delta = %+v, want a fold delta containing the tool's JSON result", events[1].Delta)
 	}
+	if !strings.Contains(events[1].Delta.Text, "get_weather") {
+		t.Errorf("tool-result delta = %+v, want it to name which tool was called (get_weather)", events[1].Delta)
+	}
 	if events[3].Delta.Kind != "prose" || events[3].Delta.Text != "It's 21.5°C outside." {
 		t.Errorf("final delta = %+v", events[3].Delta)
 	}
