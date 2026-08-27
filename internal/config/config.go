@@ -357,9 +357,19 @@ type TTSConfig struct {
 // TTS's per-request subprocess, since whisper.cpp's model load time is
 // significant enough to be worth keeping resident. BaseURL empty (the
 // default) disables /api/stt entirely.
+// STTConfig points at a whisper.cpp-compatible transcription endpoint.
+// APIKeyEnv empty (the default) means BaseURL is a local whisper-server
+// instance (internal/voice.WhisperCppSTT, no auth, no Model field).
+// APIKeyEnv set switches to internal/voice.RemoteSTT instead — an
+// OpenAI-compatible /audio/transcriptions endpoint (e.g. this
+// deployment's own reverse proxy fronting Groq's hosted Whisper API),
+// which needs both authentication and a Model name since a remote
+// endpoint can serve more than one.
 type STTConfig struct {
-	BaseURL  string `mapstructure:"base_url"`
-	Language string `mapstructure:"language"`
+	BaseURL   string `mapstructure:"base_url"`
+	Language  string `mapstructure:"language"`
+	Model     string `mapstructure:"model"`
+	APIKeyEnv string `mapstructure:"api_key_env"`
 }
 
 // ErrorLogConfig holds settings for the tool/LLM failure log used to drive

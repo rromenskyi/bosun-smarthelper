@@ -202,10 +202,24 @@ func serveCmd() *cobra.Command {
 				server.SetTTSEngine(ttsEngine)
 			}
 			if cfg.Voice.STT.BaseURL != "" {
-				server.SetSTTEngine(&voice.WhisperCppSTT{
-					BaseURL:  cfg.Voice.STT.BaseURL,
-					Language: cfg.Voice.STT.Language,
-				})
+				if cfg.Voice.STT.APIKeyEnv != "" {
+					apiKey := os.Getenv(cfg.Voice.STT.APIKeyEnv)
+					if apiKey == "" {
+						logger.Warn("voice.stt.api_key_env is set but the env var is empty; STT disabled", "env", cfg.Voice.STT.APIKeyEnv)
+					} else {
+						server.SetSTTEngine(&voice.RemoteSTT{
+							BaseURL:  cfg.Voice.STT.BaseURL,
+							Model:    cfg.Voice.STT.Model,
+							APIKey:   apiKey,
+							Language: cfg.Voice.STT.Language,
+						})
+					}
+				} else {
+					server.SetSTTEngine(&voice.WhisperCppSTT{
+						BaseURL:  cfg.Voice.STT.BaseURL,
+						Language: cfg.Voice.STT.Language,
+					})
+				}
 			}
 
 			if cfg.Metrics.Enabled {

@@ -125,6 +125,44 @@ that Dockerfile, `network_mode: host`, model directory bind-mounted from
 downloaded there — switching is a one-line `command:` edit, no rebuild),
 `--threads 4 --language ru --audio-ctx 512`.
 
+**Model size vs. accuracy is a hard wall on this CPU, not a dial**:
+direct A/B testing (same synthesized Russian test phrase, both against
+an isolated `whisper-server` instance so production was never touched)
+found `tiny`/`base` genuinely garble non-trivial sentences
+(`"Раверновления маслов двигатель Форки E3050..."` for "Проверь
+давление масла в двигателе Форд Е-350..."), while `large-v3-turbo`
+transcribes it almost perfectly — but takes **8m23s** for a 6-second
+clip on this host's 4-core, no-AVX2/FMA CPU (confirmed running the
+correct `sandybridge` SIMD variant, not a slow fallback — the model
+itself is just that heavy here), against `tiny`'s ~10s. There's no
+usable middle ground on local hardware between "fast but often wrong"
+and "accurate but unusable for push-to-talk."
+
+**`internal/voice.RemoteSTT`** (shipped) sidesteps this by proxying to
+an OpenAI-compatible `/audio/transcriptions` endpoint instead — e.g.
+this deployment's own reverse proxy (already used for remote chat, see
+`docs/`'s LLM router notes) fronting Groq's hosted Whisper API, which
+runs large-v3-turbo-class accuracy at real API latency, no local CPU
+cost at all. Selected via config, not a separate Go type switch at the
+call site — `voice.stt.api_key_env` empty (the default) keeps today's
+local `WhisperCppSTT` behavior unchanged; setting it switches
+`cmd/smarthelper/main.go`'s wiring to `RemoteSTT` instead, which also
+needs `voice.stt.model` (the remote endpoint's model name, e.g.
+`whisper-large-v3-turbo`) since — unlike a local whisper-server, which
+only ever serves the one model it loaded — a remote endpoint can serve
+several. Same `Transcribe(ctx, wav) (Transcript, error)` interface
+either way, so nothing above `internal/voice` (the `/api/stt` handler,
+docs below) needs to know or care which one is active.
+
+```yaml
+voice:
+  stt:
+    base_url: "https://your-proxy.example/v1"  # OpenAI-compatible /audio/transcriptions
+    model: "whisper-large-v3-turbo"
+    api_key_env: "YOUR_PROXY_API_KEY"           # empty = local whisper-server instead
+    language: "ru"
+```
+
 **Bosun's `POST /api/stt`** (`internal/webui/voice.go`'s `handleSTT`,
 backed by `internal/voice.WhisperCppSTT`): accepts a multipart form field
 `audio` (whatever the browser's `MediaRecorder` produced), converts it to
