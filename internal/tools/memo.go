@@ -96,7 +96,7 @@ func (t *MemoTool) Name() string {
 }
 
 func (t *MemoTool) Description() string {
-	return "Write, read, list, search, topics, maintenance, archive, or delete persistent local memos and uploaded reference documents. Listing exposes timestamps, status, and age_days so old notes can be reviewed. topics lists uploaded documents (title + document_id) with no search needed — check it when unsure whether something is covered, or to find the right document_id to scope a search to it instead of the whole store. Search finds memos and documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question a stored document might answer. A search result may include image_url when the source is a diagram — include it in your answer as a markdown image: ![description](image_url). A document result may include source_path, the folder it was uploaded from (e.g. \"docs/ford/generator-repair\") — use it to tell apart similar equipment when a query is ambiguous (e.g. a Ford's generator vs. a generic 150cc engine's), and mention which source you're drawing from if more than one plausible match comes back. When writing, add a few short lowercase tags describing the topic (e.g. \"purchases\", \"fuel_system\", \"oil\") — use list or search with tag to reliably find every memo on a topic, not just the closest-sounding ones. For equipment upkeep (odometer, engine-hour meters, etc.): write metric_name/metric_value for a reading or event, plus due_date and/or due_metric_value for when the next one is due — compute due_metric_value yourself from a stated interval (\"changed oil at 55000, next in 10000\" -> metric_value:55000, due_metric_value:65000), don't just restate the interval in content. maintenance reports what's due (it computes overdue itself, don't do date math) and lists known_metrics — reuse an existing name for the same equipment. write's response including existing_metric_names means your metric_name matched none of them: re-write immediately with the matching one if this is really the same equipment under a different spelling, but keep your new name if it's genuinely different equipment (a second vehicle, a different engine) — the hint is a check, not proof something's wrong."
+	return "Write, read, list, search, topics, maintenance, archive, or delete persistent local memos and uploaded reference documents. Listing exposes timestamps, status, and age_days so old notes can be reviewed. topics lists the 30 most recently uploaded documents (title + document_id, no search needed) — check it when unsure whether something is covered at all, or to find the right document_id to scope a search to it instead of the whole store; for anything more specific than a rough overview, use search instead, since topics doesn't rank or filter by relevance. Search finds memos and documents by meaning, not just exact words — use it instead of list when the user asks to recall something without naming its exact key, or asks a question a stored document might answer. A search result may include image_url when the source is a diagram — include it in your answer as a markdown image: ![description](image_url). A document result may include source_path, the folder it was uploaded from (e.g. \"docs/ford/generator-repair\") — use it to tell apart similar equipment when a query is ambiguous (e.g. a Ford's generator vs. a generic 150cc engine's), and mention which source you're drawing from if more than one plausible match comes back. When writing, add a few short lowercase tags describing the topic (e.g. \"purchases\", \"fuel_system\", \"oil\") — use list or search with tag to reliably find every memo on a topic, not just the closest-sounding ones. For equipment upkeep (odometer, engine-hour meters, etc.): write metric_name/metric_value for a reading or event, plus due_date and/or due_metric_value for when the next one is due — compute due_metric_value yourself from a stated interval (\"changed oil at 55000, next in 10000\" -> metric_value:55000, due_metric_value:65000), don't just restate the interval in content. maintenance reports what's due (it computes overdue itself, don't do date math) and lists known_metrics — reuse an existing name for the same equipment. write's response including existing_metric_names means your metric_name matched none of them: re-write immediately with the matching one if this is really the same equipment under a different spelling, but keep your new name if it's genuinely different equipment (a second vehicle, a different engine) — the hint is a check, not proof something's wrong."
 }
 
 func (t *MemoTool) InputSchema() map[string]any {
@@ -506,6 +506,16 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 	return map[string]any{"results": results, "count": len(results)}, nil
 }
 
+// maxTopicsListed caps how many document entries topics() returns.
+// Unlike search, topics has no relevance ranking to truncate by, so this
+// just keeps the most recently uploaded ones (documents.Store.List's own
+// newest-first order). Needed for the same reason as maxSearchLimit:
+// confirmed live, once the document store passed ~1000 documents (a bulk
+// manual import), an unbounded topics response was by itself large
+// enough to blow a local model's context, with no `limit` argument to
+// even cap it — topics takes no arguments at all.
+const maxTopicsListed = 30
+
 // topics lists uploaded documents (title + id + chunk_count, no chunk
 // content) so the model can see what reference material actually exists
 // before deciding whether/where to search — cheaper than a search call,
@@ -521,6 +531,11 @@ func (t *MemoTool) topics() (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	total := len(summaries)
+	truncated := total > maxTopicsListed
+	if truncated {
+		summaries = summaries[:maxTopicsListed]
+	}
 	topics := make([]map[string]any, 0, len(summaries))
 	for _, s := range summaries {
 		topics = append(topics, map[string]any{
@@ -529,7 +544,13 @@ func (t *MemoTool) topics() (any, error) {
 			"chunk_count": s.ChunkCount,
 		})
 	}
-	return map[string]any{"documents": topics, "count": len(topics)}, nil
+	result := map[string]any{"documents": topics, "count": total}
+	if truncated {
+		result["note"] = fmt.Sprintf(
+			"showing the %d most recently uploaded of %d documents — use search instead of topics to find something specific in a store this large",
+			maxTopicsListed, total)
+	}
+	return result, nil
 }
 
 // parseFlexibleDate accepts either a bare calendar date (what a model, or a

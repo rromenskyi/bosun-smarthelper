@@ -180,6 +180,16 @@ times):
   ~94,000-token request against a local model with an 8192-token
   context, failing the turn outright — exactly the risk the bullet above
   already described, just missing its other half.
+- **`topics`'s document list is capped** at `maxTopicsListed` (30, same
+  file) — `topics` takes no arguments at all (no `limit` to even try
+  capping), so before this it just returned every uploaded document
+  unconditionally. Confirmed live, same incident: at ~1000 documents a
+  single `topics` call was by itself large enough to contribute to the
+  same context overflow. Unlike `search`, `topics` has no relevance
+  ranking to truncate by, so it keeps the most recently uploaded
+  documents (`documents.Store.List`'s own newest-first order) and adds a
+  `note` field pointing the model at `search` instead when the real
+  total exceeds what's shown.
 
 A third, complementary guard lives in `internal/agent` — see
 `repetitionDetector`: even with these two in place, any model can still

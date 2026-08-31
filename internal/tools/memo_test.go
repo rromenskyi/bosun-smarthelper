@@ -337,6 +337,42 @@ func TestMemoToolTopicsListsUploadedDocuments(t *testing.T) {
 	}
 }
 
+// TestMemoToolTopicsCapsResultsRegardlessOfStoreSize is a regression test
+// for a real incident: topics() returned every uploaded document with no
+// cap at all (no limit argument exists for it), and after a bulk manual
+// import grew the document store past ~1000 entries, a single topics
+// call was by itself large enough to contribute to a local model's
+// context overflow.
+func TestMemoToolTopicsCapsResultsRegardlessOfStoreSize(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	docStore := documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	tool.SetDocumentStore(docStore)
+	ctx := context.Background()
+
+	for i := 0; i < maxTopicsListed+10; i++ {
+		title := fmt.Sprintf("Manual %d", i)
+		if _, err := docStore.Add(ctx, title, "some content", ""); err != nil {
+			t.Fatalf("add document %d: %v", i, err)
+		}
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "topics"})
+	if err != nil {
+		t.Fatalf("topics: %v", err)
+	}
+	view := result.(map[string]any)
+	if view["count"] != maxTopicsListed+10 {
+		t.Errorf("count = %v, want the true total %d", view["count"], maxTopicsListed+10)
+	}
+	topics := view["documents"].([]map[string]any)
+	if len(topics) != maxTopicsListed {
+		t.Fatalf("documents = %d entries, want capped at %d", len(topics), maxTopicsListed)
+	}
+	if view["note"] == nil {
+		t.Error("expected a note explaining the list was truncated")
+	}
+}
+
 func TestMemoToolTopicsWithoutDocumentStoreReturnsEmpty(t *testing.T) {
 	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
 	result, err := tool.Execute(context.Background(), map[string]any{"action": "topics"})
