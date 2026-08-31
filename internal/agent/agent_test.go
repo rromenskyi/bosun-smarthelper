@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -233,6 +234,101 @@ func TestAgent_AskWithHistory(t *testing.T) {
 	}
 	if messages[1].Role != "user" || messages[1].Content != "My name is Roman." || messages[3].Content != "What is my name?" {
 		t.Errorf("unexpected history messages: %#v", messages)
+	}
+}
+
+// fakeTopicsProvider matches TopicsProvider for testing the dynamic
+// topics prompt line.
+type fakeTopicsProvider struct {
+	topics []string
+	err    error
+}
+
+func (f fakeTopicsProvider) Topics() ([]string, error) { return f.topics, f.err }
+
+func TestAgent_Ask_AddsDynamicTopicsLineWhenEnabled(t *testing.T) {
+	client := &fakeClient{responses: []*llm.Response{{Content: "ok"}}}
+	ag := New(client, tools.NewRegistry())
+	ag.SetTopicsProvider(fakeTopicsProvider{topics: []string{"ford", "hunting-utah"}})
+	ag.SetDynamicTopicsEnabled(true)
+
+	if _, _, err := ag.Ask(context.Background(), "hi"); err != nil {
+		t.Fatalf("Ask returned error: %v", err)
+	}
+	systemPrompt := client.seen[0][0].Content
+	if !strings.Contains(systemPrompt, "ford, hunting-utah") {
+		t.Errorf("system prompt = %q, want it to list the topics", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "memo") {
+		t.Errorf("system prompt = %q, want it to point at memo before general knowledge/web_search", systemPrompt)
+	}
+}
+
+func TestAgent_Ask_OmitsDynamicTopicsLineWhenDisabled(t *testing.T) {
+	client := &fakeClient{responses: []*llm.Response{{Content: "ok"}}}
+	ag := New(client, tools.NewRegistry())
+	ag.SetTopicsProvider(fakeTopicsProvider{topics: []string{"hunting-utah"}})
+	// SetDynamicTopicsEnabled deliberately not called — must default off.
+
+	if _, _, err := ag.Ask(context.Background(), "hi"); err != nil {
+		t.Fatalf("Ask returned error: %v", err)
+	}
+	if strings.Contains(client.seen[0][0].Content, "hunting-utah") {
+		t.Error("system prompt lists topics despite the feature being disabled")
+	}
+}
+
+func TestAgent_Ask_OmitsDynamicTopicsLineWhenNoTopics(t *testing.T) {
+	client := &fakeClient{responses: []*llm.Response{{Content: "ok"}}}
+	ag := New(client, tools.NewRegistry())
+	ag.SetTopicsProvider(fakeTopicsProvider{topics: nil})
+	ag.SetDynamicTopicsEnabled(true)
+
+	if _, _, err := ag.Ask(context.Background(), "hi"); err != nil {
+		t.Fatalf("Ask returned error: %v", err)
+	}
+	if strings.Contains(client.seen[0][0].Content, "Local uploads cover") {
+		t.Error("system prompt added the topics line despite an empty topic list")
+	}
+}
+
+func TestAgent_Ask_IgnoresTopicsProviderError(t *testing.T) {
+	client := &fakeClient{responses: []*llm.Response{{Content: "ok"}}}
+	ag := New(client, tools.NewRegistry())
+	ag.SetTopicsProvider(fakeTopicsProvider{err: errors.New("store unavailable")})
+	ag.SetDynamicTopicsEnabled(true)
+
+	answer, _, err := ag.Ask(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Ask returned error: %v", err)
+	}
+	if answer != "ok" {
+		t.Errorf("answer = %q, want the turn to still succeed", answer)
+	}
+	if strings.Contains(client.seen[0][0].Content, "Local uploads cover") {
+		t.Error("system prompt added the topics line despite the provider erroring")
+	}
+}
+
+func TestAgent_Ask_TruncatesDynamicTopicsList(t *testing.T) {
+	client := &fakeClient{responses: []*llm.Response{{Content: "ok"}}}
+	ag := New(client, tools.NewRegistry())
+	many := make([]string, maxPromptTopics+5)
+	for i := range many {
+		many[i] = fmt.Sprintf("topic-%d", i)
+	}
+	ag.SetTopicsProvider(fakeTopicsProvider{topics: many})
+	ag.SetDynamicTopicsEnabled(true)
+
+	if _, _, err := ag.Ask(context.Background(), "hi"); err != nil {
+		t.Fatalf("Ask returned error: %v", err)
+	}
+	systemPrompt := client.seen[0][0].Content
+	if strings.Contains(systemPrompt, many[maxPromptTopics]) {
+		t.Errorf("system prompt = %q, topic list should be capped at %d", systemPrompt, maxPromptTopics)
+	}
+	if !strings.Contains(systemPrompt, many[maxPromptTopics-1]) {
+		t.Errorf("system prompt = %q, want it to still include the %dth topic", systemPrompt, maxPromptTopics)
 	}
 }
 

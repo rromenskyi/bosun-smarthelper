@@ -229,6 +229,49 @@ func TestStoreAddSourcePathSurfacesInSearch(t *testing.T) {
 	}
 }
 
+func TestStoreTopicsGroupsByTopLevelFolderAndFallsBackToTitle(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	ctx := context.Background()
+
+	if _, err := store.Add(ctx, "Ford generator manual", "text", "docs/ford/generator-repair"); err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+	if _, err := store.Add(ctx, "Ford wiring diagram", "text", "docs/ford/wiring"); err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+	if _, err := store.Add(ctx, "Utah deer regulations", "text", "hunting-utah"); err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+	if _, err := store.Add(ctx, "No source path manual", "text", ""); err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+
+	topics, err := store.Topics()
+	if err != nil {
+		t.Fatalf("topics: %v", err)
+	}
+	want := []string{"No source path manual", "docs", "hunting-utah"}
+	if len(topics) != len(want) {
+		t.Fatalf("topics = %#v, want %#v", topics, want)
+	}
+	for i, w := range want {
+		if topics[i] != w {
+			t.Errorf("topics[%d] = %q, want %q (full: %#v)", i, topics[i], w, topics)
+		}
+	}
+}
+
+func TestStoreTopicsEmptyStoreReturnsEmpty(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	topics, err := store.Topics()
+	if err != nil {
+		t.Fatalf("topics: %v", err)
+	}
+	if len(topics) != 0 {
+		t.Errorf("topics = %#v, want empty", topics)
+	}
+}
+
 func TestStoreUpdateSourcePath(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
 	ctx := context.Background()

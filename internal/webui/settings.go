@@ -14,6 +14,12 @@ type personaSetter interface {
 	SetPersona(nameRU, nameEN, stylePrompt string)
 }
 
+// dynamicTopicsSetter matches *agent.Agent's SetDynamicTopicsEnabled —
+// same duck-typing pattern as personaSetter.
+type dynamicTopicsSetter interface {
+	SetDynamicTopicsEnabled(enabled bool)
+}
+
 // temperatureController matches *llm.Router's SetTemperatures.
 type temperatureController interface {
 	SetTemperatures(remote, local float64)
@@ -141,6 +147,9 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if setter, ok := s.asker.(personaSetter); ok {
 		setter.SetPersona(data.NameRU, data.NameEN, data.StylePrompt)
+	}
+	if setter, ok := s.asker.(dynamicTopicsSetter); ok {
+		setter.SetDynamicTopicsEnabled(data.DynamicTopicsEnabled)
 	}
 	if s.temps != nil {
 		s.temps.SetTemperatures(data.RemoteTemperature, data.LocalTemperature)

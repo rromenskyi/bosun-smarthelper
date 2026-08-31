@@ -29,6 +29,12 @@ const systemPrompt = `Be concise. Use available tools for live data, sensors, an
 // spin forever.
 const maxToolIterations = 5
 
+// maxPromptTopics caps how many distinct filedump topics the dynamic
+// topics prompt line lists — see SetTopicsProvider. Bounds prompt growth
+// against an unusually large filedump without needing per-request
+// truncation logic beyond "just stop listing more."
+const maxPromptTopics = 15
+
 // maxEmptyResponseRetries bounds how many times AskWithHistoryStreaming
 // retries a call that returned no tool calls and no content — a rare but
 // real provider quirk (confirmed live: a reasoning model whose response
@@ -62,15 +68,25 @@ type HistoryMessage struct {
 	Model            string `json:"model,omitempty"`
 }
 
+// TopicsProvider matches *documents.Store's Topics method — see
+// SetTopicsProvider. A narrow interface (rather than importing
+// internal/documents directly) so agent doesn't need to know about
+// filedump/RAG storage at all, the same reasoning as ChatClient.
+type TopicsProvider interface {
+	Topics() ([]string, error)
+}
+
 // Agent runs the LLM ⇄ tools conversation loop for a single request.
 type Agent struct {
-	client              ChatClient
-	registry            *tools.Registry
-	networkAvailability func(context.Context) bool
-	nameRU              string
-	nameEN              string
-	stylePrompt         string
-	errLog              *errlog.Logger
+	client               ChatClient
+	registry             *tools.Registry
+	networkAvailability  func(context.Context) bool
+	nameRU               string
+	nameEN               string
+	stylePrompt          string
+	errLog               *errlog.Logger
+	topicsProvider       TopicsProvider
+	dynamicTopicsEnabled bool
 }
 
 // New creates an Agent backed by the given chat client and tool registry.
@@ -102,6 +118,20 @@ func (a *Agent) SetPersona(nameRU, nameEN, stylePrompt string) {
 // not recorded anywhere durable.
 func (a *Agent) SetErrorLog(logger *errlog.Logger) {
 	a.errLog = logger
+}
+
+// SetTopicsProvider wires in what backs the dynamic topics prompt line —
+// typically *documents.Store. Optional: nil (the default) means the line
+// is never added, regardless of SetDynamicTopicsEnabled.
+func (a *Agent) SetTopicsProvider(provider TopicsProvider) {
+	a.topicsProvider = provider
+}
+
+// SetDynamicTopicsEnabled turns the dynamic topics prompt line on or off —
+// a live settings-page toggle (see docs/settings.md), not a one-time
+// config value, the same shape as SetPersona.
+func (a *Agent) SetDynamicTopicsEnabled(enabled bool) {
+	a.dynamicTopicsEnabled = enabled
 }
 
 // StepEvent is emitted during a streaming conversation turn. Type is
@@ -322,6 +352,16 @@ func (a *Agent) buildMessages(userMessage string, history []HistoryMessage, lang
 	}
 	if !online {
 		prompt += ` Offline: do not claim live internet access.`
+	}
+	if a.dynamicTopicsEnabled && a.topicsProvider != nil {
+		if topics, err := a.topicsProvider.Topics(); err == nil && len(topics) > 0 {
+			truncated := topics
+			if len(truncated) > maxPromptTopics {
+				truncated = truncated[:maxPromptTopics]
+			}
+			prompt += " Local uploads cover: " + strings.Join(truncated, ", ") +
+				" — for a question about one of these, check memo (topics/search) first instead of answering from general knowledge or reaching for web_search."
+		}
 	}
 	messages := make([]llm.Message, 0, len(history)+2)
 	messages = append(messages, llm.Message{Role: "system", Content: prompt})

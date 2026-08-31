@@ -127,14 +127,15 @@ func serveCmd() *cobra.Command {
 				settingsPath = settings.DefaultPath()
 			}
 			settingsStore, err := settings.Load(settingsPath, settings.Data{
-				NameRU:            cfg.Assistant.NameRU,
-				NameEN:            cfg.Assistant.NameEN,
-				StylePrompt:       cfg.Assistant.StylePrompt,
-				DefaultLanguage:   cfg.Web.DefaultLanguage,
-				RemoteTemperature: cfg.LLM.Remote.Temperature,
-				LocalTemperature:  cfg.LLM.Local.Temperature,
-				CanonicalTags:     cfg.Memo.CanonicalTags,
-				AlertsThresholds:  seedThresholdRules(cfg.Alerts.Thresholds),
+				NameRU:               cfg.Assistant.NameRU,
+				NameEN:               cfg.Assistant.NameEN,
+				StylePrompt:          cfg.Assistant.StylePrompt,
+				DefaultLanguage:      cfg.Web.DefaultLanguage,
+				RemoteTemperature:    cfg.LLM.Remote.Temperature,
+				LocalTemperature:     cfg.LLM.Local.Temperature,
+				CanonicalTags:        cfg.Memo.CanonicalTags,
+				AlertsThresholds:     seedThresholdRules(cfg.Alerts.Thresholds),
+				DynamicTopicsEnabled: true,
 			})
 			if err != nil {
 				return fmt.Errorf("load settings: %w", err)
@@ -146,6 +147,10 @@ func serveCmd() *cobra.Command {
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(live.NameRU, live.NameEN, live.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
+			if docStore != nil {
+				ag.SetTopicsProvider(docStore)
+			}
+			ag.SetDynamicTopicsEnabled(live.DynamicTopicsEnabled)
 
 			storePath := cfg.Web.SessionStorePath
 			if storePath == "" {

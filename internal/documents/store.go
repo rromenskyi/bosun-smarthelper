@@ -58,6 +58,7 @@ type Summary struct {
 	Title      string `json:"title"`
 	CreatedAt  string `json:"created_at"`
 	ChunkCount int    `json:"chunk_count"`
+	SourcePath string `json:"source_path,omitempty"`
 }
 
 // ScoredChunk is one Search result.
@@ -179,6 +180,39 @@ func (s *Store) List() ([]Summary, error) {
 	return summaries, nil
 }
 
+// Topics returns the distinct top-level filedump folders at least one
+// ingested document lives under (e.g. "hunting-utah" for a document whose
+// SourcePath is "hunting-utah/units"), sorted alphabetically. A document
+// with no SourcePath (the older scripted AddPages import path predates
+// filedump) falls back to its own Title so it isn't silently dropped.
+// Grouping by top-level folder, not by individual document title, keeps
+// this short even once a folder holds many files — see
+// internal/agent.Agent's dynamic topics prompt line, the one consumer.
+func (s *Store) Topics() ([]string, error) {
+	summaries, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(summaries))
+	topics := make([]string, 0, len(summaries))
+	for _, summary := range summaries {
+		topic := summary.SourcePath
+		if idx := strings.Index(topic, "/"); idx >= 0 {
+			topic = topic[:idx]
+		}
+		if topic == "" {
+			topic = summary.Title
+		}
+		if topic == "" || seen[topic] {
+			continue
+		}
+		seen[topic] = true
+		topics = append(topics, topic)
+	}
+	sort.Strings(topics)
+	return topics, nil
+}
+
 // UpdateSourcePath rewrites a document's SourcePath — called by
 // internal/filedump when a move/rename carries a RAG-linked file to a new
 // tree location, so search results keep pointing at where the file
@@ -286,7 +320,7 @@ func (s *Store) Search(ctx context.Context, query string, limit int, documentID 
 }
 
 func summarize(record Record) Summary {
-	return Summary{ID: record.ID, Title: record.Title, CreatedAt: record.CreatedAt, ChunkCount: len(record.Chunks)}
+	return Summary{ID: record.ID, Title: record.Title, CreatedAt: record.CreatedAt, ChunkCount: len(record.Chunks), SourcePath: record.SourcePath}
 }
 
 func newID() (string, error) {

@@ -49,6 +49,14 @@ type Data struct {
 	// global source), each rule here picks its own channels — there's no
 	// single "enabled" toggle for thresholds as a whole.
 	AlertsThresholds []AlertsThresholdRule `json:"alerts_thresholds,omitempty"`
+	// DynamicTopicsEnabled, unlike every other toggle in this struct, is
+	// seeded true by main.go for a brand-new settings store — the whole
+	// point (nudging the model to check local filedump uploads before
+	// guessing or reaching for web_search) is only useful when uploads
+	// exist, but harmless when they don't, so on-by-default is the safer
+	// failure mode rather than a feature nobody notices they need to flip
+	// on. See internal/agent.Agent.SetDynamicTopicsEnabled.
+	DynamicTopicsEnabled bool `json:"dynamic_topics_enabled,omitempty"`
 }
 
 // AlertsThresholdRule is one web-managed metric threshold — see

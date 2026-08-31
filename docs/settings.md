@@ -9,6 +9,15 @@ restarting the service:
 - LLM temperature, separately for the remote and local model
 - the canonical tag vocabulary memo tag auto-normalization maps free-form
   memo tags onto (see `docs/memo-search.md`)
+- dynamic topics: on by default (unlike every other toggle here — see
+  "Why on by default" below) — adds a short line to the system prompt on
+  every turn listing the distinct top-level filedump folders at least one
+  RAG-ingested document lives under (e.g. `hunting-utah`, `ford`), nudging
+  the model to check `memo` before answering from general knowledge or
+  reaching for `web_search` on those topics. Nothing is added when there
+  are no ingested documents yet, or when a document was never ingested
+  from filedump at all (the older scripted import path falls back to its
+  own title instead — see `internal/documents.Store.Topics`)
 - automatic backup: on/off and how often (see `docs/backup.md`) — only
   shown once `backup.s3` is configured in `config.yaml`; the manual
   `smarthelper backup`/"back up now" button work regardless
@@ -35,12 +44,33 @@ loads whatever was last saved from the UI, not `config.yaml` again. To
 reset a value, edit `settings.json` directly (or delete it to reseed from
 `config.yaml` on next start) and restart.
 
+## Why on by default
+
+Every other toggle in this store defaults off — the established
+convention is "opt in to a feature you asked for." Dynamic topics breaks
+that on purpose: it's a nudge that only ever does anything once the
+filedump actually has RAG-ingested content, and is harmless (one skipped
+`if` in `buildMessages`, no prompt-token cost) when it doesn't — so
+leaving it off by default would just mean it silently never engages for
+someone who uploads reference material without separately remembering to
+flip this on. `cmd/smarthelper/main.go`'s `settings.Load` seed defaults
+set it `true`; this only takes effect for a brand-new `settings.json` —
+an existing store keeps whatever the file already has (see "Why a
+separate store, not `config.yaml`" above), so a deployment that predates
+this feature needs it flipped on once from the settings page (or by
+editing `settings.json` directly) to pick up the new default.
+
 ## Applying changes live
 
 Every field applies immediately, without a restart:
 
 - persona/style prompt → `agent.Agent.SetPersona` (already a live setter,
   used elsewhere for the same reason)
+- dynamic topics → `agent.Agent.SetDynamicTopicsEnabled`, the same live-setter
+  shape as persona; the actual topic list itself is never cached — it's
+  read fresh from `internal/documents.Store.Topics` on every turn, so a
+  newly uploaded file's folder shows up on the very next message, no
+  restart or settings save needed for that part
 - temperatures → `internal/llm.Router.SetTemperatures`, which forwards to
   new mutex-guarded `SetTemperature` methods on `RemoteClient`/`LocalClient`
   so an in-flight request finishes with whatever temperature it started

@@ -485,6 +485,11 @@
           <label class="settings-label" id="settings-label-tags">Теги для автонормализации памяти (через запятую)</label>
           <input type="text" id="settings-canonical-tags" placeholder="purchases, fuel_system, oil">
           <p class="docs-hint" id="settings-tags-hint">Пусто — автонормализация тегов выключена.</p>
+          <label class="settings-checkbox">
+            <input type="checkbox" id="settings-dynamic-topics">
+            <span id="settings-dynamic-topics-label">Напоминать модели о темах в файлах</span>
+          </label>
+          <p class="docs-hint" id="settings-dynamic-topics-hint">Модель увидит короткий список папок в файлах и сначала проверит их, а не будет гадать или сразу лезть в интернет.</p>
           <p class="docs-hint" id="settings-ca-cert-hint" hidden>
             <a href="/ca.pem" id="settings-ca-cert-link" download="bosun-ca.pem">Скачать сертификат для HTTPS</a>
           </p>
@@ -1308,6 +1313,8 @@
       document.querySelector('#settings-label-local-temp').textContent = text[locale].settingsLabelLocalTemp;
       document.querySelector('#settings-label-tags').textContent = text[locale].settingsLabelTags;
       document.querySelector('#settings-tags-hint').textContent = text[locale].settingsTagsHint;
+      document.querySelector('#settings-dynamic-topics-label').textContent = text[locale].settingsDynamicTopicsLabel;
+      document.querySelector('#settings-dynamic-topics-hint').textContent = text[locale].settingsDynamicTopicsHint;
       document.querySelector('#settings-save-button').textContent = text[locale].settingsSave;
       document.querySelector('#settings-saved-hint').textContent = text[locale].settingsSaved;
       document.querySelector('#settings-close').textContent = text[locale].settingsClose;
@@ -1556,6 +1563,7 @@
       document.querySelector('#settings-remote-temp').value = settings.remote_temperature;
       document.querySelector('#settings-local-temp').value = settings.local_temperature;
       document.querySelector('#settings-canonical-tags').value = (settings.canonical_tags || []).join(', ');
+      document.querySelector('#settings-dynamic-topics').checked = !!settings.dynamic_topics_enabled;
       document.querySelector('#settings-ca-cert-hint').hidden = !data.ca_cert_available;
       document.querySelector('#settings-backup-auto').checked = !!settings.backup_auto_enabled;
       document.querySelector('#settings-backup-interval').value = settings.backup_interval_hours || 24;
@@ -2028,6 +2036,7 @@
         remote_temperature: parseFloat(document.querySelector('#settings-remote-temp').value),
         local_temperature: parseFloat(document.querySelector('#settings-local-temp').value),
         canonical_tags: tags,
+        dynamic_topics_enabled: document.querySelector('#settings-dynamic-topics').checked,
         backup_auto_enabled: document.querySelector('#settings-backup-auto').checked,
         backup_interval_hours: parseInt(document.querySelector('#settings-backup-interval').value, 10),
         alerts_telegram_enabled: document.querySelector('#settings-alerts-telegram').checked,
