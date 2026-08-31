@@ -86,5 +86,14 @@ cleared anymore, a new one is being started.
   removed a session (in-memory and on disk) before this feature, now
   reachable from the picker for any listed session, not just the one
   the "Clear chat" button used to discard.
-- `GET /api/history?session_id=` — unchanged; still how "Continue"
-  rehydrates the picked session's transcript into the visible chat.
+- `GET /api/history?session_id=` gained `"temporary": true` (present
+  only when the session is ephemeral, same `omitempty`-style shape as
+  the existing `adventure_mode`/`adventure_session` fields) — otherwise
+  unchanged; still how "Continue" rehydrates the picked session's
+  transcript into the visible chat. The client's own `sessionIsTemporary`
+  flag is corrected from this on every `hydrateHistory()` call
+  (including the one on page load), so a reload in the middle of a
+  temporary chat still shows the "not saved" notice near the composer
+  instead of silently losing it — the flag only starts out
+  client-guessed (`false`) for the brief window before a brand-new
+  temporary session's first message actually creates it server-side.

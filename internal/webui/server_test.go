@@ -723,6 +723,39 @@ func TestServerTemporarySessionExcludedFromListAndPersistence(t *testing.T) {
 	}
 }
 
+// TestServerHistoryEndpointSurfacesTemporaryFlag is a regression test: a
+// page reload mid-temporary-chat must not silently drop the "not saved"
+// notice near the composer, since sessionIsTemporary is otherwise purely
+// client-side JS state that resets to false on every load.
+func TestServerHistoryEndpointSurfacesTemporaryFlag(t *testing.T) {
+	asker := &conversationFakeAsker{answers: []string{"Ответ.", "Ответ 2."}}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	handler := server.Handler()
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/chat",
+		strings.NewReader(`{"message":"Вопрос","session_id":"temp-history-test","temporary":true}`)))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/chat",
+		strings.NewReader(`{"message":"Обычный вопрос","session_id":"normal-history-test"}`)))
+
+	getHistory := func(sessionID string) map[string]any {
+		request := httptest.NewRequest(http.MethodGet, "/api/history?session_id="+sessionID, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		var payload map[string]any
+		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode history response for %s: %v", sessionID, err)
+		}
+		return payload
+	}
+
+	if payload := getHistory("temp-history-test"); payload["temporary"] != true {
+		t.Errorf("temporary session history = %#v, want temporary:true", payload)
+	}
+	if payload := getHistory("normal-history-test"); payload["temporary"] != nil {
+		t.Errorf("normal session history = %#v, want no temporary field", payload)
+	}
+}
+
 func TestTitleFromMessageUsesFirstLineAndTruncates(t *testing.T) {
 	if got := titleFromMessage("  Какая погода в Юте?  "); got != "Какая погода в Юте?" {
 		t.Errorf("titleFromMessage(trimmed) = %q", got)

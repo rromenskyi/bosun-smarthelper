@@ -200,7 +200,10 @@
     .mic.recording { background: var(--danger); color: #3a0f0a; border-color: transparent; animation: mic-pulse 1s ease-in-out infinite; }
     .mic.processing { opacity: .6; cursor: wait; animation: pulse 1.2s ease-in-out infinite alternate; }
     @keyframes mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(211, 82, 66, .5); } 50% { box-shadow: 0 0 0 8px rgba(211, 82, 66, 0); } }
-    .form-meta { display: flex; justify-content: space-between; align-items: center; padding: 7px 5px 0; color: var(--muted); font-size: 11px; }
+    .form-meta { display: flex; justify-content: space-between; align-items: center; padding: 7px 5px 0; color: var(--muted); font-size: 11px; flex-wrap: wrap; gap: 6px; }
+    .temporary-indicator {
+      color: var(--accent-strong); border: 1px solid var(--accent); border-radius: 999px; padding: 2px 8px;
+    }
     select { color: var(--muted); border: 0; background: transparent; outline: 0; }
     option { color: #111; }
     .clear { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
@@ -650,8 +653,9 @@
         <button class="send" id="send" type="button" aria-label="Отправить">↑</button>
       </div>
       <div class="form-meta">
+        <span class="temporary-indicator" id="temporary-indicator" hidden>Временный чат — не сохраняется</span>
         <select id="language" aria-label="Язык ответа"><option value="ru">Русский</option><option value="en">English</option></select>
-        <button class="clear" id="clear" type="button">Очистить чат</button>
+        <button class="clear" id="clear" type="button">Новый чат</button>
       </div>
     </form>
   </main>
@@ -705,12 +709,13 @@
     const sessionStorageKey = 'bosun-session-id';
     let sessionId = localStorage.getItem(sessionStorageKey) || createSessionId();
     localStorage.setItem(sessionStorageKey, sessionId);
-    // sessionIsTemporary is never persisted (a temporary session's whole
-    // point is to leave no trace) — it resets to false on reload, which is
-    // harmless: the flag only matters on the turn that actually creates a
-    // session server-side (see chatRequest.Temporary), and by the time a
-    // reload happens that session either already exists (flag ignored) or
-    // never sent a message at all (nothing to lose).
+    // sessionIsTemporary starts false on every load — this only matters
+    // for the moment before the first message of a brand-new temporary
+    // session is sent (nothing server-side to ask about yet). Once a
+    // session actually exists, hydrateHistory() below corrects this from
+    // the server's own Ephemeral flag (GET /api/history's "temporary"
+    // field), so a reload mid-temporary-chat still shows the indicator
+    // instead of silently losing it.
     let sessionIsTemporary = false;
 
     function escapeHTML(value) {
@@ -1327,6 +1332,7 @@
       document.querySelector('#empty-title').textContent = text[locale].emptyTitle;
       document.querySelector('#empty-body').textContent = text[locale].emptyBody;
       document.querySelector('#clear').textContent = text[locale].clear;
+      document.querySelector('#temporary-indicator').textContent = text[locale].temporaryIndicator;
       bell.title = text[locale].bellTitle;
       bell.setAttribute('aria-label', text[locale].bellTitle);
       const overrideSuffix = currentOverride !== 'auto' ? ' 🔒' : '';
@@ -2396,6 +2402,15 @@
     refreshMergesBadge();
     setInterval(refreshMergesBadge, 5 * 60 * 1000);
 
+    // Reflects sessionIsTemporary in the UI — called anywhere that
+    // variable changes, including after hydrateHistory sets it from the
+    // server's own Ephemeral flag (see handleHistory), since a page
+    // reload would otherwise silently drop this notice while the session
+    // stayed just as temporary underneath.
+    function updateTemporaryIndicator() {
+      document.querySelector('#temporary-indicator').hidden = !sessionIsTemporary;
+    }
+
     // Switches the visible chat to a brand-new, empty session — unlike
     // the old "Clear chat" behavior this replaced, the session being left
     // is never deleted: it's still reachable from the sessions dialog
@@ -2403,6 +2418,7 @@
     function startNewSession(temporary) {
       sessionId = createSessionId();
       sessionIsTemporary = temporary;
+      updateTemporaryIndicator();
       localStorage.setItem(sessionStorageKey, sessionId);
       messages.querySelectorAll('.message').forEach(node => node.remove());
       empty.hidden = false;
@@ -2415,6 +2431,7 @@
     async function continueSession(id) {
       sessionId = id;
       sessionIsTemporary = false;
+      updateTemporaryIndicator();
       localStorage.setItem(sessionStorageKey, sessionId);
       messages.querySelectorAll('.message').forEach(node => node.remove());
       empty.hidden = false;
@@ -2512,6 +2529,8 @@
           adventureSessionName = data.adventure_session;
           updateAdventureToggle();
         }
+        sessionIsTemporary = data.temporary === true;
+        updateTemporaryIndicator();
         if (Array.isArray(data.messages) && data.messages.length) {
           let lastUser = '';
           data.messages.forEach(message => {

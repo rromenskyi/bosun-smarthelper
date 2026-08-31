@@ -642,6 +642,16 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		response["adventure_mode"] = true
 		response["adventure_session"] = adventureSessionName
 	}
+	// Same reasoning as adventure_mode above, for the same failure mode:
+	// sessionIsTemporary is purely client-side JS state, reset to false on
+	// every page load — without surfacing the server's own Ephemeral flag
+	// here, a reload silently dropped the "this chat isn't saved" notice
+	// (docs/chat-sessions.md) while the session stayed just as ephemeral
+	// underneath, which is exactly the confusing case a temporary chat's
+	// user most needs to be reminded about.
+	if s.sessionIsEphemeral(sessionID) {
+		response["temporary"] = true
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -1257,6 +1267,16 @@ func (s *Server) adventureModeSession(sessionID string) (string, bool) {
 		return "", false
 	}
 	return session.AdventureSessionName, true
+}
+
+// sessionIsEphemeral reports whether sessionID was created with
+// chatRequest.Temporary — see handleHistory, which surfaces this to the
+// client so a page reload doesn't lose the "this chat isn't saved" notice.
+func (s *Server) sessionIsEphemeral(sessionID string) bool {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	session, ok := s.sessions[sessionID]
+	return ok && session.Ephemeral
 }
 
 // setAdventureMode flips sessionID's conversation into or out of game
