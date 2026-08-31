@@ -135,7 +135,7 @@ func (t *MemoTool) InputSchema() map[string]any {
 			},
 			"limit": map[string]any{
 				"type":        "number",
-				"description": "For search, maximum number of results (default 5).",
+				"description": "For search, maximum number of results (default 5, capped at 20 regardless of what's requested).",
 			},
 			"document_id": map[string]any{
 				"type":        "string",
@@ -385,6 +385,18 @@ type scoredMemo struct {
 // paste the whole source.
 const maxSearchResultChars = 500
 
+// maxSearchLimit is the other half of that same mitigation: limit itself
+// is a model-supplied tool argument with no upper bound otherwise — live
+// evidence of exactly the risk maxSearchResultChars's comment already
+// warned about: after this deployment's document store grew from ~50 to
+// over 1000 documents (a bulk manual import), a single search call
+// requesting an unusually large limit produced a ~94,000-token request
+// against a local model with an 8192-token context, failing the turn
+// outright. Capping limit here, not just each result's text, bounds a
+// single search call's total contribution regardless of how large the
+// store grows.
+const maxSearchLimit = 20
+
 func truncateForSearch(text string) string {
 	runes := []rune(text)
 	if len(runes) <= maxSearchResultChars {
@@ -408,6 +420,9 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 	limit := 5
 	if raw, ok := args["limit"].(float64); ok && raw > 0 {
 		limit = int(raw)
+	}
+	if limit > maxSearchLimit {
+		limit = maxSearchLimit
 	}
 	tagFilter, _ := args["tag"].(string)
 	tagFilter = strings.TrimSpace(tagFilter)

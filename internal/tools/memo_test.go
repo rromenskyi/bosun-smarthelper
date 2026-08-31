@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -103,6 +104,35 @@ func TestMemoToolSearchFallsBackToSubstringWithoutEmbeddings(t *testing.T) {
 	memos := view["results"].([]map[string]any)
 	if memos[0]["key"] != "fridge" {
 		t.Errorf("matched memo = %#v, want fridge", memos[0])
+	}
+}
+
+// TestMemoToolSearchCapsLimitRegardlessOfRequestedValue is a regression
+// test for a real incident: a model-supplied limit had no upper bound,
+// and after the document store grew large a single search call with an
+// unusually large limit produced a request too big for a local model's
+// context window (see maxSearchLimit's doc comment).
+func TestMemoToolSearchCapsLimitRegardlessOfRequestedValue(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	ctx := context.Background()
+	for i := 0; i < maxSearchLimit+10; i++ {
+		key := fmt.Sprintf("note-%d", i)
+		if _, err := tool.Execute(ctx, map[string]any{"action": "write", "key": key, "content": "жара летом"}); err != nil {
+			t.Fatalf("write memo %d: %v", i, err)
+		}
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "search", "query": "жара", "limit": float64(1000)})
+	if err != nil {
+		t.Fatalf("search memos: %v", err)
+	}
+	view := result.(map[string]any)
+	if view["count"] != maxSearchLimit {
+		t.Fatalf("count = %v, want capped at %d despite requesting 1000", view["count"], maxSearchLimit)
+	}
+	memos := view["results"].([]map[string]any)
+	if len(memos) != maxSearchLimit {
+		t.Errorf("results = %d, want capped at %d", len(memos), maxSearchLimit)
 	}
 }
 

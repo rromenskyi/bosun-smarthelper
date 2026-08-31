@@ -167,9 +167,19 @@ times):
   similarity guess.
 - **Each result's text is capped** at `maxSearchResultChars` (500 runes,
   `internal/tools/memo.go`) — a search result should point at the answer,
-  not paste the whole source; unbounded text here (up to 5 results × a
-  1500-char document chunk, or memo's own 10000-char write limit) is
-  itself a plausible trigger for a weak model choking on context.
+  not paste the whole source; unbounded text here (a 1500-char document
+  chunk, or memo's own 10000-char write limit, times however many
+  results) is itself a plausible trigger for a weak model choking on
+  context.
+- **`search`'s own `limit` argument is capped** at `maxSearchLimit` (20,
+  same file) regardless of what's requested — `limit` is a model-supplied
+  tool argument, not something this app controls, and 5 being the
+  *default* was never actually a ceiling on it. Confirmed live: once the
+  document store grew past ~1000 documents (a bulk manual import), a
+  single search call requesting an unusually large `limit` produced a
+  ~94,000-token request against a local model with an 8192-token
+  context, failing the turn outright — exactly the risk the bullet above
+  already described, just missing its other half.
 
 A third, complementary guard lives in `internal/agent` — see
 `repetitionDetector`: even with these two in place, any model can still
