@@ -603,6 +603,141 @@ func TestServerSessionClearRemovesPersistedSession(t *testing.T) {
 	}
 }
 
+func TestServerSessionsListReturnsAutoTitleNewestFirst(t *testing.T) {
+	asker := &conversationFakeAsker{answers: []string{"Ответ 1.", "Ответ 2."}}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	handler := server.Handler()
+
+	post := func(sessionID, message string) {
+		body := fmt.Sprintf(`{"message":%q,"session_id":%q}`, message, sessionID)
+		request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("chat status = %d: %s", response.Code, response.Body.String())
+		}
+	}
+	post("sessions-list-a", "Первая сессия")
+	post("sessions-list-b", "Вторая сессия")
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, listRequest)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("list status = %d", listResponse.Code)
+	}
+
+	var payload struct {
+		Sessions []sessionSummary `json:"sessions"`
+	}
+	if err := json.NewDecoder(listResponse.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode sessions response: %v", err)
+	}
+	if len(payload.Sessions) != 2 {
+		t.Fatalf("sessions = %#v, want 2", payload.Sessions)
+	}
+	// Newest first: session-b was created after session-a.
+	if payload.Sessions[0].SessionID != "sessions-list-b" || payload.Sessions[0].Title != "Вторая сессия" {
+		t.Errorf("sessions[0] = %#v, want sessions-list-b titled 'Вторая сессия'", payload.Sessions[0])
+	}
+	if payload.Sessions[0].MessageCount != 2 {
+		t.Errorf("sessions[0].message_count = %d, want 2 (user + assistant)", payload.Sessions[0].MessageCount)
+	}
+	if payload.Sessions[1].SessionID != "sessions-list-a" || payload.Sessions[1].Title != "Первая сессия" {
+		t.Errorf("sessions[1] = %#v, want sessions-list-a titled 'Первая сессия'", payload.Sessions[1])
+	}
+}
+
+func TestServerSessionTitleSetOnlyFromFirstMessage(t *testing.T) {
+	asker := &conversationFakeAsker{answers: []string{"Ответ 1.", "Ответ 2."}}
+	server := NewServer(asker, nil, time.Second, "ru", nil)
+	handler := server.Handler()
+
+	post := func(message string) {
+		body := fmt.Sprintf(`{"message":%q,"session_id":"title-fixed-test"}`, message)
+		request := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+	}
+	post("Первое сообщение")
+	post("Второе сообщение, которое не должно стать заголовком")
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, listRequest)
+	var payload struct {
+		Sessions []sessionSummary `json:"sessions"`
+	}
+	if err := json.NewDecoder(listResponse.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode sessions response: %v", err)
+	}
+	if len(payload.Sessions) != 1 || payload.Sessions[0].Title != "Первое сообщение" {
+		t.Fatalf("sessions = %#v, want title fixed at the first message", payload.Sessions)
+	}
+}
+
+func TestServerTemporarySessionExcludedFromListAndPersistence(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "sessions.json")
+	options := SessionOptions{TTL: time.Hour, MaxSessions: 10, StorePath: storePath}
+	asker := &conversationFakeAsker{answers: []string{"Ответ.", "Ответ 2."}}
+	server := NewServer(asker, nil, time.Second, "ru", nil, options)
+	handler := server.Handler()
+
+	temporaryRequest := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(
+		`{"message":"Временный вопрос","session_id":"temp-session-test","temporary":true}`))
+	if response := httptest.NewRecorder(); true {
+		handler.ServeHTTP(response, temporaryRequest)
+		if response.Code != http.StatusOK {
+			t.Fatalf("temporary chat status = %d: %s", response.Code, response.Body.String())
+		}
+	}
+	normalRequest := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(
+		`{"message":"Обычный вопрос","session_id":"normal-session-test"}`))
+	handler.ServeHTTP(httptest.NewRecorder(), normalRequest)
+
+	// The temporary session is live in-memory (history still hydratable
+	// within the same process) but never shows up in the picker list.
+	if history := server.loadHistory("temp-session-test"); len(history) != 2 {
+		t.Errorf("in-memory history for temp session = %#v, want 2 messages", history)
+	}
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, listRequest)
+	var payload struct {
+		Sessions []sessionSummary `json:"sessions"`
+	}
+	if err := json.NewDecoder(listResponse.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode sessions response: %v", err)
+	}
+	if len(payload.Sessions) != 1 || payload.Sessions[0].SessionID != "normal-session-test" {
+		t.Fatalf("sessions = %#v, want only the non-temporary session", payload.Sessions)
+	}
+
+	// A fresh server reading the same store must never have seen the
+	// temporary session at all.
+	reloaded := NewServer(&conversationFakeAsker{answers: []string{"unused"}}, nil, time.Second, "ru", nil, options)
+	if history := reloaded.loadHistory("temp-session-test"); len(history) != 0 {
+		t.Errorf("history for temp session after restart = %#v, want empty (never persisted)", history)
+	}
+	if history := reloaded.loadHistory("normal-session-test"); len(history) != 2 {
+		t.Errorf("history for normal session after restart = %#v, want 2 messages (persisted normally)", history)
+	}
+}
+
+func TestTitleFromMessageUsesFirstLineAndTruncates(t *testing.T) {
+	if got := titleFromMessage("  Какая погода в Юте?  "); got != "Какая погода в Юте?" {
+		t.Errorf("titleFromMessage(trimmed) = %q", got)
+	}
+	if got := titleFromMessage("Первая строка\nВторая строка"); got != "Первая строка" {
+		t.Errorf("titleFromMessage(multiline) = %q, want only the first line", got)
+	}
+	long := strings.Repeat("a", maxSessionTitleChars+10)
+	got := titleFromMessage(long)
+	gotRunes := []rune(got)
+	if len(gotRunes) != maxSessionTitleChars+1 || gotRunes[maxSessionTitleChars] != '…' {
+		t.Errorf("titleFromMessage(long) = %q (%d runes), want truncated to %d chars + ellipsis", got, len(gotRunes), maxSessionTitleChars)
+	}
+}
+
 func TestServerChat(t *testing.T) {
 	asker := &fakeAsker{answer: "Сейчас 22,5°C."}
 	server := NewServer(asker, nil, time.Second, "ru", nil)

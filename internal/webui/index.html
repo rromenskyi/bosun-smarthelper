@@ -388,6 +388,18 @@
     }
     .merges-list-actions button.approve { border-color: var(--accent); color: var(--accent-strong); }
     .merges-list-actions button.reject { border-color: var(--danger); color: var(--danger); }
+    dialog#sessions-dialog {
+      border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
+      color: var(--text); width: min(92vw, 480px); max-height: 85vh; overflow-y: auto; padding: 18px;
+    }
+    dialog#sessions-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+    dialog#sessions-dialog h2 { margin: 0 0 10px; font-size: 16px; }
+    .sessions-toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .sessions-toolbar button {
+      border: 1px solid var(--line); background: transparent; color: var(--text);
+      border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+    }
+    #sessions-list li.active { border-color: var(--accent); }
     dialog#cameras-dialog {
       border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
       color: var(--text); width: min(92vw, 640px); max-height: 85vh; overflow-y: auto; padding: 18px;
@@ -419,6 +431,7 @@
       </div>
       <div class="header-actions">
         <button class="bell" id="settings-toggle" type="button" aria-label="Настройки" title="Настройки">⚙️</button>
+        <button class="bell" id="sessions-toggle" type="button" aria-label="Сессии" title="Сессии">💬</button>
         <button class="bell" id="filedump-toggle" type="button" aria-label="Файлы" title="Файлы">📄</button>
         <button class="bell" id="metrics-toggle" type="button" aria-label="Мониторинг" title="Мониторинг" hidden>📊</button>
         <button class="bell" id="cameras-toggle" type="button" aria-label="Камеры" title="Камеры" hidden>📹</button>
@@ -458,6 +471,17 @@
       </div>
       <ul class="docs-list filedump-list" id="filedump-list"></ul>
       <button type="button" class="clear" id="filedump-close">Закрыть</button>
+    </dialog>
+
+    <dialog id="sessions-dialog">
+      <h2 id="sessions-title">Сессии</h2>
+      <div class="sessions-toolbar">
+        <button type="button" id="sessions-new">+ Новый чат</button>
+        <button type="button" id="sessions-new-temporary">+ Временный чат</button>
+      </div>
+      <p class="docs-hint" id="sessions-empty" hidden>Пока нет сохранённых сессий.</p>
+      <ul class="docs-list" id="sessions-list"></ul>
+      <button type="button" class="clear" id="sessions-close">Закрыть</button>
     </dialog>
 
     <dialog id="settings-dialog">
@@ -659,6 +683,8 @@
     const bellAudio = new Audio(BELL_SOUND);
     const settingsToggle = document.querySelector('#settings-toggle');
     const settingsDialog = document.querySelector('#settings-dialog');
+    const sessionsToggle = document.querySelector('#sessions-toggle');
+    const sessionsDialog = document.querySelector('#sessions-dialog');
     const settingsForm = document.querySelector('#settings-form');
     const metricsToggle = document.querySelector('#metrics-toggle');
     const metricsDialog = document.querySelector('#metrics-dialog');
@@ -679,6 +705,13 @@
     const sessionStorageKey = 'bosun-session-id';
     let sessionId = localStorage.getItem(sessionStorageKey) || createSessionId();
     localStorage.setItem(sessionStorageKey, sessionId);
+    // sessionIsTemporary is never persisted (a temporary session's whole
+    // point is to leave no trace) — it resets to false on reload, which is
+    // harmless: the flag only matters on the turn that actually creates a
+    // session server-side (see chatRequest.Temporary), and by the time a
+    // reload happens that session either already exists (flag ignored) or
+    // never sent a message at all (nothing to lose).
+    let sessionIsTemporary = false;
 
     function escapeHTML(value) {
       return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1108,7 +1141,7 @@
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: value.trim(), language: language.value, session_id: sessionId }),
+          body: JSON.stringify({ message: value.trim(), language: language.value, session_id: sessionId, temporary: sessionIsTemporary }),
           signal: controller.signal
         });
 
@@ -1304,6 +1337,13 @@
       updateFileDumpLanguage(locale);
       settingsToggle.title = text[locale].settingsToggleTitle;
       settingsToggle.setAttribute('aria-label', text[locale].settingsToggleTitle);
+      sessionsToggle.title = text[locale].sessionsToggleTitle;
+      sessionsToggle.setAttribute('aria-label', text[locale].sessionsToggleTitle);
+      document.querySelector('#sessions-title').textContent = text[locale].sessionsTitle;
+      document.querySelector('#sessions-new').textContent = text[locale].sessionsNew;
+      document.querySelector('#sessions-new-temporary').textContent = text[locale].sessionsNewTemporary;
+      document.querySelector('#sessions-empty').textContent = text[locale].sessionsEmpty;
+      document.querySelector('#sessions-close').textContent = text[locale].sessionsClose;
       document.querySelector('#settings-title').textContent = text[locale].settingsTitle;
       document.querySelector('#settings-label-name-ru').textContent = text[locale].settingsLabelNameRu;
       document.querySelector('#settings-label-name-en').textContent = text[locale].settingsLabelNameEn;
@@ -2356,18 +2396,90 @@
     refreshMergesBadge();
     setInterval(refreshMergesBadge, 5 * 60 * 1000);
 
-    document.querySelector('#clear').addEventListener('click', () => {
-      const previousSessionId = sessionId;
+    // Switches the visible chat to a brand-new, empty session — unlike
+    // the old "Clear chat" behavior this replaced, the session being left
+    // is never deleted: it's still reachable from the sessions dialog
+    // (docs/chat-sessions.md) unless the user explicitly closes it there.
+    function startNewSession(temporary) {
       sessionId = createSessionId();
+      sessionIsTemporary = temporary;
       localStorage.setItem(sessionStorageKey, sessionId);
-      fetch('/api/session/clear', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: previousSessionId })
-      }).catch(() => {});
       messages.querySelectorAll('.message').forEach(node => node.remove());
       empty.hidden = false;
+      adventureMode = false;
+      adventureSessionName = null;
+      updateAdventureToggle();
+      stopAdventureAudio();
+    }
+
+    async function continueSession(id) {
+      sessionId = id;
+      sessionIsTemporary = false;
+      localStorage.setItem(sessionStorageKey, sessionId);
+      messages.querySelectorAll('.message').forEach(node => node.remove());
+      empty.hidden = false;
+      adventureMode = false;
+      adventureSessionName = null;
+      await hydrateHistory();
+      updateAdventureToggle();
+      sessionsDialog.close();
+    }
+
+    async function loadSessions() {
+      const list = document.querySelector('#sessions-list');
+      const empty = document.querySelector('#sessions-empty');
+      try {
+        const response = await fetch('/api/sessions');
+        const data = await response.json();
+        const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+        list.innerHTML = '';
+        empty.hidden = sessions.length > 0;
+        sessions.forEach(session => {
+          const li = document.createElement('li');
+          if (session.session_id === sessionId) li.classList.add('active');
+          const info = document.createElement('span');
+          info.textContent = session.title || session.session_id;
+          const actions = document.createElement('span');
+          const continueButton = document.createElement('button');
+          continueButton.type = 'button';
+          continueButton.textContent = text[language.value].sessionsContinue;
+          continueButton.addEventListener('click', () => continueSession(session.session_id));
+          const closeButton = document.createElement('button');
+          closeButton.type = 'button';
+          closeButton.textContent = text[language.value].sessionsCloseAction;
+          closeButton.addEventListener('click', async () => {
+            await fetch('/api/session/clear', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ session_id: session.session_id })
+            });
+            if (session.session_id === sessionId) startNewSession(false);
+            loadSessions();
+          });
+          actions.append(continueButton, closeButton);
+          li.append(info, actions);
+          list.appendChild(li);
+        });
+      } catch {
+        // Best-effort: connectivity issues already surface via the status pill.
+      }
+    }
+
+    sessionsToggle.addEventListener('click', () => {
+      loadSessions();
+      sessionsDialog.showModal();
     });
+    document.querySelector('#sessions-close').addEventListener('click', () => sessionsDialog.close());
+    document.querySelector('#sessions-new').addEventListener('click', () => {
+      startNewSession(false);
+      sessionsDialog.close();
+    });
+    document.querySelector('#sessions-new-temporary').addEventListener('click', () => {
+      startNewSession(true);
+      sessionsDialog.close();
+    });
+
+    document.querySelector('#clear').addEventListener('click', () => startNewSession(false));
     language.addEventListener('change', updateLanguage);
 
     function refreshStatus() {

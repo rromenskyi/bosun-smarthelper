@@ -126,7 +126,7 @@ func (s *Server) handleAdventureTurn(w http.ResponseWriter, ctx context.Context,
 		}
 	}
 
-	s.saveUserMessage(sessionID, message)
+	s.saveUserMessage(sessionID, message, false)
 	// Zero-value TurnStats/duration: game mode bypasses the agent entirely
 	// (see the doc comment above), so there's no real LLM turn to report
 	// stats for — HistoryMessage's omitempty tags mean this is

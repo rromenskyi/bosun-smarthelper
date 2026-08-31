@@ -94,6 +94,10 @@ top-level tour has room for. Grouped by what you're trying to do.
   real folders), with a per-upload checkbox to also feed a file into
   `memo-search.md`'s RAG document store, tagged with the folder it came
   from. Off by default.
+- **[chat-sessions.md](chat-sessions.md)** — a 💬 button for picking a
+  past chat session to continue, closing one, or starting a fresh one —
+  regular (auto-titled, saved) or temporary (never written to disk,
+  never listed).
 
 ## How it behaves, and why
 

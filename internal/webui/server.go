@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -286,6 +287,21 @@ type chatSession struct {
 	History   []agent.HistoryMessage
 	UpdatedAt time.Time
 
+	// Title is set once, from the first user message, when the session is
+	// created (see saveUserMessage) — never overwritten after that. Lets
+	// GET /api/sessions (docs/chat-sessions.md) show something more
+	// useful than a bare session ID in the session picker.
+	Title string
+
+	// Ephemeral marks a session started via chatRequest.Temporary — set
+	// once at creation, same as Title. It's otherwise a completely
+	// ordinary session (subject to the same TTL/MaxSessions eviction as
+	// any other), except persistLocked excludes it from the on-disk
+	// snapshot and handleSessionsList excludes it from the picker list —
+	// exactly what "temporary" is supposed to mean: gone the moment the
+	// process restarts, and never something to come back to.
+	Ephemeral bool
+
 	// AdventureMode/AdventureSessionName: while AdventureMode is set,
 	// every message in this conversation goes straight to the named
 	// go-adventure session instead of the LLM/tool-calling loop — see
@@ -454,6 +470,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/adventure/sessions", s.handleAdventureSessionCreate)
 	mux.HandleFunc("PATCH /api/adventure/sessions/{name}", s.handleAdventureSessionRename)
 	mux.HandleFunc("DELETE /api/adventure/sessions/{name}", s.handleAdventureSessionDelete)
+	mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
 	mux.HandleFunc("POST /api/session/clear", s.handleSessionClear)
 	mux.HandleFunc("GET /api/documents", s.handleDocumentsList)
 	mux.HandleFunc("POST /api/documents/pages", s.handleDocumentAddPages)
@@ -632,6 +649,11 @@ type chatRequest struct {
 	Message   string `json:"message"`
 	Language  string `json:"language"`
 	SessionID string `json:"session_id,omitempty"`
+	// Temporary only has any effect on the turn that actually creates the
+	// session (see saveUserMessage) — sending it on a later turn of an
+	// already-existing session is harmless but does nothing, since a
+	// session's Ephemeral flag is fixed at creation.
+	Temporary bool `json:"temporary,omitempty"`
 }
 
 type chatResponse struct {
@@ -775,7 +797,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	history := s.loadHistory(sessionID)
 	// Saved now, not after the answer comes back — see saveUserMessage.
-	s.saveUserMessage(sessionID, request.Message)
+	s.saveUserMessage(sessionID, request.Message, request.Temporary)
 	if servedLocally {
 		// The local model is about to serve this request: trim to its small
 		// budget for the outgoing call only. The full history stays in the
@@ -964,6 +986,55 @@ func (s *Server) handleChatStreaming(
 	})
 }
 
+// sessionSummary is one entry in GET /api/sessions's list — see
+// handleSessionsList and docs/chat-sessions.md.
+type sessionSummary struct {
+	SessionID    string `json:"session_id"`
+	Title        string `json:"title,omitempty"`
+	UpdatedAt    string `json:"updated_at"`
+	MessageCount int    `json:"message_count"`
+}
+
+// handleSessionsList backs the session picker dialog (docs/chat-sessions.md):
+// every non-ephemeral session, newest first. A session started with
+// chatRequest.Temporary is deliberately excluded — the whole point of
+// "temporary" is that it never shows up as something to come back to.
+func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
+	type entry struct {
+		id      string
+		session chatSession
+	}
+
+	s.sessionsMu.Lock()
+	s.purgeExpiredLocked(time.Now())
+	entries := make([]entry, 0, len(s.sessions))
+	for id, session := range s.sessions {
+		if session.Ephemeral {
+			continue
+		}
+		entries = append(entries, entry{id: id, session: session})
+	}
+	s.sessionsMu.Unlock()
+
+	// Sorted on the real time.Time, not the formatted string below —
+	// RFC3339 only has second precision, so two sessions updated within
+	// the same second would otherwise tie and fall back to Go's
+	// randomized map iteration order instead of the real, sub-second
+	// creation order.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].session.UpdatedAt.After(entries[j].session.UpdatedAt) })
+
+	summaries := make([]sessionSummary, len(entries))
+	for i, e := range entries {
+		summaries[i] = sessionSummary{
+			SessionID:    e.id,
+			Title:        e.session.Title,
+			UpdatedAt:    e.session.UpdatedAt.Format(time.RFC3339),
+			MessageCount: len(e.session.History),
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": summaries})
+}
+
 type clearSessionRequest struct {
 	SessionID string `json:"session_id"`
 }
@@ -1105,20 +1176,47 @@ func (s *Server) loadHistory(sessionID string) []agent.HistoryMessage {
 // last, unanswered entry, which is an honest reflection of what actually
 // happened and renders fine (hydrateHistory in index.html tolerates a
 // trailing user message with no reply).
-func (s *Server) saveUserMessage(sessionID, userMessage string) {
+func (s *Server) saveUserMessage(sessionID, userMessage string, temporary bool) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	now := time.Now()
 	s.purgeExpiredLocked(now)
-	if _, exists := s.sessions[sessionID]; !exists && len(s.sessions) >= s.sessionOptions.MaxSessions {
+	_, exists := s.sessions[sessionID]
+	if !exists && len(s.sessions) >= s.sessionOptions.MaxSessions {
 		s.evictOldestLocked()
 	}
 	session := s.sessions[sessionID]
+	if !exists {
+		session.Title = titleFromMessage(userMessage)
+		session.Ephemeral = temporary
+	}
 	session.History = append(session.History, agent.HistoryMessage{Role: "user", Content: userMessage})
 	session.History = trimHistory(session.History, s.sessionOptions.Remote.Turns, s.sessionOptions.Remote.MaxChars)
 	session.UpdatedAt = now
 	s.sessions[sessionID] = session
 	s.persistLocked()
+}
+
+// maxSessionTitleChars bounds the auto-generated session title (see
+// saveUserMessage) — long enough to be recognizable in the session picker,
+// short enough that a pasted essay as a first message doesn't make an
+// unreadable list entry.
+const maxSessionTitleChars = 60
+
+// titleFromMessage derives a session's auto-title from its first user
+// message: the first line only (a multi-line first message, e.g. pasted
+// text, would otherwise make a useless run-on title), truncated to
+// maxSessionTitleChars.
+func titleFromMessage(message string) string {
+	title := strings.TrimSpace(message)
+	if idx := strings.IndexAny(title, "\n\r"); idx >= 0 {
+		title = strings.TrimSpace(title[:idx])
+	}
+	runes := []rune(title)
+	if len(runes) > maxSessionTitleChars {
+		title = string(runes[:maxSessionTitleChars]) + "…"
+	}
+	return title
 }
 
 // saveAssistantReply persists the assistant's half of a turn. stats/
@@ -1250,6 +1348,9 @@ func (s *Server) persistLocked() {
 	}
 	snapshot := make(map[string]chatSession, len(s.sessions))
 	for id, session := range s.sessions {
+		if session.Ephemeral {
+			continue
+		}
 		snapshot[id] = session
 	}
 	if err := writeSessionStore(s.sessionOptions.StorePath, snapshot); err != nil {
