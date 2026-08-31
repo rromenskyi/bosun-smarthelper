@@ -85,13 +85,20 @@ above a size threshold in `filedump.js`, since a personal file store has
 no reason to hard-reject a large upload a user actually intends to make.
 
 When `add_to_rag=true`, the file is read back after the raw write
-completes and run through the same PDF/plain-text extraction the old
-upload path used (`internal/webui/pdf.go`'s `extractPDFPages`, or plain
-UTF-8 text), tagged with the file's folder as `SourcePath`. A failed
-ingestion (not a PDF, not valid UTF-8, extraction error) **never rolls
-back the raw file write** — the file is still saved, and the failure
-comes back as a non-fatal `rag_warning` in the response instead of an
-error. Uploading a photo or a spreadsheet with the checkbox mistakenly
+completes and run through whichever of three extraction paths matches
+(`internal/webui/pdf.go`): a PDF (`extractPDFPages`, text pages chunked
+normally, diagram-only pages rendered and OCR'd), a standalone image —
+PNG/JPEG/GIF, sniffed by magic bytes (`sniffImageExt`) — OCR'd directly
+and stored as a single-page document
+(`ingestStandaloneImage`/`documents.AddPages`, the same `{text,
+image_url}` shape a diagram-only PDF page gets, so a manual's wiring
+diagram uploaded on its own is findable by its recognized text exactly
+like one embedded in a PDF), or plain UTF-8 text. Either way the result
+is tagged with the file's folder as `SourcePath`. A failed ingestion (not
+a PDF, not a recognized image format, not valid UTF-8, extraction error)
+**never rolls back the raw file write** — the file is still saved, and
+the failure comes back as a non-fatal `rag_warning` in the response
+instead of an error. Uploading a spreadsheet with the checkbox mistakenly
 checked is expected to happen; it shouldn't lose the file.
 
 ## API

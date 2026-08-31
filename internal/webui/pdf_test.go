@@ -2,12 +2,26 @@ package webui
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// onePixelPNG is a minimal valid 1x1 transparent PNG — enough for
+// sniffImageExt/ingestStandaloneImage to treat it as a real image without
+// needing a real diagram scan.
+var onePixelPNG = mustDecodeBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+
+func mustDecodeBase64(s string) []byte {
+	data, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
 
 // requirePoppler skips the test when poppler-utils isn't installed, so this
 // suite doesn't fail in environments that never build a container image
@@ -150,6 +164,56 @@ func TestOCRImageDefaultsLanguageWhenEmpty(t *testing.T) {
 	}
 	if !strings.Contains(text, "Hello World") {
 		t.Errorf("OCR text = %q, want it to contain Hello World with the default language", text)
+	}
+}
+
+func TestSniffImageExtRecognizesFormats(t *testing.T) {
+	cases := []struct {
+		name    string
+		content []byte
+		want    string
+	}{
+		{"png", onePixelPNG, ".png"},
+		{"jpeg", []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10}, ".jpg"},
+		{"gif87", []byte("GIF87a" + "rest"), ".gif"},
+		{"gif89", []byte("GIF89a" + "rest"), ".gif"},
+		{"pdf", []byte("%PDF-1.4\n..."), ""},
+		{"plain text", []byte("just some text"), ""},
+		{"empty", nil, ""},
+	}
+	for _, c := range cases {
+		if got := sniffImageExt(c.content); got != c.want {
+			t.Errorf("sniffImageExt(%s) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestIngestStandaloneImageWritesFileAndReturnsPage(t *testing.T) {
+	imagesDir := filepath.Join(t.TempDir(), "images")
+
+	pages, err := ingestStandaloneImage(context.Background(), onePixelPNG, ".png", imagesDir, "/document-images/", "eng")
+	if err != nil {
+		t.Fatalf("ingestStandaloneImage: %v", err)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("pages = %d, want 1", len(pages))
+	}
+	if pages[0].Text == "" {
+		t.Error("expected non-empty page text (either OCR text or the no-text-recognized fallback)")
+	}
+	if !strings.HasPrefix(pages[0].ImageURL, "/document-images/") {
+		t.Errorf("image_url = %q, want the /document-images/ prefix", pages[0].ImageURL)
+	}
+	if !strings.HasSuffix(pages[0].ImageURL, ".png") {
+		t.Errorf("image_url = %q, want a .png suffix", pages[0].ImageURL)
+	}
+	saved := filepath.Join(imagesDir, strings.TrimPrefix(pages[0].ImageURL, "/document-images/"))
+	data, err := os.ReadFile(saved)
+	if err != nil {
+		t.Fatalf("saved image not found at %s: %v", saved, err)
+	}
+	if string(data) != string(onePixelPNG) {
+		t.Error("saved image bytes don't match the uploaded content")
 	}
 }
 

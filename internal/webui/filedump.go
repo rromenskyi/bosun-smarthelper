@@ -171,11 +171,12 @@ func fileDumpFolderOf(relFilePath string) string {
 // streaming reader can't look ahead.
 //
 // When add_to_rag is true, the file is read back after the raw write
-// completes and run through the same PDF/plain-text extraction as the
-// old document upload path, tagged with the file's folder as
-// documents.Record.SourcePath. A failed ingestion (not a PDF, not valid
-// UTF-8 text, extraction error) never rolls back the raw file write —
-// it's reported back as a non-fatal rag_warning instead.
+// completes and run through PDF/image/plain-text extraction (whichever
+// matches — see ingestFileDumpUpload), tagged with the file's folder as
+// documents.Record.SourcePath. A failed ingestion (not a PDF, not a
+// recognized image format, not valid UTF-8 text, extraction error) never
+// rolls back the raw file write — it's reported back as a non-fatal
+// rag_warning instead.
 func (s *Server) handleFileDumpUpload(w http.ResponseWriter, r *http.Request) {
 	if s.fileDumpStore == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "file dump is not configured"})
@@ -309,8 +310,23 @@ func (s *Server) ingestFileDumpUpload(ctx context.Context, relFilePath, title, o
 		return
 	}
 
+	if ext := sniffImageExt(content); ext != "" {
+		pages, err := ingestStandaloneImage(ingestCtx, content, ext, s.documentImagesDir, "/document-images/", ocrLanguage)
+		if err != nil {
+			response["rag_warning"] = "could not process image for search: " + err.Error()
+			return
+		}
+		summary, err := s.documents.AddPages(ingestCtx, title, pages, sourcePath)
+		if err != nil {
+			response["rag_warning"] = err.Error()
+			return
+		}
+		s.linkFileDumpDocument(relFilePath, summary.ID, response)
+		return
+	}
+
 	if !utf8.Valid(content) {
-		response["rag_warning"] = "file must be plain UTF-8 text or a PDF to be added to search"
+		response["rag_warning"] = "file must be plain UTF-8 text, a PDF, or an image (PNG/JPEG/GIF) to be added to search"
 		return
 	}
 	summary, err := s.documents.Add(ingestCtx, title, string(content), sourcePath)

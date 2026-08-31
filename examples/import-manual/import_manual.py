@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Import a CHARM-style ("Operation CHARM" / charm.li) car service manual
-bundle into Bosun's document knowledge base (see docs/memo-search.md).
+bundle into Bosun's file dump, with search indexing (see docs/filedump.md,
+docs/memo-search.md) — one text file per manual chapter, one image file
+per unique diagram. Everything lands under a single top-level file dump
+folder (--title-prefix, slugified) so it groups as one topic in the
+dynamic topics prompt line (docs/settings.md) instead of one per chapter.
 
-This is the exact pipeline used to load the Ford E-350 1991 V8-460 7.5L
-manual: one document per manual chapter, real text chunked normally,
-diagram-only pages (fuse panels, wiring diagrams) rendered as images with
-OCR'd text attached so they're still findable by content, not just a
-generic caption.
+This is the script version of the pipeline first run by hand (chat
+history, 2026-08-18) to load the **Ford E-350 1991 V8-460 7.5L** manual —
+kept here so it doesn't have to be reconstructed from scratch next time.
+OCR now happens server-side (POST /api/files/upload's add_to_rag path,
+internal/webui/pdf.go) rather than by this script, so tesseract no longer
+needs to be installed on the machine running it — only on the Bosun host,
+which already needs it for PDF ingestion.
 
 See README.md in this directory for prerequisites and a full walkthrough.
 
@@ -14,7 +20,6 @@ Example:
     python3 import_manual.py \\
         --bundle-url "https://charm.li/bundle/long-names/Ford/1991/E%20350%20Van%20V8-460%207.5L/" \\
         --bosun-url http://localhost:8080 \\
-        --container bosun \\
         --title-prefix "Ford E-350 1991 V8-460 7.5L" \\
         --replace
 """
@@ -26,7 +31,6 @@ import mimetypes
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -43,6 +47,10 @@ IMG_RE = re.compile(r"""<img[^>]*class=['"]big-img['"][^>]*src=["']([^"']+)["']"
 
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
+
+
+def slugify(text):
+    return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()
 
 
 # ---------------------------------------------------------------- fetching
@@ -156,9 +164,13 @@ def harvest(section_dir, min_text_chars):
         seen_text_hashes.add(h)
         text_pages_by_chapter[chapter].append((title, text))
 
-    # Dedup image pages by (caption, image hash) globally; cache each
-    # unique image's hash so it's only OCR'd once regardless of how many
-    # pages/chapters reference it.
+    # Dedup image pages by (caption, image hash) globally; this also caches
+    # each unique image's content hash so the upload step below only
+    # uploads (and the server only OCRs) each distinct image once, keyed
+    # by its first-seen caption — CHARM cross-lists the same diagram under
+    # multiple category trees with different captions, and uploading (and
+    # re-OCRing) the identical bytes under every one of those would be
+    # pure waste.
     raw_image_pages.sort(key=lambda e: e[0])
     image_hash_cache = {}
 
@@ -183,38 +195,6 @@ def harvest(section_dir, min_text_chars):
     return text_pages_by_chapter, image_pages_by_chapter, image_path_by_hash
 
 
-# ---------------------------------------------------------------- OCR
-
-def run_ocr(image_path_by_hash, cache_path, langs):
-    """OCRs every unique image, resuming from cache_path if it already has
-    some entries (e.g. a prior interrupted run)."""
-    results = {}
-    if os.path.exists(cache_path):
-        with open(cache_path, encoding="utf-8") as f:
-            results = json.load(f)
-
-    todo = [h for h in image_path_by_hash if h not in results]
-    log(f"OCR: {len(image_path_by_hash) - len(todo)} cached, {len(todo)} to process")
-    for i, h in enumerate(todo):
-        path = image_path_by_hash[h]
-        try:
-            out = subprocess.run(
-                ["tesseract", path, "-", "-l", langs],
-                capture_output=True, text=True, timeout=60,
-            )
-            results[h] = out.stdout.strip()
-        except Exception as exc:  # noqa: BLE001 - best-effort, never abort the batch
-            log(f"  OCR failed for {path}: {exc}")
-            results[h] = ""
-        if (i + 1) % 25 == 0 or (i + 1) == len(todo):
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(results, f)
-            log(f"  OCR {i + 1}/{len(todo)}")
-    with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump(results, f)
-    return results
-
-
 # ---------------------------------------------------------------- Bosun API
 
 def api_get(bosun_url, path):
@@ -228,58 +208,57 @@ def api_delete(bosun_url, doc_id):
         return json.load(resp)
 
 
-def delete_existing_by_title(bosun_url, title):
+def delete_existing_by_title_prefix(bosun_url, prefix):
+    """Deletes every existing document whose title starts with
+    "{prefix} — " — run once before a --replace import rather than
+    matching per-chapter, since routing chapters through file dump
+    changes a diagram chapter's title scheme from one document per
+    chapter to one per image (see upload_file's docstring), so the old
+    per-chapter titles this used to match by exact string no longer
+    correspond to what this run will (re)create."""
+    needle = f"{prefix} — "
     data = api_get(bosun_url, "/api/documents")
+    deleted = 0
     for doc in data.get("documents", []):
-        if doc["title"] == title:
-            log(f"  --replace: deleting existing document {doc['id']} ({title})")
+        if doc["title"].startswith(needle):
             api_delete(bosun_url, doc["id"])
+            deleted += 1
+    log(f"  --replace: deleted {deleted} existing document(s) matching {prefix!r}")
 
 
-def upload_text_document(bosun_url, title, text, replace):
-    if replace:
-        delete_existing_by_title(bosun_url, title)
+def upload_file(bosun_url, folder, title, filename, content_bytes, ocr_langs):
+    """POSTs one file into the file dump (POST /api/files/upload,
+    docs/filedump.md) with add_to_rag=true — a plain-text chapter is
+    chunked normally; an image is OCR'd server-side and stored as a
+    single-page document (internal/webui/pdf.go's
+    ingestStandaloneImage). Either way the result is tagged with `folder`
+    as its SourcePath, which is what lets many chapters/images from one
+    manual collapse into a single topic (see docs/settings.md's dynamic
+    topics line) instead of one per chapter."""
     boundary = uuid.uuid4().hex
-    body = []
-    body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n{title}\r\n")
-    body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"manual.txt\"\r\nContent-Type: text/plain\r\n\r\n")
-    payload = "".join(body).encode("utf-8") + text.encode("utf-8") + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    def field(name, value):
+        return f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode("utf-8")
+
+    body = b"".join([
+        field("path", folder),
+        field("add_to_rag", "true"),
+        field("title", title),
+        field("ocr_language", ocr_langs),
+    ])
+    body += (
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+        f"Content-Type: {mimetypes.guess_type(filename)[0] or 'application/octet-stream'}\r\n\r\n"
+    ).encode("utf-8")
+    body += content_bytes
+    body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+
     req = urllib.request.Request(
-        f"{bosun_url}/api/documents", data=payload, method="POST",
+        f"{bosun_url}/api/files/upload", data=body, method="POST",
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
     with urllib.request.urlopen(req, timeout=590) as resp:
         return json.load(resp)
-
-
-def upload_pages_document(bosun_url, title, pages, replace):
-    if replace:
-        delete_existing_by_title(bosun_url, title)
-    payload = json.dumps({"title": title, "pages": pages}).encode("utf-8")
-    req = urllib.request.Request(
-        f"{bosun_url}/api/documents/pages", data=payload, method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=590) as resp:
-        return json.load(resp)
-
-
-def copy_images_into_container(docker_bin, container, staging_dir, image_names):
-    """docker cp's just-referenced image files into the container's
-    document-images directory, then fixes ownership (docker cp as root
-    leaves files the container's non-root user can't otherwise chown)."""
-    if not image_names:
-        return
-    subprocess.run([*docker_bin, "exec", container, "mkdir", "-p", "/home/bosun/.local/share/bosun/document-images"], check=True)
-    for name in image_names:
-        subprocess.run(
-            [*docker_bin, "cp", os.path.join(staging_dir, name), f"{container}:/home/bosun/.local/share/bosun/document-images/{name}"],
-            check=True,
-        )
-    subprocess.run(
-        [*docker_bin, "exec", "-u", "root", container, "chown", "-R", "bosun:bosun", "/home/bosun/.local/share/bosun/document-images"],
-        check=True,
-    )
 
 
 # ---------------------------------------------------------------- main
@@ -293,21 +272,21 @@ def main():
     parser.add_argument("--section", default="Repair and Diagnosis",
                          help="Subdirectory to import (default: 'Repair and Diagnosis'; pass '' for the whole bundle)")
     parser.add_argument("--bosun-url", default="http://localhost:8080", help="Bosun base URL")
-    parser.add_argument("--container", default="bosun", help="Docker container name running Bosun (for image copy)")
-    parser.add_argument("--docker-sudo", action="store_true", help="Prefix docker commands with 'sudo -n'")
     parser.add_argument("--title-prefix", required=True, help='e.g. "Ford E-350 1991 V8-460 7.5L"')
     parser.add_argument("--min-text-chars", type=int, default=MIN_TEXT_CHARS)
-    parser.add_argument("--ocr-langs", default="eng+rus", help="tesseract -l value")
-    parser.add_argument("--work-dir", help="Directory for downloads/extraction/OCR cache (default: a temp dir)")
-    parser.add_argument("--skip-images", action="store_true", help="Only import text chapters, skip diagrams/OCR entirely")
-    parser.add_argument("--replace", action="store_true", help="Delete an existing document with the same title before creating it")
+    parser.add_argument("--ocr-langs", default="eng", help="tesseract -l value the server should use per image (docs/filedump.md)")
+    parser.add_argument("--work-dir", help="Directory for downloads/extraction (default: a temp dir)")
+    parser.add_argument("--skip-images", action="store_true", help="Only import text chapters, skip diagrams entirely")
+    parser.add_argument("--replace", action="store_true",
+                         help="Delete every existing document titled '{title-prefix} — ...' before importing")
     args = parser.parse_args()
-
-    docker_bin = ["sudo", "-n", "docker"] if args.docker_sudo else ["docker"]
 
     work_dir = args.work_dir or tempfile.mkdtemp(prefix="bosun-manual-import-")
     os.makedirs(work_dir, exist_ok=True)
     log(f"Working directory: {work_dir}")
+
+    if args.replace:
+        delete_existing_by_title_prefix(args.bosun_url, args.title_prefix)
 
     section_dir = obtain_section_dir(args, work_dir)
     log(f"Importing from: {section_dir}")
@@ -317,42 +296,36 @@ def main():
     log(f"Found {sum(len(v) for v in image_pages.values())} image pages "
         f"({len(image_path_by_hash)} unique images) across {len(image_pages)} chapters")
 
+    slug = slugify(args.title_prefix)
+
     for chapter, pages in sorted(text_pages.items()):
         title = f"{args.title_prefix} — {chapter}"
         blob = "\n\n".join(f"## {t}\n\n{text}" for t, text in sorted(pages))
-        log(f"Uploading text document: {title} ({len(pages)} pages, {len(blob)} chars)")
-        result = upload_text_document(args.bosun_url, title, blob, args.replace)
+        log(f"Uploading text chapter: {title} ({len(pages)} pages, {len(blob)} chars)")
+        result = upload_file(args.bosun_url, slug, title, "manual.txt", blob.encode("utf-8"), args.ocr_langs)
         log(f"  -> {result}")
 
     if args.skip_images or not image_pages:
+        log("Done.")
         return
 
-    ocr_cache_path = os.path.join(work_dir, "ocr-cache.json")
-    ocr_by_hash = run_ocr(image_path_by_hash, ocr_cache_path, args.ocr_langs)
-
-    staging_dir = os.path.join(work_dir, "images-staging")
-    os.makedirs(staging_dir, exist_ok=True)
-    image_name_by_hash = {}
-    for h, src in image_path_by_hash.items():
-        ext = os.path.splitext(src)[1] or ".png"
-        name = f"{re.sub(r'[^A-Za-z0-9]+', '-', args.title_prefix).strip('-').lower()}-{h}{ext}"
-        image_name_by_hash[h] = name
-        dst = os.path.join(staging_dir, name)
-        if not os.path.exists(dst):
-            shutil.copyfile(src, dst)
-
-    log(f"Copying {len(image_name_by_hash)} unique images into container {args.container!r}")
-    copy_images_into_container(docker_bin, args.container, staging_dir, list(image_name_by_hash.values()))
-
-    for chapter, pages in sorted(image_pages.items()):
-        title = f"{args.title_prefix} — {chapter} (Diagrams)"
-        api_pages = []
+    # One representative caption per unique image (first one harvest()
+    # encountered) — see upload_file's docstring on why this is per unique
+    # image, not per (chapter, caption) page entry.
+    caption_by_hash = {}
+    for pages in image_pages.values():
         for p in pages:
-            ocr_text = ocr_by_hash.get(p["hash"], "")
-            text = p["caption"] if not ocr_text else f"{p['caption']}\n\n{ocr_text}"
-            api_pages.append({"text": text, "image_url": f"/document-images/{image_name_by_hash[p['hash']]}"})
-        log(f"Uploading pages document: {title} ({len(api_pages)} pages)")
-        result = upload_pages_document(args.bosun_url, title, api_pages, args.replace)
+            caption_by_hash.setdefault(p["hash"], p["caption"])
+
+    diagrams_folder = f"{slug}/diagrams"
+    total = len(image_path_by_hash)
+    for i, (h, src) in enumerate(sorted(image_path_by_hash.items())):
+        caption = caption_by_hash[h]
+        ext = os.path.splitext(src)[1] or ".png"
+        with open(src, "rb") as f:
+            content = f.read()
+        log(f"Uploading diagram {i + 1}/{total}: {caption}")
+        result = upload_file(args.bosun_url, diagrams_folder, caption, f"{h}{ext}", content, args.ocr_langs)
         log(f"  -> {result}")
 
     log("Done.")

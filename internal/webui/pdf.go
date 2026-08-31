@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -159,4 +160,57 @@ func randomHex(n int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// imageSniffs recognizes a standalone image upload (not embedded in a
+// PDF) by its magic bytes — the same formats a browser's own image
+// preview understands, and all three are things tesseract can OCR
+// directly with no format conversion.
+var imageSniffs = []struct {
+	prefix []byte
+	ext    string
+}{
+	{[]byte("\x89PNG\r\n\x1a\n"), ".png"},
+	{[]byte{0xFF, 0xD8, 0xFF}, ".jpg"},
+	{[]byte("GIF87a"), ".gif"},
+	{[]byte("GIF89a"), ".gif"},
+}
+
+// sniffImageExt returns the file extension for a recognized image format,
+// or "" if content doesn't match any of imageSniffs.
+func sniffImageExt(content []byte) string {
+	for _, s := range imageSniffs {
+		if bytes.HasPrefix(content, s.prefix) {
+			return s.ext
+		}
+	}
+	return ""
+}
+
+// ingestStandaloneImage OCRs an image uploaded on its own (a scraped
+// manual's diagram, a photographed fuse panel — anything that isn't a
+// scanned page inside a PDF) and returns it as a one-page
+// []documents.PageInput, the same {Text, ImageURL} shape a diagram-only
+// PDF page gets from extractPDFPages/ocrImage — a standalone diagram
+// deserves identical treatment (OCR'd once, served from imagesDir,
+// findable by its recognized text) rather than a separate, divergent
+// pipeline.
+func ingestStandaloneImage(ctx context.Context, content []byte, ext, imagesDir, imageURLPrefix, ocrLanguage string) ([]documents.PageInput, error) {
+	if err := os.MkdirAll(imagesDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create images dir: %w", err)
+	}
+	id, err := randomHex(8)
+	if err != nil {
+		return nil, err
+	}
+	imagePath := filepath.Join(imagesDir, id+ext)
+	if err := os.WriteFile(imagePath, content, 0o600); err != nil {
+		return nil, fmt.Errorf("write image: %w", err)
+	}
+	imageURL := imageURLPrefix + filepath.Base(imagePath)
+	text := "Diagram (no text recognized)"
+	if ocrText, err := ocrImage(ctx, imagePath, ocrLanguage); err == nil && len(strings.TrimSpace(ocrText)) > 0 {
+		text = documents.CleanOCRText(strings.TrimSpace(ocrText))
+	}
+	return []documents.PageInput{{Text: text, ImageURL: imageURL}}, nil
 }

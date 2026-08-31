@@ -209,6 +209,41 @@ func TestFileDumpUploadWithRAGTaggedBySourcePath(t *testing.T) {
 	}
 }
 
+func TestFileDumpUploadWithRAGIngestsStandaloneImage(t *testing.T) {
+	server, docStore := newFileDumpTestServer(t)
+
+	folderRequest := httptest.NewRequest(http.MethodPost, "/api/files/folder", bytes.NewReader([]byte(`{"path":"","name":"ford-e350"}`)))
+	server.Handler().ServeHTTP(httptest.NewRecorder(), folderRequest)
+
+	response := uploadFile(t, server, map[string]string{
+		"path":       "ford-e350",
+		"add_to_rag": "true",
+		"title":      "Fuse panel diagram",
+	}, "fuse-panel.png", onePixelPNG)
+	if response.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["in_rag"] != true {
+		t.Fatalf("in_rag = %v, want true, body = %#v", body["in_rag"], body)
+	}
+	documentID, _ := body["document_id"].(string)
+	if documentID == "" {
+		t.Fatalf("expected document_id in response, got %#v", body)
+	}
+
+	docs, err := docStore.List()
+	if err != nil {
+		t.Fatalf("list documents: %v", err)
+	}
+	if len(docs) != 1 || docs[0].ID != documentID || docs[0].Title != "Fuse panel diagram" || docs[0].SourcePath != "ford-e350" {
+		t.Fatalf("documents = %#v", docs)
+	}
+}
+
 func TestFileDumpUploadRAGFailureDoesNotBlockRawUpload(t *testing.T) {
 	server, docStore := newFileDumpTestServer(t)
 
