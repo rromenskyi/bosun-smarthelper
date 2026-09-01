@@ -120,6 +120,15 @@ on its own once ingestion finishes — grey (pending) → green (`in_rag`)
 or red (`rag_error`, hover for the message), with no user action needed
 to see the result.
 
+Nothing resumes an in-flight `ingestFileDumpUploadAsync` goroutine across a
+process restart — it's detached from any persisted job queue. So a
+restart mid-ingestion (a deploy, a crash) would otherwise leave that file
+stuck at `rag_pending: true` forever, with nothing ever indicating the
+ingestion actually stopped. `filedump.Store.NewStore` reconciles this on
+every startup: any `Pending` entry still set in the sidecar is converted
+into an explicit `rag_error` ("indexing was interrupted by a restart and
+never finished — try re-uploading") rather than left dangling.
+
 ## API
 
 - `GET /api/files?path=<relpath>` — list one folder's contents

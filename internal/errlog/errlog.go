@@ -6,6 +6,7 @@ package errlog
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,6 +14,19 @@ import (
 	"sort"
 	"sync"
 	"time"
+)
+
+// maxErrLogBytes bounds how large the log file is allowed to grow before
+// Record rotates it — without a cap it grows forever on a long-lived
+// deployment, and ReadAll/Tail decode the whole thing into memory on every
+// call. errLogKeepEntries is how many of the most recent entries survive a
+// rotation: enough history to still answer "what keeps failing" without
+// keeping literally everything ever recorded. var, not const, so tests can
+// lower them instead of writing megabytes of fixture data to exercise
+// rotation.
+var (
+	maxErrLogBytes    int64 = 5 * 1024 * 1024
+	errLogKeepEntries       = 2000
 )
 
 // Entry is one recorded failure.
@@ -29,6 +43,8 @@ type Entry struct {
 type Logger struct {
 	mu   sync.Mutex
 	file *os.File
+	path string
+	size int64 // current file size, tracked to avoid a stat() per Record
 }
 
 // DefaultPath returns the default error log location, mirroring the memo
@@ -54,11 +70,16 @@ func Open(path string) (*Logger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open error log: %w", err)
 	}
-	return &Logger{file: file}, nil
+	var size int64
+	if info, err := file.Stat(); err == nil {
+		size = info.Size()
+	}
+	return &Logger{file: file, path: path, size: size}, nil
 }
 
 // Record appends a failure. A nil err or a nil Logger makes this a no-op,
-// so callers never need to guard the call themselves.
+// so callers never need to guard the call themselves. Rotates first if
+// this write would push the file past maxErrLogBytes.
 func (l *Logger) Record(category, detail string, err error) {
 	if l == nil || err == nil {
 		return
@@ -76,7 +97,73 @@ func (l *Logger) Record(category, detail string, err error) {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, _ = l.file.Write(payload)
+	if l.size+int64(len(payload)) > maxErrLogBytes {
+		// Best-effort: a rotation failure just means this and future
+		// entries silently stop being recorded (the existing Write-error
+		// handling below already treats a broken file the same way) —
+		// acceptable for a diagnostics-only log, not worth failing the
+		// caller's real request over.
+		_ = l.rotateLocked()
+	}
+	n, _ := l.file.Write(payload)
+	l.size += int64(n)
+}
+
+// rotateLocked keeps only the most recent errLogKeepEntries entries,
+// atomically (temp file + rename, same pattern as
+// internal/documents/store.go's save), then reopens l.file against the
+// replaced path — the append-mode handle held before rotation still points
+// at the old, now-unlinked inode and must be swapped out, not just
+// truncated in place. Callers must hold l.mu.
+func (l *Logger) rotateLocked() error {
+	entries, err := ReadAll(l.path)
+	if err != nil {
+		return fmt.Errorf("read error log for rotation: %w", err)
+	}
+	if len(entries) > errLogKeepEntries {
+		entries = entries[len(entries)-errLogKeepEntries:]
+	}
+	var buf bytes.Buffer
+	for _, entry := range entries {
+		payload, err := json.Marshal(entry)
+		if err != nil {
+			continue
+		}
+		buf.Write(payload)
+		buf.WriteByte('\n')
+	}
+
+	directory := filepath.Dir(l.path)
+	temp, err := os.CreateTemp(directory, ".errors-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary error log: %w", err)
+	}
+	temporaryPath := temp.Name()
+	defer os.Remove(temporaryPath)
+	if err := temp.Chmod(0o600); err != nil {
+		temp.Close()
+		return fmt.Errorf("set error log permissions: %w", err)
+	}
+	if _, err := temp.Write(buf.Bytes()); err != nil {
+		temp.Close()
+		return fmt.Errorf("write rotated error log: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close rotated error log: %w", err)
+	}
+	if err := l.file.Close(); err != nil {
+		return fmt.Errorf("close current error log handle: %w", err)
+	}
+	if err := os.Rename(temporaryPath, l.path); err != nil {
+		return fmt.Errorf("replace error log: %w", err)
+	}
+	file, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("reopen error log after rotation: %w", err)
+	}
+	l.file = file
+	l.size = int64(buf.Len())
+	return nil
 }
 
 // Close closes the underlying file. Safe to call on a nil Logger.

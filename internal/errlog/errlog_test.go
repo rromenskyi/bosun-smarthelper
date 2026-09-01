@@ -2,6 +2,8 @@ package errlog
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -35,6 +37,63 @@ func TestLogger_RecordAndReadAll(t *testing.T) {
 	}
 	if entries[0].Time.IsZero() {
 		t.Error("entry 0 has a zero timestamp")
+	}
+}
+
+// TestLogger_RecordRotatesWhenOverLimit lowers the size/keep-count knobs
+// so it can exercise real rotation without writing megabytes of fixture
+// data: the log must never grow past the cap, must retain only the most
+// recent entries, and must keep accepting writes seamlessly afterward
+// (proving the reopened file handle actually works, not just that
+// rotation ran).
+func TestLogger_RecordRotatesWhenOverLimit(t *testing.T) {
+	originalMax, originalKeep := maxErrLogBytes, errLogKeepEntries
+	maxErrLogBytes, errLogKeepEntries = 400, 3
+	defer func() { maxErrLogBytes, errLogKeepEntries = originalMax, originalKeep }()
+
+	path := filepath.Join(t.TempDir(), "errors.jsonl")
+	logger, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer logger.Close()
+
+	const total = 30
+	for i := 0; i < total; i++ {
+		logger.Record("tool_call", "get_weather", fmt.Errorf("failure #%d", i))
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat error log: %v", err)
+	}
+	if info.Size() > maxErrLogBytes*2 {
+		// Rotation only triggers when a write would exceed the cap, so the
+		// file can briefly sit a little over it right after the entry that
+		// tripped rotation — but it must never be allowed to grow
+		// unbounded, which is the actual bug this guards against.
+		t.Errorf("error log size = %d bytes, want it kept near the %d-byte cap", info.Size(), maxErrLogBytes)
+	}
+
+	entries, err := ReadAll(path)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if len(entries) == 0 || len(entries) > total {
+		t.Fatalf("entries = %d, want somewhere between 1 and %d after rotation", len(entries), total)
+	}
+	last := entries[len(entries)-1]
+	if last.Error != fmt.Sprintf("failure #%d", total-1) {
+		t.Errorf("last entry = %q, want the most recent one to have survived rotation", last.Error)
+	}
+	// Whatever survived must be a contiguous, in-order tail — rotation
+	// must not reorder or duplicate entries.
+	firstIndex := total - len(entries)
+	for i, entry := range entries {
+		want := fmt.Sprintf("failure #%d", firstIndex+i)
+		if entry.Error != want {
+			t.Errorf("entry %d = %q, want %q", i, entry.Error, want)
+		}
 	}
 }
 

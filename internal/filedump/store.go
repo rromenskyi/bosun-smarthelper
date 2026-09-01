@@ -119,7 +119,37 @@ func NewStore(root string) (*Store, error) {
 		return nil, fmt.Errorf("create file store root: %w", err)
 	}
 	sidecarPath := filepath.Join(filepath.Dir(absRoot), "filedump-index.json")
-	return &Store{root: absRoot, sidecarPath: sidecarPath}, nil
+	store := &Store{root: absRoot, sidecarPath: sidecarPath}
+	if err := store.reconcileStalePending(); err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// reconcileStalePending converts any sidecar Pending entry left over from a
+// previous process into an explicit ingestion error. Nothing resumes a
+// background ingestion goroutine across a restart —
+// internal/webui/filedump.go's ingestFileDumpUploadAsync is detached from
+// any persisted job queue — so a Pending flag still set when a fresh Store
+// is constructed means the process that set it died or was restarted
+// mid-ingestion. Left alone, that file would show as "still adding to the
+// search index…" forever in the UI, with nothing ever indicating the
+// ingestion actually stopped.
+func (s *Store) reconcileStalePending() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sidecar, err := s.loadSidecar()
+	if err != nil {
+		return err
+	}
+	if len(sidecar.Pending) == 0 {
+		return nil
+	}
+	for path := range sidecar.Pending {
+		sidecar.Errors[path] = "indexing was interrupted by a restart and never finished — try re-uploading"
+	}
+	sidecar.Pending = make(map[string]bool)
+	return s.saveSidecar(sidecar)
 }
 
 // Root is the absolute directory http.FileServer should serve downloads

@@ -16,6 +16,68 @@ func newTestStore(t *testing.T) *Store {
 	return store
 }
 
+// TestNewStoreReconcilesStalePendingFromPreviousProcess simulates a
+// restart mid-ingestion: nothing resumes an in-flight background
+// ingestion goroutine across a process restart, so a Pending flag left set
+// when the store is reopened means that ingestion died without ever
+// clearing it. A fresh NewStore must convert it into an explicit error
+// instead of leaving the file reading "still indexing…" forever.
+func TestNewStoreReconcilesStalePendingFromPreviousProcess(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "filedump")
+
+	first, err := NewStore(root)
+	if err != nil {
+		t.Fatalf("NewStore (first process): %v", err)
+	}
+	fStuck, relStuck, err := first.OpenForWrite("", "stuck.pdf")
+	if err != nil {
+		t.Fatalf("OpenForWrite stuck: %v", err)
+	}
+	fStuck.Close()
+	fOK, relOK, err := first.OpenForWrite("", "fine.txt")
+	if err != nil {
+		t.Fatalf("OpenForWrite fine: %v", err)
+	}
+	fOK.Close()
+	if err := first.SetPending(relStuck, true); err != nil {
+		t.Fatalf("SetPending stuck: %v", err)
+	}
+	if err := first.LinkDocument(relOK, "doc-fine"); err != nil {
+		t.Fatalf("LinkDocument fine: %v", err)
+	}
+
+	// Simulate the process restarting: a brand new Store over the same
+	// root, as if ingestFileDumpUploadAsync's goroutine for stuck.pdf had
+	// simply vanished with the old process.
+	second, err := NewStore(root)
+	if err != nil {
+		t.Fatalf("NewStore (second process): %v", err)
+	}
+	listing, err := second.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	byName := make(map[string]FileInfo, len(listing.Files))
+	for _, f := range listing.Files {
+		byName[f.Name] = f
+	}
+
+	stuck := byName["stuck.pdf"]
+	if stuck.RAGPending {
+		t.Errorf("stuck.pdf still RAGPending after a fresh Store, want it converted to an error")
+	}
+	if stuck.RAGError == "" {
+		t.Errorf("stuck.pdf has no RAGError after reconciliation, want an explicit message")
+	}
+
+	// A file that had already finished ingesting before the restart must
+	// be left completely alone.
+	fine := byName["fine.txt"]
+	if !fine.InRAG || fine.DocumentID != "doc-fine" || fine.RAGPending || fine.RAGError != "" {
+		t.Errorf("fine.txt was disturbed by reconciliation, got %+v", fine)
+	}
+}
+
 func TestNewStoreCreatesRootAndSidecarIsSibling(t *testing.T) {
 	store := newTestStore(t)
 	if info, err := os.Stat(store.Root()); err != nil || !info.IsDir() {
