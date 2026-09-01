@@ -76,11 +76,21 @@ type storeFile struct {
 }
 
 // Store persists documents to a local JSON file, atomically, the same
-// pattern as internal/tools/memo.go's memo store.
+// pattern as internal/tools/memo.go's memo store. cache holds the decoded
+// contents in memory once loaded (nil until the first call): every method
+// used to decode the whole file from disk on every single call, including
+// read-only ones, which cost ~935ms on the live ~50MB store — and a write
+// paid that plus a further ~800ms to re-encode it, so a bulk import (one
+// Add/AddPages call per file, e.g. examples/import-manual's 1074 diagram
+// uploads) did that full round-trip once per file. Keeping the decoded
+// map in memory removes the decode cost from every call after the first;
+// a write still re-encodes and rewrites the whole file (no incremental
+// format), but skips straight to that instead of decoding first.
 type Store struct {
 	path  string
 	embed *embeddings.Client
 	mu    sync.Mutex
+	cache map[string]Record
 }
 
 // ImagesDir is where diagram/photo files referenced by a Chunk's ImageURL
@@ -151,14 +161,10 @@ func (s *Store) AddPages(ctx context.Context, title string, pages []PageInput, s
 		record.Chunks = append(record.Chunks, chunk)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.load()
-	if err != nil {
-		return Summary{}, err
-	}
-	data.Documents[id] = record
-	if err := s.save(data); err != nil {
+	if err := s.mutate(func(cache map[string]Record) error {
+		cache[id] = record
+		return nil
+	}); err != nil {
 		return Summary{}, err
 	}
 	return summarize(record), nil
@@ -166,14 +172,12 @@ func (s *Store) AddPages(ctx context.Context, title string, pages []PageInput, s
 
 // List returns all documents, newest first.
 func (s *Store) List() ([]Summary, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.load()
+	cache, err := s.snapshot()
 	if err != nil {
 		return nil, err
 	}
-	summaries := make([]Summary, 0, len(data.Documents))
-	for _, record := range data.Documents {
+	summaries := make([]Summary, 0, len(cache))
+	for _, record := range cache {
 		summaries = append(summaries, summarize(record))
 	}
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].CreatedAt > summaries[j].CreatedAt })
@@ -218,34 +222,26 @@ func (s *Store) Topics() ([]string, error) {
 // tree location, so search results keep pointing at where the file
 // actually lives instead of going stale.
 func (s *Store) UpdateSourcePath(id, path string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.load()
-	if err != nil {
-		return err
-	}
-	record, ok := data.Documents[id]
-	if !ok {
-		return fmt.Errorf("document %q was not found", id)
-	}
-	record.SourcePath = path
-	data.Documents[id] = record
-	return s.save(data)
+	return s.mutate(func(cache map[string]Record) error {
+		record, ok := cache[id]
+		if !ok {
+			return fmt.Errorf("document %q was not found", id)
+		}
+		record.SourcePath = path
+		cache[id] = record
+		return nil
+	})
 }
 
 // Delete removes a document by ID.
 func (s *Store) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.load()
-	if err != nil {
-		return err
-	}
-	if _, ok := data.Documents[id]; !ok {
-		return fmt.Errorf("document %q was not found", id)
-	}
-	delete(data.Documents, id)
-	return s.save(data)
+	return s.mutate(func(cache map[string]Record) error {
+		if _, ok := cache[id]; !ok {
+			return fmt.Errorf("document %q was not found", id)
+		}
+		delete(cache, id)
+		return nil
+	})
 }
 
 // Search ranks chunks by cosine similarity to query, across all documents
@@ -259,24 +255,22 @@ func (s *Store) Search(ctx context.Context, query string, limit int, documentID 
 	if limit <= 0 {
 		limit = 5
 	}
-	s.mu.Lock()
-	data, err := s.load()
-	s.mu.Unlock()
+	cache, err := s.snapshot()
 	if err != nil {
 		return nil, err
 	}
 	if documentID != "" {
-		if record, ok := data.Documents[documentID]; ok {
-			data.Documents = map[string]Record{documentID: record}
+		if record, ok := cache[documentID]; ok {
+			cache = map[string]Record{documentID: record}
 		} else {
-			data.Documents = nil
+			cache = nil
 		}
 	}
 
 	var results []ScoredChunk
 	if s.embed != nil {
 		if queryVector, err := s.embed.Embed(ctx, query); err == nil {
-			for _, record := range data.Documents {
+			for _, record := range cache {
 				for _, chunk := range record.Chunks {
 					if len(chunk.Embedding) == 0 {
 						continue
@@ -296,7 +290,7 @@ func (s *Store) Search(ctx context.Context, query string, limit int, documentID 
 	}
 	if results == nil {
 		lowerQuery := strings.ToLower(query)
-		for _, record := range data.Documents {
+		for _, record := range cache {
 			for _, chunk := range record.Chunks {
 				if strings.Contains(strings.ToLower(chunk.Text), lowerQuery) {
 					results = append(results, ScoredChunk{
@@ -331,31 +325,78 @@ func newID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func (s *Store) load() (storeFile, error) {
-	data := storeFile{Documents: make(map[string]Record)}
+// ensureLoadedLocked populates s.cache from disk on the first call and is a
+// no-op afterward. Callers must hold s.mu. A decode error leaves s.cache
+// nil so the next call retries instead of caching a permanent failure.
+func (s *Store) ensureLoadedLocked() error {
+	if s.cache != nil {
+		return nil
+	}
 	file, err := os.Open(s.path)
 	if os.IsNotExist(err) {
-		return data, nil
+		s.cache = make(map[string]Record)
+		return nil
 	}
 	if err != nil {
-		return data, fmt.Errorf("open document store: %w", err)
+		return fmt.Errorf("open document store: %w", err)
 	}
 	defer file.Close()
+	var data storeFile
 	if err := json.NewDecoder(file).Decode(&data); err != nil {
-		return data, fmt.Errorf("decode document store: %w", err)
+		return fmt.Errorf("decode document store: %w", err)
 	}
 	if data.Documents == nil {
 		data.Documents = make(map[string]Record)
 	}
-	return data, nil
+	s.cache = data.Documents
+	return nil
 }
 
-func (s *Store) save(data storeFile) error {
+// snapshot returns a shallow copy of the cached document map, loading from
+// disk first if needed. A shallow copy is enough for safe concurrent
+// reading: a mutation never edits a Record in place, only replaces or
+// removes a whole map entry, so a Record value copied out under the lock
+// stays valid for a caller working on it after the lock is released — the
+// same "grab it under the lock, then work on it unlocked" shape the old
+// per-call load() gave every reader for free.
+func (s *Store) snapshot() (map[string]Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureLoadedLocked(); err != nil {
+		return nil, err
+	}
+	clone := make(map[string]Record, len(s.cache))
+	for id, record := range s.cache {
+		clone[id] = record
+	}
+	return clone, nil
+}
+
+// mutate runs fn against the live cache under the lock and persists it
+// afterward — but only if fn succeeds, so a "not found" error (Delete,
+// UpdateSourcePath) never triggers a pointless rewrite.
+func (s *Store) mutate(fn func(map[string]Record) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureLoadedLocked(); err != nil {
+		return err
+	}
+	if err := fn(s.cache); err != nil {
+		return err
+	}
+	return s.save()
+}
+
+// save re-encodes the whole cache and atomically replaces the store file.
+// Callers must hold s.mu. Plain Marshal, not MarshalIndent: nothing reads
+// this file by eye, and indentation costs real time and disk space once it
+// reaches tens of megabytes.
+func (s *Store) save() error {
 	directory := filepath.Dir(s.path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return fmt.Errorf("create document directory: %w", err)
 	}
-	payload, err := json.MarshalIndent(data, "", "  ")
+	payload, err := json.Marshal(storeFile{Documents: s.cache})
 	if err != nil {
 		return fmt.Errorf("encode document store: %w", err)
 	}

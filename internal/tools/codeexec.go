@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -100,12 +101,22 @@ type codeExecRequest struct {
 }
 
 type codeExecResponse struct {
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exit_code"`
-	TimedOut bool   `json:"timed_out"`
-	Error    string `json:"error,omitempty"`
+	Stdout          string `json:"stdout"`
+	Stderr          string `json:"stderr"`
+	ExitCode        int    `json:"exit_code"`
+	TimedOut        bool   `json:"timed_out"`
+	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
+
+// maxCodeExecResponseBody bounds how much of sandboxd's HTTP response this
+// process will decode, independent of internal/sandbox's own
+// maxCapturedOutputBytes cap on the process output it captures — a second,
+// independent layer rather than trusting the other binary's own limit to
+// always hold. Generous enough for two JSON-escaped 64KB fields plus
+// overhead.
+const maxCodeExecResponseBody = 512 * 1024
 
 func (t *CodeExecTool) Execute(ctx context.Context, args map[string]any) (any, error) {
 	code, _ := args["code"].(string)
@@ -139,7 +150,7 @@ func (t *CodeExecTool) Execute(ctx context.Context, args map[string]any) (any, e
 	defer resp.Body.Close()
 
 	var result codeExecResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxCodeExecResponseBody)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode sandbox response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -149,10 +160,17 @@ func (t *CodeExecTool) Execute(ctx context.Context, args map[string]any) (any, e
 		return nil, fmt.Errorf("code execution sandbox returned HTTP %d", resp.StatusCode)
 	}
 
-	return map[string]any{
+	out := map[string]any{
 		"stdout":    result.Stdout,
 		"stderr":    result.Stderr,
 		"exit_code": result.ExitCode,
 		"timed_out": result.TimedOut,
-	}, nil
+	}
+	if result.StdoutTruncated {
+		out["stdout_truncated"] = true
+	}
+	if result.StderrTruncated {
+		out["stderr_truncated"] = true
+	}
+	return out, nil
 }

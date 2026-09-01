@@ -48,10 +48,47 @@ type containerRunner interface {
 
 // execResult is what one Exec call produced.
 type execResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
-	TimedOut bool
+	Stdout          string
+	Stderr          string
+	ExitCode        int
+	TimedOut        bool
+	StdoutTruncated bool
+	StderrTruncated bool
+}
+
+// maxCapturedOutputBytes caps how much of a sandboxed program's stdout/
+// stderr this process will buffer, independent of whatever's on the other
+// side of docker exec's pipe. Without it, a script that prints a lot
+// (accidentally or because the model got confused and looped) buffers
+// unboundedly here and then lands whole in the model's next turn — the
+// same context-overflow shape as memo.search/memo.topics' unbounded
+// limits, just reached through run_code instead. 64KB is generous for
+// anything a model would deliberately want back (a few thousand lines of
+// text) while still bounding memory use regardless of what the script
+// does.
+const maxCapturedOutputBytes = 64 * 1024
+
+// truncatingBuffer collects up to maxCapturedOutputBytes and silently
+// discards anything past that, tracking whether it did. Never returns a
+// write error — cmd.Run must not fail just because the program was
+// chatty.
+type truncatingBuffer struct {
+	buf       bytes.Buffer
+	truncated bool
+}
+
+func (b *truncatingBuffer) Write(p []byte) (int, error) {
+	remaining := maxCapturedOutputBytes - b.buf.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		b.buf.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+	return b.buf.Write(p)
 }
 
 // sandboxLabel marks every container this service creates, so the reaper
@@ -138,7 +175,7 @@ func (dockerRunner) Exec(ctx context.Context, name, code string, timeout time.Du
 
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", name, "sh", "-c", script)
 	cmd.Stdin = strings.NewReader(code)
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr truncatingBuffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -157,10 +194,12 @@ func (dockerRunner) Exec(ctx context.Context, name, code string, timeout time.Du
 	// the process didn't finish on its own, which is what actually
 	// matters to report back to the model.
 	return execResult{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: exitCode,
-		TimedOut: exitCode == 137,
+		Stdout:          stdout.buf.String(),
+		Stderr:          stderr.buf.String(),
+		ExitCode:        exitCode,
+		TimedOut:        exitCode == 137,
+		StdoutTruncated: stdout.truncated,
+		StderrTruncated: stderr.truncated,
 	}, nil
 }
 

@@ -74,11 +74,13 @@ type runRequest struct {
 }
 
 type runResponse struct {
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exit_code"`
-	TimedOut bool   `json:"timed_out"`
-	Error    string `json:"error,omitempty"`
+	Stdout          string `json:"stdout"`
+	Stderr          string `json:"stderr"`
+	ExitCode        int    `json:"exit_code"`
+	TimedOut        bool   `json:"timed_out"`
+	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 // maxRunRequestBody bounds the JSON body handleRun will read — generous
@@ -151,10 +153,12 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, runResponse{
-		Stdout:   result.Stdout,
-		Stderr:   result.Stderr,
-		ExitCode: result.ExitCode,
-		TimedOut: result.TimedOut,
+		Stdout:          result.Stdout,
+		Stderr:          result.Stderr,
+		ExitCode:        result.ExitCode,
+		TimedOut:        result.TimedOut,
+		StdoutTruncated: result.StdoutTruncated,
+		StderrTruncated: result.StderrTruncated,
 	})
 }
 

@@ -78,11 +78,11 @@ func TestAttachOrphanedImagesMergesGoodMatch(t *testing.T) {
 		t.Fatalf("summary = %+v, want 1 attached, 0 unmatched, 1 empty document removed", summary)
 	}
 
-	docs, err := store.load()
+	docs, err := store.snapshot()
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("snapshot: %v", err)
 	}
-	textDoc := docs.Documents[textSummary.ID]
+	textDoc := docs[textSummary.ID]
 	if len(textDoc.Chunks) != 1 || textDoc.Chunks[0].ImageURL != "/document-images/wiper.png" {
 		t.Errorf("text chunk = %+v, want the image attached to it", textDoc.Chunks)
 	}
@@ -91,7 +91,7 @@ func TestAttachOrphanedImagesMergesGoodMatch(t *testing.T) {
 	// — the empty husk of a document must be gone entirely, not just
 	// emptied, or it's still clutter in List()/topics for something that
 	// can never contribute a search result.
-	for docID, doc := range docs.Documents {
+	for docID, doc := range docs {
 		if docID == textSummary.ID {
 			continue
 		}
@@ -104,7 +104,7 @@ func TestAttachOrphanedImagesMergesGoodMatch(t *testing.T) {
 			}
 		}
 	}
-	if _, stillExists := docs.Documents[textSummary.ID]; !stillExists {
+	if _, stillExists := docs[textSummary.ID]; !stillExists {
 		t.Fatal("the text document itself was incorrectly removed")
 	}
 }
@@ -135,11 +135,11 @@ func TestAttachOrphanedImagesLeavesUnmatchedBelowThreshold(t *testing.T) {
 		t.Fatalf("summary = %+v, want 0 attached, 1 unmatched, 0 empty documents removed", summary)
 	}
 
-	docs, err := store.load()
+	docs, err := store.snapshot()
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("snapshot: %v", err)
 	}
-	imageDoc := docs.Documents[imageSummary.ID]
+	imageDoc := docs[imageSummary.ID]
 	if len(imageDoc.Chunks) != 1 || imageDoc.Chunks[0].ImageURL != "/document-images/x.png" {
 		t.Errorf("unmatched image chunk should be left standalone, got %+v", imageDoc.Chunks)
 	}
@@ -175,11 +175,11 @@ func TestAttachOrphanedImagesDoesNotDoubleAttachToSameTextChunk(t *testing.T) {
 		t.Fatalf("summary = %+v, want exactly 1 attached, 1 unmatched, 0 empty documents removed (the diagram doc still has its unmatched chunk)", summary)
 	}
 
-	docs, err := store.load()
+	docs, err := store.snapshot()
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("snapshot: %v", err)
 	}
-	textDoc := docs.Documents[textSummary.ID]
+	textDoc := docs[textSummary.ID]
 	if len(textDoc.Chunks) != 1 || textDoc.Chunks[0].ImageURL == "" {
 		t.Fatalf("text chunk = %+v, want exactly one image attached", textDoc.Chunks)
 	}
@@ -201,15 +201,13 @@ func TestAttachOrphanedImagesRemovesAlreadyEmptyDocumentFromEarlierRun(t *testin
 	// Simulate the leftover state directly — AddPages requires at least
 	// one page, but AttachOrphanedImages from an earlier run could leave
 	// a document with none at all.
-	data, err := store.load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	emptyDoc := data.Documents[emptySummary.ID]
-	emptyDoc.Chunks = nil
-	data.Documents[emptySummary.ID] = emptyDoc
-	if err := store.save(data); err != nil {
-		t.Fatalf("save: %v", err)
+	if err := store.mutate(func(cache map[string]Record) error {
+		emptyDoc := cache[emptySummary.ID]
+		emptyDoc.Chunks = nil
+		cache[emptySummary.ID] = emptyDoc
+		return nil
+	}); err != nil {
+		t.Fatalf("mutate: %v", err)
 	}
 
 	summary, err := store.AttachOrphanedImages(ctx, 0.7)
@@ -220,11 +218,11 @@ func TestAttachOrphanedImagesRemovesAlreadyEmptyDocumentFromEarlierRun(t *testin
 		t.Errorf("summary = %+v, want 1 empty document removed", summary)
 	}
 
-	docs, err := store.load()
+	docs, err := store.snapshot()
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("snapshot: %v", err)
 	}
-	if _, stillExists := docs.Documents[emptySummary.ID]; stillExists {
+	if _, stillExists := docs[emptySummary.ID]; stillExists {
 		t.Error("the already-empty document should have been removed")
 	}
 }

@@ -36,13 +36,13 @@ type chunkRef struct {
 func (s *Store) AttachOrphanedImages(ctx context.Context, minRelevance float64) (AttachSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data, err := s.load()
-	if err != nil {
+	if err := s.ensureLoadedLocked(); err != nil {
 		return AttachSummary{}, err
 	}
+	data := s.cache
 
 	var imageRefs, textRefs []chunkRef
-	for docID, record := range data.Documents {
+	for docID, record := range data {
 		for i, chunk := range record.Chunks {
 			switch {
 			case chunk.ImageURL != "" && len(chunk.Embedding) > 0:
@@ -59,13 +59,13 @@ func (s *Store) AttachOrphanedImages(ctx context.Context, minRelevance float64) 
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		imageChunk := data.Documents[ir.docID].Chunks[ir.index]
+		imageChunk := data[ir.docID].Chunks[ir.index]
 
 		bestScore := 0.0
 		var bestRef chunkRef
 		found := false
 		for _, tr := range textRefs {
-			textChunk := data.Documents[tr.docID].Chunks[tr.index]
+			textChunk := data[tr.docID].Chunks[tr.index]
 			if textChunk.ImageURL != "" {
 				continue // already has an image attached from an earlier match
 			}
@@ -79,9 +79,9 @@ func (s *Store) AttachOrphanedImages(ctx context.Context, minRelevance float64) 
 			continue
 		}
 
-		record := data.Documents[bestRef.docID]
+		record := data[bestRef.docID]
 		record.Chunks[bestRef.index].ImageURL = imageChunk.ImageURL
-		data.Documents[bestRef.docID] = record
+		data[bestRef.docID] = record
 		summary.Attached++
 
 		if removals[ir.docID] == nil {
@@ -91,7 +91,7 @@ func (s *Store) AttachOrphanedImages(ctx context.Context, minRelevance float64) 
 	}
 
 	for docID, indices := range removals {
-		record := data.Documents[docID]
+		record := data[docID]
 		kept := make([]Chunk, 0, len(record.Chunks)-len(indices))
 		for i, chunk := range record.Chunks {
 			if !indices[i] {
@@ -99,7 +99,7 @@ func (s *Store) AttachOrphanedImages(ctx context.Context, minRelevance float64) 
 			}
 		}
 		record.Chunks = kept
-		data.Documents[docID] = record
+		data[docID] = record
 	}
 
 	// A document can end up with zero chunks — every one of its images
@@ -108,14 +108,14 @@ func (s *Store) AttachOrphanedImages(ctx context.Context, minRelevance float64) 
 	// pure clutter: it can never contribute a search result, so leaving
 	// the record around (still listed by List()/topics) only misleads
 	// about what's actually searchable.
-	for docID, record := range data.Documents {
+	for docID, record := range data {
 		if len(record.Chunks) == 0 {
-			delete(data.Documents, docID)
+			delete(data, docID)
 			summary.EmptyDocumentsRemoved++
 		}
 	}
 
-	if err := s.save(data); err != nil {
+	if err := s.save(); err != nil {
 		return summary, err
 	}
 	return summary, nil
