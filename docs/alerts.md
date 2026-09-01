@@ -175,6 +175,28 @@ match. Without this, `SpeakerNotifier.Notify` fails with a real error
 there's no permission to reach the audio device from inside the
 container.
 
+## Notification zone — a persisted record, not just a one-time delivery
+
+Every channel above delivers an alert once and is done with it — a NOAA
+warning spoken through the speaker, or a threshold crossing sent to
+Telegram, leaves no record inside the app itself once it's fired.
+`internal/notifications` fixes that: `notificationStoreNotifier`
+(`cmd/smarthelper/alerts.go`) is added to both `thresholdRuleNotifiers`
+and `noaaAlertNotifiers` unconditionally, alongside whichever real
+channels a rule opted into, so every alert that fires is recorded
+regardless of Telegram/webhook/speaker configuration. It's not itself one
+of the opt-in checkboxes — there's no "notification zone" toggle to miss.
+
+Persisted as a capped JSON file (`notifications.json`, 200 most-recent
+entries, oldest dropped first — same rotation reasoning as
+`internal/errlog`), read by the web UI's ⚠️ header toggle: a badge shows
+the unread count, the dialog lists title/body/time for each, click one to
+mark it read or ✕ to dismiss it entirely. `GET /api/notifications` (list
++ unread count), `POST /api/notifications/read` (`{"id"}` or
+`{"all": true}`), `DELETE /api/notifications?id=` — all report
+`enabled: false` rather than erroring when no store is configured, the
+same shape as the other optional web UI features.
+
 ## Settings page
 
 Once a channel is configured, the settings page's "Алерты"/"Alerts" tab
