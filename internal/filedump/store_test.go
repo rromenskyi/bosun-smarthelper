@@ -156,6 +156,78 @@ func TestLinkDocumentSurfacesInListing(t *testing.T) {
 	}
 }
 
+func TestSetPendingSurfacesInListing(t *testing.T) {
+	store := newTestStore(t)
+	f, rel, err := store.OpenForWrite("", "manual.txt")
+	if err != nil {
+		t.Fatalf("OpenForWrite: %v", err)
+	}
+	f.Close()
+
+	if err := store.SetPending(rel, true); err != nil {
+		t.Fatalf("SetPending: %v", err)
+	}
+	listing, err := store.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if !listing.Files[0].RAGPending {
+		t.Fatalf("expected RAGPending true, got %+v", listing.Files[0])
+	}
+
+	if err := store.SetPending(rel, false); err != nil {
+		t.Fatalf("SetPending(false): %v", err)
+	}
+	listing, err = store.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if listing.Files[0].RAGPending {
+		t.Fatalf("expected RAGPending cleared, got %+v", listing.Files[0])
+	}
+}
+
+func TestSetIngestErrorSurfacesInListingAndClearsPending(t *testing.T) {
+	store := newTestStore(t)
+	f, rel, err := store.OpenForWrite("", "manual.pdf")
+	if err != nil {
+		t.Fatalf("OpenForWrite: %v", err)
+	}
+	f.Close()
+	if err := store.SetPending(rel, true); err != nil {
+		t.Fatalf("SetPending: %v", err)
+	}
+
+	if err := store.SetIngestError(rel, "could not process PDF for search: boom"); err != nil {
+		t.Fatalf("SetIngestError: %v", err)
+	}
+	listing, err := store.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if listing.Files[0].RAGPending {
+		t.Errorf("expected RAGPending cleared once an error is recorded, got %+v", listing.Files[0])
+	}
+	if listing.Files[0].RAGError != "could not process PDF for search: boom" {
+		t.Errorf("RAGError = %q, want the recorded message", listing.Files[0].RAGError)
+	}
+
+	// A later successful ingestion (LinkDocument) must clear the error.
+	if err := store.LinkDocument(rel, "doc-123"); err != nil {
+		t.Fatalf("LinkDocument: %v", err)
+	}
+	listing, err = store.List("")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if listing.Files[0].RAGError != "" {
+		t.Errorf("RAGError = %q, want cleared after a successful re-ingestion", listing.Files[0].RAGError)
+	}
+	if !listing.Files[0].InRAG || listing.Files[0].DocumentID != "doc-123" {
+		t.Errorf("expected file linked to doc-123, got %+v", listing.Files[0])
+	}
+}
+
 func TestMoveFilePreservesSidecarLink(t *testing.T) {
 	store := newTestStore(t)
 	if err := store.CreateFolder("", "dest"); err != nil {

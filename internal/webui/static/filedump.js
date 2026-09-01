@@ -42,6 +42,15 @@ function joinPath(...parts) {
   return parts.filter(p => p !== '' && p != null).join('/');
 }
 
+// pendingPollTimer re-fetches the listing every few seconds while any
+// visible file has rag_pending — ingestion now runs in a background
+// goroutine (docs/filedump.md), so there's no request left to await the
+// result on; polling the listing is how the badge (⏳ → ✓/⚠️) actually
+// updates once it finishes. Always reads the *current* currentPath at
+// fire time, so navigating away mid-poll just re-checks wherever the
+// user ended up instead of a stale folder.
+let pendingPollTimer = null;
+
 async function loadListing() {
   let data;
   try {
@@ -57,6 +66,14 @@ async function loadListing() {
   filedumpToggle.hidden = false;
   renderBreadcrumb();
   renderList(data.folders || [], data.files || []);
+
+  if (pendingPollTimer) {
+    clearTimeout(pendingPollTimer);
+    pendingPollTimer = null;
+  }
+  if ((data.files || []).some(file => file.rag_pending)) {
+    pendingPollTimer = setTimeout(loadListing, 3000);
+  }
 }
 
 function renderBreadcrumb() {
@@ -134,7 +151,21 @@ function renderList(folders, files) {
 
     const name = document.createElement('span');
     name.className = 'filedump-row-name';
-    if (file.in_rag) {
+    // At most one of these is ever true at a time (see
+    // internal/filedump.FileInfo) — pending while a background
+    // ingestion job runs, then either in_rag (done) or rag_error
+    // (failed) once it finishes.
+    if (file.rag_pending) {
+      const badge = document.createElement('span');
+      badge.className = 'filedump-rag-badge filedump-rag-pending';
+      badge.title = text[locale()].fileDumpRagPendingTitle;
+      name.appendChild(badge);
+    } else if (file.rag_error) {
+      const badge = document.createElement('span');
+      badge.className = 'filedump-rag-badge filedump-rag-error';
+      badge.title = text[locale()].fileDumpRagWarningPrefix + file.rag_error;
+      name.appendChild(badge);
+    } else if (file.in_rag) {
       const badge = document.createElement('span');
       badge.className = 'filedump-rag-badge';
       badge.title = text[locale()].fileDumpRagBadgeTitle;

@@ -266,6 +266,12 @@
     .filedump-rag-badge {
       display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: 0 0 auto;
     }
+    /* rag_pending/rag_error (docs/filedump.md's asynchronous ingestion) —
+       same dot, different color, so a row's search-index state reads at
+       a glance: grey while a background job is running, red if it
+       failed (hover for why), green once it's actually searchable. */
+    .filedump-rag-badge.filedump-rag-pending { background: var(--muted); }
+    .filedump-rag-badge.filedump-rag-error { background: var(--danger); border-radius: 2px; }
     .filedump-row a { color: var(--text); text-decoration: none; }
     .filedump-row a:hover { text-decoration: underline; }
     /* The location's picture rides along with the message that describes

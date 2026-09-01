@@ -84,12 +84,23 @@ against a runaway request — the *real* limit is a client-side `confirm()`
 above a size threshold in `filedump.js`, since a personal file store has
 no reason to hard-reject a large upload a user actually intends to make.
 
-When `add_to_rag=true`, the file is read back after the raw write
-completes and run through whichever of three extraction paths matches
-(`internal/webui/pdf.go`): a PDF (`extractPDFPages`, text pages chunked
-normally, diagram-only pages rendered and OCR'd), a standalone image —
-PNG/JPEG/GIF, sniffed by magic bytes (`sniffImageExt`) — OCR'd directly
-and stored as a single-page document
+When `add_to_rag=true`, the raw file is written and the upload responds
+immediately with `rag_pending: true` — ingestion itself
+(`ingestFileDumpUploadAsync`) runs afterward in a background goroutine,
+detached from the request. It used to run inline before the response was
+sent; that meant a slow, OCR-heavy file (e.g. a scanned multi-page
+manual — see below) held the client's connection open long enough to hit
+an *intermediate* timeout well before the server's own gave up.
+Confirmed live: Cloudflare Tunnel's ~100s edge timeout killed an upload
+whose PDF processing genuinely needed a few minutes, even though
+`web.request_timeout` (600s) had plenty of room left and the file itself
+had already been saved successfully by the time the tunnel gave up.
+
+Ingestion itself runs through whichever of three extraction paths
+matches (`internal/webui/pdf.go`): a PDF (`extractPDFPages`, text pages
+chunked normally, diagram-only pages rendered and OCR'd), a standalone
+image — PNG/JPEG/GIF, sniffed by magic bytes (`sniffImageExt`) — OCR'd
+directly and stored as a single-page document
 (`ingestStandaloneImage`/`documents.AddPages`, the same `{text,
 image_url}` shape a diagram-only PDF page gets, so a manual's wiring
 diagram uploaded on its own is findable by its recognized text exactly
@@ -97,15 +108,26 @@ like one embedded in a PDF), or plain UTF-8 text. Either way the result
 is tagged with the file's folder as `SourcePath`. A failed ingestion (not
 a PDF, not a recognized image format, not valid UTF-8, extraction error)
 **never rolls back the raw file write** — the file is still saved, and
-the failure comes back as a non-fatal `rag_warning` in the response
-instead of an error. Uploading a spreadsheet with the checkbox mistakenly
-checked is expected to happen; it shouldn't lose the file.
+the failure surfaces as the file's `rag_error` in the next `GET
+/api/files` listing rather than in the upload response, since by the
+time it's known there's no request left to report it into. Uploading a
+spreadsheet with the checkbox mistakenly checked is expected to happen;
+it shouldn't lose the file.
+
+`filedump.js` polls `GET /api/files` every few seconds while any listed
+file has `rag_pending: true`, so the badge next to a file's name updates
+on its own once ingestion finishes — grey (pending) → green (`in_rag`)
+or red (`rag_error`, hover for the message), with no user action needed
+to see the result.
 
 ## API
 
 - `GET /api/files?path=<relpath>` — list one folder's contents
-  (`{folders: [{name}], files: [{name, size, mtime, in_rag, document_id}]}`).
-  `enabled: false` (no folders/files) when `filedump.path` is unset.
+  (`{folders: [{name}], files: [{name, size, mtime, in_rag, document_id,
+  rag_pending, rag_error}]}` — the last three all `omitempty`; at most
+  one of `in_rag`/`rag_pending`/`rag_error` is meaningfully set at a
+  time). `enabled: false` (no folders/files) when `filedump.path` is
+  unset.
 - `POST /api/files/folder` `{path, name}` — create a subfolder.
 - `POST /api/files/upload` — multipart form: `path` (target folder),
   `file`, and optionally `add_to_rag` (`"true"`), `title`,
@@ -114,6 +136,12 @@ checked is expected to happen; it shouldn't lose the file.
   before the `file` part in the multipart stream — true for a `FormData`
   built by appending fields in that order, which is what `filedump.js`
   does; a streaming reader can't look ahead to find them otherwise.
+  Responds as soon as the raw write finishes — `{path, in_rag: false,
+  rag_pending: true}` when `add_to_rag` was requested and accepted (the
+  real ingestion outcome shows up later in `GET /api/files`, see above),
+  or a `rag_warning` instead of `rag_pending` for the two checks still
+  done synchronously (no document store configured; a malformed
+  `ocr_language`).
 - `POST /api/files/move` `{from, to}` — move or rename a file or folder;
   also used by the UI's drag-and-drop.
 - `DELETE /api/files?path=<relpath>&recursive=true` — delete a file, or

@@ -148,6 +148,39 @@ func TestFileDumpUploadWithoutRAG(t *testing.T) {
 	}
 }
 
+// waitForFileIngestion polls GET /api/files?path=dir until name's
+// background RAG ingestion (see ingestFileDumpUploadAsync) finishes —
+// rag_pending no longer true — or 2 seconds pass, then returns that
+// file's listing entry either way. Ingestion moved to a background
+// goroutine so a slow OCR-heavy upload's response isn't held open long
+// enough to hit an intermediate proxy's own timeout; tests observe the
+// result the same way a real client now has to, by polling the listing,
+// not from the upload response itself.
+func waitForFileIngestion(t *testing.T, server *Server, dir, name string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		request := httptest.NewRequest(http.MethodGet, "/api/files?path="+dir, nil)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		var body map[string]any
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatalf("decode list response: %v", err)
+		}
+		files, _ := body["files"].([]any)
+		for _, f := range files {
+			entry, _ := f.(map[string]any)
+			if entry["name"] == name && entry["rag_pending"] != true {
+				return entry
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s/%s ingestion to finish", dir, name)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestFileDumpUploadWithRAGTaggedBySourcePath(t *testing.T) {
 	server, docStore := newFileDumpTestServer(t)
 
@@ -168,12 +201,17 @@ func TestFileDumpUploadWithRAGTaggedBySourcePath(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body["in_rag"] != true {
-		t.Fatalf("in_rag = %v, want true, body = %#v", body["in_rag"], body)
+	if body["rag_pending"] != true {
+		t.Fatalf("rag_pending = %v, want true — ingestion now runs in the background", body["rag_pending"])
 	}
-	documentID, _ := body["document_id"].(string)
+
+	fileEntry := waitForFileIngestion(t, server, "docs/ford", "manual.txt")
+	if fileEntry["in_rag"] != true {
+		t.Fatalf("file entry = %#v, want in_rag true once ingestion finishes", fileEntry)
+	}
+	documentID, _ := fileEntry["document_id"].(string)
 	if documentID == "" {
-		t.Fatalf("expected document_id in response, got %#v", body)
+		t.Fatalf("expected document_id in file entry, got %#v", fileEntry)
 	}
 
 	docs, err := docStore.List()
@@ -191,22 +229,6 @@ func TestFileDumpUploadWithRAGTaggedBySourcePath(t *testing.T) {
 	if len(results) != 1 || results[0].SourcePath != "docs/ford" {
 		t.Fatalf("results = %#v, want source_path docs/ford", results)
 	}
-
-	listRequest := httptest.NewRequest(http.MethodGet, "/api/files?path=docs/ford", nil)
-	listResponse := httptest.NewRecorder()
-	server.Handler().ServeHTTP(listResponse, listRequest)
-	var listBody map[string]any
-	if err := json.NewDecoder(listResponse.Body).Decode(&listBody); err != nil {
-		t.Fatalf("decode list response: %v", err)
-	}
-	files := listBody["files"].([]any)
-	if len(files) != 1 {
-		t.Fatalf("files = %#v, want 1 entry", files)
-	}
-	fileEntry := files[0].(map[string]any)
-	if fileEntry["in_rag"] != true || fileEntry["document_id"] != documentID {
-		t.Errorf("file entry = %#v", fileEntry)
-	}
 }
 
 func TestFileDumpUploadWithRAGIngestsStandaloneImage(t *testing.T) {
@@ -223,16 +245,14 @@ func TestFileDumpUploadWithRAGIngestsStandaloneImage(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("upload status = %d, body = %s", response.Code, response.Body.String())
 	}
-	var body map[string]any
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		t.Fatalf("decode response: %v", err)
+
+	fileEntry := waitForFileIngestion(t, server, "ford-e350", "fuse-panel.png")
+	if fileEntry["in_rag"] != true {
+		t.Fatalf("file entry = %#v, want in_rag true once ingestion finishes", fileEntry)
 	}
-	if body["in_rag"] != true {
-		t.Fatalf("in_rag = %v, want true, body = %#v", body["in_rag"], body)
-	}
-	documentID, _ := body["document_id"].(string)
+	documentID, _ := fileEntry["document_id"].(string)
 	if documentID == "" {
-		t.Fatalf("expected document_id in response, got %#v", body)
+		t.Fatalf("expected document_id in file entry, got %#v", fileEntry)
 	}
 
 	docs, err := docStore.List()
@@ -257,11 +277,16 @@ func TestFileDumpUploadRAGFailureDoesNotBlockRawUpload(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body["in_rag"] != false {
-		t.Errorf("in_rag = %v, want false", body["in_rag"])
+	if body["rag_pending"] != true {
+		t.Fatalf("rag_pending = %v, want true — ingestion now runs in the background", body["rag_pending"])
 	}
-	if _, ok := body["rag_warning"]; !ok {
-		t.Errorf("expected a rag_warning, got %#v", body)
+
+	fileEntry := waitForFileIngestion(t, server, "", "manual.pdf")
+	if fileEntry["in_rag"] != nil && fileEntry["in_rag"] != false {
+		t.Errorf("file entry in_rag = %v, want false/absent", fileEntry["in_rag"])
+	}
+	if fileEntry["rag_error"] == nil || fileEntry["rag_error"] == "" {
+		t.Errorf("expected a rag_error once ingestion finishes, got %#v", fileEntry)
 	}
 
 	fileRequest := httptest.NewRequest(http.MethodGet, "/files/manual.pdf", nil)
@@ -295,11 +320,11 @@ func TestFileDumpMoveUpdatesDocumentSourcePath(t *testing.T) {
 	if uploadResponse.Code != http.StatusOK {
 		t.Fatalf("upload status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
 	}
-	var uploadBody map[string]any
-	if err := json.NewDecoder(uploadResponse.Body).Decode(&uploadBody); err != nil {
-		t.Fatalf("decode upload response: %v", err)
+	fileEntry := waitForFileIngestion(t, server, "", "manual.txt")
+	documentID, _ := fileEntry["document_id"].(string)
+	if documentID == "" {
+		t.Fatalf("expected document_id once ingestion finishes, got %#v", fileEntry)
 	}
-	documentID := uploadBody["document_id"].(string)
 
 	folderRequest := httptest.NewRequest(http.MethodPost, "/api/files/folder", bytes.NewReader([]byte(`{"path":"","name":"archive"}`)))
 	server.Handler().ServeHTTP(httptest.NewRecorder(), folderRequest)
@@ -324,11 +349,14 @@ func TestFileDumpDeleteCascadesDocument(t *testing.T) {
 	server, docStore := newFileDumpTestServer(t)
 
 	uploadResponse := uploadFile(t, server, map[string]string{"add_to_rag": "true"}, "manual.txt", []byte("Fuse 12 controls the headlights."))
-	var uploadBody map[string]any
-	if err := json.NewDecoder(uploadResponse.Body).Decode(&uploadBody); err != nil {
-		t.Fatalf("decode upload response: %v", err)
+	if uploadResponse.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, body = %s", uploadResponse.Code, uploadResponse.Body.String())
 	}
-	documentID := uploadBody["document_id"].(string)
+	fileEntry := waitForFileIngestion(t, server, "", "manual.txt")
+	documentID, _ := fileEntry["document_id"].(string)
+	if documentID == "" {
+		t.Fatalf("expected document_id once ingestion finishes, got %#v", fileEntry)
+	}
 
 	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/files?path=manual.txt", nil)
 	deleteResponse := httptest.NewRecorder()

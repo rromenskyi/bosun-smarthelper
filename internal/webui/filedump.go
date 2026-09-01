@@ -170,13 +170,21 @@ func fileDumpFolderOf(relFilePath string) string {
 // that order (what internal/webui/static/filedump.js does), since a
 // streaming reader can't look ahead.
 //
-// When add_to_rag is true, the file is read back after the raw write
-// completes and run through PDF/image/plain-text extraction (whichever
-// matches — see ingestFileDumpUpload), tagged with the file's folder as
-// documents.Record.SourcePath. A failed ingestion (not a PDF, not a
-// recognized image format, not valid UTF-8 text, extraction error) never
-// rolls back the raw file write — it's reported back as a non-fatal
-// rag_warning instead.
+// When add_to_rag is true, the response comes back immediately with
+// rag_pending: true, and the file is read back and run through PDF
+// /image/plain-text extraction (whichever matches — see
+// ingestFileDumpUpload) in a background goroutine
+// (ingestFileDumpUploadAsync), tagged with the file's folder as
+// documents.Record.SourcePath. Ingestion running after the response is
+// sent, not before it, is deliberate: it used to block the response,
+// which meant a slow OCR-heavy file held the client's connection open
+// long enough to hit an intermediate proxy's own timeout (confirmed
+// live: Cloudflare Tunnel's ~100s edge timeout) well before
+// web.request_timeout (600s) ever would. A failed ingestion (not a PDF,
+// not a recognized image format, not valid UTF-8 text, extraction error)
+// never rolls back the raw file write — the file list's rag_error field
+// reports it instead of the old inline rag_warning, since there's no
+// request left to report it into by the time it's known.
 func (s *Server) handleFileDumpUpload(w http.ResponseWriter, r *http.Request) {
 	if s.fileDumpStore == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "file dump is not configured"})
@@ -275,20 +283,57 @@ func (s *Server) handleFileDumpUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.ingestFileDumpUpload(r.Context(), relFilePath, title, ocrLanguage, response)
+	// Ingestion runs in the background (see ingestFileDumpUploadAsync) —
+	// the response goes back now, before any OCR/embedding work starts,
+	// so a slow file's processing time is never on the upload request's
+	// own critical path. It used to run inline before the response was
+	// sent, which meant a slow OCR-heavy PDF held the client's connection
+	// open long enough to hit an intermediate proxy's own timeout
+	// (confirmed live: Cloudflare Tunnel's ~100s edge timeout), well
+	// before web.request_timeout (600s) ever would — even though the raw
+	// file itself had already been saved successfully by then.
+	if err := s.fileDumpStore.SetPending(relFilePath, true); err != nil {
+		s.logger.Warn("mark file dump pending", "path", relFilePath, "error", err)
+	}
+	response["rag_pending"] = true
+	go s.ingestFileDumpUploadAsync(relFilePath, title, ocrLanguage)
 	writeJSON(w, http.StatusOK, response)
 }
 
+// ingestFileDumpUploadAsync runs ingestFileDumpUpload in the background —
+// see the comment in handleFileDumpUpload for why. Uses its own context
+// detached from any HTTP request, since the request that triggered this
+// has already been responded to by the time this runs.
+func (s *Server) ingestFileDumpUploadAsync(relFilePath, title, ocrLanguage string) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.requestTimeout)
+	defer cancel()
+	documentID, warning := s.ingestFileDumpUpload(ctx, relFilePath, title, ocrLanguage)
+	if warning != "" {
+		s.logger.Warn("file dump background RAG ingestion failed", "path", relFilePath, "error", warning)
+		if err := s.fileDumpStore.SetIngestError(relFilePath, warning); err != nil {
+			s.logger.Warn("record file dump ingestion error", "path", relFilePath, "error", err)
+		}
+		return
+	}
+	if err := s.fileDumpStore.LinkDocument(relFilePath, documentID); err != nil {
+		s.logger.Warn("link file dump document", "path", relFilePath, "document_id", documentID, "error", err)
+		if err := s.fileDumpStore.SetIngestError(relFilePath, "added to search but could not record the link: "+err.Error()); err != nil {
+			s.logger.Warn("record file dump ingestion error", "path", relFilePath, "error", err)
+		}
+	}
+}
+
 // ingestFileDumpUpload reads the just-written file back from disk and
-// feeds it through document ingestion, mutating response in place — kept
-// separate from handleFileDumpUpload so every early-return path there
-// stays a plain writeJSON, not a nested tree of ingestion error handling.
-func (s *Server) ingestFileDumpUpload(ctx context.Context, relFilePath, title, ocrLanguage string, response map[string]any) {
+// feeds it through document ingestion, returning the resulting
+// documents.Record ID on success or a message explaining why ingestion
+// didn't happen on failure (never both) — kept separate from its caller
+// so this stays a plain, linear "try each format" function with no
+// background-vs-synchronous concerns of its own.
+func (s *Server) ingestFileDumpUpload(ctx context.Context, relFilePath, title, ocrLanguage string) (documentID, warning string) {
 	absPath := filepath.Join(s.fileDumpDir, filepath.FromSlash(relFilePath))
 	content, err := os.ReadFile(absPath)
 	if err != nil {
-		response["rag_warning"] = "could not read the file back for search ingestion: " + err.Error()
-		return
+		return "", "could not read the file back for search ingestion: " + err.Error()
 	}
 
 	ingestCtx, cancel := context.WithTimeout(ctx, s.requestTimeout)
@@ -298,53 +343,35 @@ func (s *Server) ingestFileDumpUpload(ctx context.Context, relFilePath, title, o
 	if bytes.HasPrefix(content, pdfMagic) {
 		pages, err := extractPDFPages(ingestCtx, content, s.documentImagesDir, "/document-images/", ocrLanguage)
 		if err != nil {
-			response["rag_warning"] = "could not process PDF for search: " + err.Error()
-			return
+			return "", "could not process PDF for search: " + err.Error()
 		}
 		summary, err := s.documents.AddPages(ingestCtx, title, pages, sourcePath)
 		if err != nil {
-			response["rag_warning"] = err.Error()
-			return
+			return "", err.Error()
 		}
-		s.linkFileDumpDocument(relFilePath, summary.ID, response)
-		return
+		return summary.ID, ""
 	}
 
 	if ext := sniffImageExt(content); ext != "" {
 		pages, err := ingestStandaloneImage(ingestCtx, content, ext, s.documentImagesDir, "/document-images/", ocrLanguage)
 		if err != nil {
-			response["rag_warning"] = "could not process image for search: " + err.Error()
-			return
+			return "", "could not process image for search: " + err.Error()
 		}
 		summary, err := s.documents.AddPages(ingestCtx, title, pages, sourcePath)
 		if err != nil {
-			response["rag_warning"] = err.Error()
-			return
+			return "", err.Error()
 		}
-		s.linkFileDumpDocument(relFilePath, summary.ID, response)
-		return
+		return summary.ID, ""
 	}
 
 	if !utf8.Valid(content) {
-		response["rag_warning"] = "file must be plain UTF-8 text, a PDF, or an image (PNG/JPEG/GIF) to be added to search"
-		return
+		return "", "file must be plain UTF-8 text, a PDF, or an image (PNG/JPEG/GIF) to be added to search"
 	}
 	summary, err := s.documents.Add(ingestCtx, title, string(content), sourcePath)
 	if err != nil {
-		response["rag_warning"] = err.Error()
-		return
+		return "", err.Error()
 	}
-	s.linkFileDumpDocument(relFilePath, summary.ID, response)
-}
-
-func (s *Server) linkFileDumpDocument(relFilePath, documentID string, response map[string]any) {
-	if err := s.fileDumpStore.LinkDocument(relFilePath, documentID); err != nil {
-		s.logger.Warn("link file dump document", "path", relFilePath, "document_id", documentID, "error", err)
-		response["rag_warning"] = "added to search but could not record the link: " + err.Error()
-		return
-	}
-	response["in_rag"] = true
-	response["document_id"] = documentID
+	return summary.ID, ""
 }
 
 // respondMultipartError distinguishes the fileDumpUploadHardLimit backstop

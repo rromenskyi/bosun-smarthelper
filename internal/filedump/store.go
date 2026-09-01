@@ -32,6 +32,14 @@ type FileInfo struct {
 	ModTime    string `json:"mtime"`
 	InRAG      bool   `json:"in_rag"`
 	DocumentID string `json:"document_id,omitempty"`
+	// RAGPending/RAGError reflect asynchronous ingestion (see
+	// docs/filedump.md) — set by SetPending/SetIngestError, not by List
+	// itself. At most one of RAGPending/RAGError/InRAG is meaningfully
+	// true at a time for a given file: pending while ingestion runs in
+	// the background, then either InRAG (success) or RAGError (failure)
+	// once it finishes.
+	RAGPending bool   `json:"rag_pending,omitempty"`
+	RAGError   string `json:"rag_error,omitempty"`
 }
 
 // Listing is the contents of one directory.
@@ -62,6 +70,23 @@ type sidecarFile struct {
 	// Links maps a tree-relative path (forward-slash, no leading slash)
 	// to the documents.Record ID it was ingested into.
 	Links map[string]string `json:"links"`
+	// Pending marks a path whose RAG ingestion is running in a background
+	// goroutine (see internal/webui/filedump.go's
+	// ingestFileDumpUploadAsync) — set right after the raw upload
+	// completes and the HTTP response has already gone back to the
+	// client, cleared once ingestion finishes either way. Ingestion
+	// used to run inline before the response was sent, which meant a
+	// slow OCR-heavy PDF held the client's connection open long enough
+	// to hit an intermediate proxy's own timeout (confirmed live:
+	// Cloudflare Tunnel's ~100s edge timeout) well before
+	// web.request_timeout (600s) ever would.
+	Pending map[string]bool `json:"pending,omitempty"`
+	// Errors maps a path to its last ingestion failure's message —
+	// surfaced in the file list (FileInfo.RAGError) since a failure can
+	// no longer be reported inline in the upload response the way it was
+	// when ingestion ran synchronously. Cleared by a subsequent
+	// successful ingestion (LinkDocument) or a fresh SetIngestError("").
+	Errors map[string]string `json:"errors,omitempty"`
 }
 
 // Store manages one file-dump root directory plus its sidecar RAG-link
@@ -149,6 +174,12 @@ func (s *Store) List(relDir string) (Listing, error) {
 			fileInfo.InRAG = true
 			fileInfo.DocumentID = docID
 		}
+		if sidecar.Pending[entryRel] {
+			fileInfo.RAGPending = true
+		}
+		if message, ok := sidecar.Errors[entryRel]; ok {
+			fileInfo.RAGError = message
+		}
 		listing.Files = append(listing.Files, fileInfo)
 	}
 	sort.Slice(listing.Folders, func(i, j int) bool { return listing.Folders[i].Name < listing.Folders[j].Name })
@@ -218,7 +249,48 @@ func (s *Store) LinkDocument(relFilePath, documentID string) error {
 	if err != nil {
 		return err
 	}
-	sidecar.Links[cleanRelPath(relFilePath)] = documentID
+	key := cleanRelPath(relFilePath)
+	sidecar.Links[key] = documentID
+	delete(sidecar.Pending, key)
+	delete(sidecar.Errors, key)
+	return s.saveSidecar(sidecar)
+}
+
+// SetPending marks (or clears) relFilePath as having a RAG ingestion
+// running in the background — see sidecarFile.Pending.
+func (s *Store) SetPending(relFilePath string, pending bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sidecar, err := s.loadSidecar()
+	if err != nil {
+		return err
+	}
+	key := cleanRelPath(relFilePath)
+	if pending {
+		sidecar.Pending[key] = true
+	} else {
+		delete(sidecar.Pending, key)
+	}
+	return s.saveSidecar(sidecar)
+}
+
+// SetIngestError records a background ingestion's failure message for
+// relFilePath (clearing Pending either way), or clears a previously
+// recorded one when message is "". See sidecarFile.Errors.
+func (s *Store) SetIngestError(relFilePath, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sidecar, err := s.loadSidecar()
+	if err != nil {
+		return err
+	}
+	key := cleanRelPath(relFilePath)
+	delete(sidecar.Pending, key)
+	if message == "" {
+		delete(sidecar.Errors, key)
+	} else {
+		sidecar.Errors[key] = message
+	}
 	return s.saveSidecar(sidecar)
 }
 
@@ -362,7 +434,7 @@ func (s *Store) Delete(rel string, recursive bool) (DeleteResult, error) {
 }
 
 func (s *Store) loadSidecar() (sidecarFile, error) {
-	data := sidecarFile{Links: make(map[string]string)}
+	data := sidecarFile{Links: make(map[string]string), Pending: make(map[string]bool), Errors: make(map[string]string)}
 	file, err := os.Open(s.sidecarPath)
 	if os.IsNotExist(err) {
 		return data, nil
@@ -376,6 +448,12 @@ func (s *Store) loadSidecar() (sidecarFile, error) {
 	}
 	if data.Links == nil {
 		data.Links = make(map[string]string)
+	}
+	if data.Pending == nil {
+		data.Pending = make(map[string]bool)
+	}
+	if data.Errors == nil {
+		data.Errors = make(map[string]string)
 	}
 	return data, nil
 }
