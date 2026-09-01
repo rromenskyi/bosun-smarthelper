@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/roman220/bosun-smarthelper/internal/errlog"
 	"github.com/roman220/bosun-smarthelper/internal/llm"
@@ -77,10 +78,21 @@ type TopicsProvider interface {
 }
 
 // Agent runs the LLM ⇄ tools conversation loop for a single request.
+//
+// settingsMu guards every field below it: the settings page's
+// handleSettingsUpdate calls SetPersona/SetDynamicTopicsEnabled/etc. from
+// its own request goroutine while other in-flight requests' buildMessages
+// and executeToolAsJSON read the same fields concurrently — a real data
+// race without it (found in an overnight review, confirmed by go test
+// -race). A read takes the lock only long enough to copy out the small
+// values it needs (see persona/dynamicTopicsConfig/getErrLog below), never
+// held across a network call or other blocking work.
 type Agent struct {
-	client               ChatClient
-	registry             *tools.Registry
-	networkAvailability  func(context.Context) bool
+	client              ChatClient
+	registry            *tools.Registry
+	networkAvailability func(context.Context) bool
+
+	settingsMu           sync.RWMutex
 	nameRU               string
 	nameEN               string
 	stylePrompt          string
@@ -104,6 +116,8 @@ func New(
 
 // SetPersona configures the user-facing assistant identity and optional style.
 func (a *Agent) SetPersona(nameRU, nameEN, stylePrompt string) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
 	if strings.TrimSpace(nameRU) != "" {
 		a.nameRU = strings.TrimSpace(nameRU)
 	}
@@ -113,17 +127,37 @@ func (a *Agent) SetPersona(nameRU, nameEN, stylePrompt string) {
 	a.stylePrompt = strings.TrimSpace(stylePrompt)
 }
 
+// persona returns a snapshot of the fields SetPersona sets, for buildMessages.
+func (a *Agent) persona() (nameRU, nameEN, stylePrompt string) {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
+	return a.nameRU, a.nameEN, a.stylePrompt
+}
+
 // SetErrorLog wires a failure log for tool and LLM-call errors. A nil logger
 // (the default) means failures are simply returned to the caller as before,
 // not recorded anywhere durable.
 func (a *Agent) SetErrorLog(logger *errlog.Logger) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
 	a.errLog = logger
+}
+
+// getErrLog returns the current error logger. Safe to use unlocked after
+// returning — SetErrorLog only ever replaces the pointer wholesale, never
+// mutates the Logger a caller might already be holding.
+func (a *Agent) getErrLog() *errlog.Logger {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
+	return a.errLog
 }
 
 // SetTopicsProvider wires in what backs the dynamic topics prompt line —
 // typically *documents.Store. Optional: nil (the default) means the line
 // is never added, regardless of SetDynamicTopicsEnabled.
 func (a *Agent) SetTopicsProvider(provider TopicsProvider) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
 	a.topicsProvider = provider
 }
 
@@ -131,7 +165,18 @@ func (a *Agent) SetTopicsProvider(provider TopicsProvider) {
 // a live settings-page toggle (see docs/settings.md), not a one-time
 // config value, the same shape as SetPersona.
 func (a *Agent) SetDynamicTopicsEnabled(enabled bool) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
 	a.dynamicTopicsEnabled = enabled
+}
+
+// dynamicTopicsConfig returns a snapshot of the dynamic-topics settings,
+// for buildMessages — taken without holding settingsMu across
+// topicsProvider.Topics()'s own work below.
+func (a *Agent) dynamicTopicsConfig() (TopicsProvider, bool) {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
+	return a.topicsProvider, a.dynamicTopicsEnabled
 }
 
 // StepEvent is emitted during a streaming conversation turn. Type is
@@ -282,7 +327,7 @@ func (a *Agent) AskWithHistoryStreaming(
 			// timeout fired) isn't a bug to track — only record genuine
 			// provider failures.
 			if ctx.Err() == nil {
-				a.errLog.Record("llm_chat", a.chatProvider(), err)
+				a.getErrLog().Record("llm_chat", a.chatProvider(), err)
 			}
 			return "", stats, fmt.Errorf("chat: %w", err)
 		}
@@ -311,7 +356,7 @@ func (a *Agent) AskWithHistoryStreaming(
 				}
 				err := fmt.Errorf("model returned an empty response after %d retries (last finish_reason: %q)", emptyResponseRetries, lastFinishReason)
 				if ctx.Err() == nil {
-					a.errLog.Record("llm_chat", a.chatProvider(), err)
+					a.getErrLog().Record("llm_chat", a.chatProvider(), err)
 				}
 				return "", stats, err
 			}
@@ -340,21 +385,23 @@ func (a *Agent) AskWithHistoryStreaming(
 }
 
 func (a *Agent) buildMessages(userMessage string, history []HistoryMessage, language string, online bool) []llm.Message {
-	prompt := fmt.Sprintf("You are %s (%s). ", a.nameEN, a.nameRU) + systemPrompt
+	nameRU, nameEN, stylePrompt := a.persona()
+	prompt := fmt.Sprintf("You are %s (%s). ", nameEN, nameRU) + systemPrompt
 	switch language {
 	case "ru":
 		prompt += " Respond in Russian."
 	case "en":
 		prompt += " Respond in English."
 	}
-	if a.stylePrompt != "" {
-		prompt += " Response style: " + a.stylePrompt
+	if stylePrompt != "" {
+		prompt += " Response style: " + stylePrompt
 	}
 	if !online {
 		prompt += ` Offline: do not claim live internet access.`
 	}
-	if a.dynamicTopicsEnabled && a.topicsProvider != nil {
-		if topics, err := a.topicsProvider.Topics(); err == nil && len(topics) > 0 {
+	topicsProvider, dynamicTopicsEnabled := a.dynamicTopicsConfig()
+	if dynamicTopicsEnabled && topicsProvider != nil {
+		if topics, err := topicsProvider.Topics(); err == nil && len(topics) > 0 {
 			truncated := topics
 			if len(truncated) > maxPromptTopics {
 				truncated = truncated[:maxPromptTopics]
@@ -381,7 +428,7 @@ func (a *Agent) executeToolAsJSON(ctx context.Context, call llm.ToolCall, online
 	result, err := a.executeTool(ctx, call, online)
 	if err != nil {
 		if ctx.Err() == nil {
-			a.errLog.Record("tool_call", call.Function.Name, err)
+			a.getErrLog().Record("tool_call", call.Function.Name, err)
 		}
 		result = map[string]any{"error": err.Error()}
 	}

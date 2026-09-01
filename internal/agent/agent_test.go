@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/roman220/bosun-smarthelper/internal/config"
@@ -330,6 +331,40 @@ func TestAgent_Ask_TruncatesDynamicTopicsList(t *testing.T) {
 	if !strings.Contains(systemPrompt, many[maxPromptTopics-1]) {
 		t.Errorf("system prompt = %q, want it to still include the %dth topic", systemPrompt, maxPromptTopics)
 	}
+}
+
+// TestAgent_ConcurrentSettingsUpdatesDoNotRace guards settingsMu: the
+// settings page's handleSettingsUpdate calls SetPersona/
+// SetDynamicTopicsEnabled/SetTopicsProvider/SetErrorLog from its own
+// request goroutine while other in-flight requests' buildMessages reads
+// the same fields — a real data race before settingsMu existed. Run with
+// -race; without it this only checks nothing panics.
+func TestAgent_ConcurrentSettingsUpdatesDoNotRace(t *testing.T) {
+	ag := New(&fakeClient{}, tools.NewRegistry())
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		i := i
+		wg.Add(4)
+		go func() {
+			defer wg.Done()
+			ag.SetPersona(fmt.Sprintf("Имя%d", i), fmt.Sprintf("Name%d", i), fmt.Sprintf("style-%d", i))
+		}()
+		go func() {
+			defer wg.Done()
+			ag.SetDynamicTopicsEnabled(i%2 == 0)
+			ag.SetTopicsProvider(fakeTopicsProvider{topics: []string{"a", "b"}})
+		}()
+		go func() {
+			defer wg.Done()
+			ag.SetErrorLog(nil)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = ag.buildMessages("hello", nil, "", true)
+		}()
+	}
+	wg.Wait()
 }
 
 // TestAgent_Ask_RejectsEmptyResponseAfterRetries covers the exhausted-retry

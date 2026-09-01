@@ -27,6 +27,28 @@ import (
 // quality and isn't guaranteed to find anything.
 const minPDFPageTextChars = 40
 
+// maxPDFPages bounds how large a single upload's page-by-page extraction
+// will go. Without it a very large PDF ties up ingestFileDumpUploadAsync's
+// goroutine (and generates one rendered PNG per non-text page, with no
+// accounting) for as long as s.requestTimeout allows before being killed —
+// generous enough for any real service/owner's manual, while still giving
+// a clear, immediate rag_error instead of a silent timeout for something
+// pathological.
+const maxPDFPages = 500
+
+// validatePDFPageCount is the seam extractPDFPages checks pageCount
+// through — split out so the boundary condition is testable without a
+// real oversized PDF fixture.
+func validatePDFPageCount(pageCount int) error {
+	if pageCount == 0 {
+		return fmt.Errorf("PDF has no pages")
+	}
+	if pageCount > maxPDFPages {
+		return fmt.Errorf("PDF has %d pages, more than the %d-page limit for a single upload", pageCount, maxPDFPages)
+	}
+	return nil
+}
+
 // extractPDFPages shells out to poppler-utils (pdfinfo, pdftotext,
 // pdftoppm — must be present in the runtime image) to turn a PDF into
 // per-page PageInputs: real text when a page has an extractable text
@@ -49,8 +71,8 @@ func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPr
 	if err != nil {
 		return nil, err
 	}
-	if pageCount == 0 {
-		return nil, fmt.Errorf("PDF has no pages")
+	if err := validatePDFPageCount(pageCount); err != nil {
+		return nil, err
 	}
 
 	// Extracted in a first pass, not decided page-by-page as before,

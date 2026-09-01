@@ -429,6 +429,21 @@ func onePixelImage() image.Image {
 	return img
 }
 
+func TestValidatePDFPageCount(t *testing.T) {
+	if err := validatePDFPageCount(0); err == nil {
+		t.Error("expected an error for a PDF with no pages")
+	}
+	if err := validatePDFPageCount(1); err != nil {
+		t.Errorf("validatePDFPageCount(1) = %v, want nil", err)
+	}
+	if err := validatePDFPageCount(maxPDFPages); err != nil {
+		t.Errorf("validatePDFPageCount(maxPDFPages) = %v, want nil (the limit itself is allowed)", err)
+	}
+	if err := validatePDFPageCount(maxPDFPages + 1); err == nil {
+		t.Error("expected an error for a PDF one page over the limit")
+	}
+}
+
 func TestValidOCRLanguage(t *testing.T) {
 	for _, valid := range []string{"eng", "rus", "eng+rus", "fra+deu+ita"} {
 		if !validOCRLanguage.MatchString(valid) {
