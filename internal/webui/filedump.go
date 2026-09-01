@@ -15,6 +15,7 @@ import (
 
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/filedump"
+	"github.com/roman220/bosun-smarthelper/internal/notifications"
 )
 
 // fileDumpUploadHardLimit is a last-resort backstop against a runaway
@@ -313,6 +314,7 @@ func (s *Server) ingestFileDumpUploadAsync(relFilePath, title, ocrLanguage strin
 		if err := s.fileDumpStore.SetIngestError(relFilePath, warning); err != nil {
 			s.logger.Warn("record file dump ingestion error", "path", relFilePath, "error", err)
 		}
+		s.notifyFileDumpIngest(relFilePath, false, warning)
 		return
 	}
 	if err := s.fileDumpStore.LinkDocument(relFilePath, documentID); err != nil {
@@ -320,6 +322,33 @@ func (s *Server) ingestFileDumpUploadAsync(relFilePath, title, ocrLanguage strin
 		if err := s.fileDumpStore.SetIngestError(relFilePath, "added to search but could not record the link: "+err.Error()); err != nil {
 			s.logger.Warn("record file dump ingestion error", "path", relFilePath, "error", err)
 		}
+		s.notifyFileDumpIngest(relFilePath, false, "added to search but could not record the link: "+err.Error())
+		return
+	}
+	s.notifyFileDumpIngest(relFilePath, true, "")
+}
+
+// notifyFileDumpIngest records a completed background RAG ingestion in
+// the notification zone — unlike a chat_file tool call (whose result the
+// model already reports directly in the conversation), a filedump upload
+// finishing in the background has no other visibility beyond a badge in
+// the file browser someone has to think to go check. One notification
+// per real upload, not a recurring tick, so no dedup window is needed
+// here the way the background schedulers below need one.
+func (s *Server) notifyFileDumpIngest(relFilePath string, success bool, reason string) {
+	if s.notificationsStore == nil {
+		return
+	}
+	n := notifications.Notification{Source: "filedump", Title: relFilePath}
+	if success {
+		n.Severity = "info"
+		n.Body = "Added to the search index."
+	} else {
+		n.Severity = "warning"
+		n.Body = "Could not add to the search index: " + reason
+	}
+	if _, err := s.notificationsStore.Add(n); err != nil {
+		s.logger.Warn("record filedump ingest notification", "path", relFilePath, "error", err)
 	}
 }
 

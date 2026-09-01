@@ -13,6 +13,7 @@ import (
 
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/filedump"
+	"github.com/roman220/bosun-smarthelper/internal/notifications"
 )
 
 // onePixelPNG is a minimal valid 1x1 transparent PNG — enough for the RAG
@@ -277,6 +278,50 @@ func TestFileDumpUploadWithRAGIngestsStandaloneImage(t *testing.T) {
 	}
 	if len(docs) != 1 || docs[0].ID != documentID || docs[0].Title != "Fuse panel diagram" || docs[0].SourcePath != "ford-e350" {
 		t.Fatalf("documents = %#v", docs)
+	}
+}
+
+// TestFileDumpUploadWithRAGRecordsSuccessNotification guards the
+// notification zone's one bit of visibility a background upload has
+// beyond a badge in the file browser: a completed ingestion — success or
+// failure — must show up in internal/notifications.
+func TestFileDumpUploadWithRAGRecordsSuccessNotification(t *testing.T) {
+	server, _ := newFileDumpTestServer(t)
+	notificationsStore := notifications.NewStore(filepath.Join(t.TempDir(), "notifications.json"))
+	server.SetNotificationsStore(notificationsStore)
+
+	response := uploadFile(t, server, map[string]string{"add_to_rag": "true"}, "notes.txt", []byte("fuse panel wiring notes"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, body = %s", response.Code, response.Body.String())
+	}
+	waitForFileIngestion(t, server, "", "notes.txt")
+
+	list, err := notificationsStore.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Source != "filedump" || list[0].Severity != "info" || list[0].Title != "notes.txt" {
+		t.Fatalf("notifications = %#v, want one info notification for notes.txt", list)
+	}
+}
+
+func TestFileDumpUploadWithRAGRecordsFailureNotification(t *testing.T) {
+	server, _ := newFileDumpTestServer(t)
+	notificationsStore := notifications.NewStore(filepath.Join(t.TempDir(), "notifications.json"))
+	server.SetNotificationsStore(notificationsStore)
+
+	response := uploadFile(t, server, map[string]string{"add_to_rag": "true"}, "manual.pdf", []byte("%PDF-1.4\n\xff\xfe\x00binary"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, body = %s", response.Code, response.Body.String())
+	}
+	waitForFileIngestion(t, server, "", "manual.pdf")
+
+	list, err := notificationsStore.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Source != "filedump" || list[0].Severity != "warning" || list[0].Title != "manual.pdf" {
+		t.Fatalf("notifications = %#v, want one warning notification for manual.pdf", list)
 	}
 }
 
