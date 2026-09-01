@@ -208,6 +208,15 @@ this on later is a config edit, not another build.
   containers Docker actually reports (`internal/sandbox.Reconcile`)
   rather than either immediately reaping a still-live session or leaking
   one forever.
+- Reaper failures (a container that won't remove, a workspace directory
+  that won't delete) are recorded to `errors.jsonl` inside
+  `sandbox.state_dir` (default `/data/sandbox/state`, so
+  `./data/sandbox/state/errors.jsonl` on the host via the bind mount
+  above), not the main `bosun` process's error log — `sandboxd` is a
+  separate process/container (see above), so it can't share that file.
+  There's no CLI command to read this one; `cat` it directly, or from
+  inside the container: `docker exec sandboxd cat
+  /data/sandbox/state/errors.jsonl`.
 
 ## Image pinning
 

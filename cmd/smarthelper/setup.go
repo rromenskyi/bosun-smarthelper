@@ -12,9 +12,16 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/tools"
 )
 
-// openErrorLog opens the shared tool/LLM failure log. A failure to open it
-// (e.g. permissions) is logged and treated as "logging disabled" rather
-// than a fatal error — the assistant should keep working either way.
+// openErrorLog opens the shared failure log — tool/LLM call errors (via
+// Agent.SetErrorLog) and, in `serve`, every background scheduler's own
+// failures too (tag normalization, metric merge checks, backups, threshold
+// and NOAA alerts — see background.go/alerts.go), so `smarthelper errors`
+// shows the full picture, not just what happened inside a chat request.
+// sandboxd is the one exception: a separate process/container, so it opens
+// its own instance against its own persisted path instead of sharing this
+// one (see sandboxServeCmd). A failure to open it (e.g. permissions) is
+// logged and treated as "logging disabled" rather than a fatal error — the
+// assistant should keep working either way.
 func openErrorLog(cfg *config.Config, logger *slog.Logger) *errlog.Logger {
 	errLog, err := errlog.Open(cfg.ErrorLog.Path)
 	if err != nil {

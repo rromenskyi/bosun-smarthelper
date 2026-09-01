@@ -2,11 +2,14 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/roman220/bosun-smarthelper/internal/errlog"
 )
 
 func discardLogger() *slog.Logger {
@@ -42,7 +45,7 @@ func TestSweepRemovesSessionsIdlePastTTL(t *testing.T) {
 	s.Tracker.lastUsed[validSession1] = time.Now().Add(-1 * time.Hour)
 	s.Tracker.mu.Unlock()
 
-	sweep(context.Background(), s, 5*time.Minute, discardLogger())
+	sweep(context.Background(), s, 5*time.Minute, discardLogger(), nil)
 
 	if runner.running["bosun-sandbox-"+validSession1] {
 		t.Error("expired session's container was not removed")
@@ -52,12 +55,45 @@ func TestSweepRemovesSessionsIdlePastTTL(t *testing.T) {
 	}
 }
 
+// TestSweepRecordsContainerRemovalFailureToErrorLog guards the reaper's
+// own errLog wiring (sandboxd runs as a separate process from `serve`, so
+// it can't share the main error log — see main.go's sandboxServeCmd) —
+// a failure to remove an expired container must actually reach the error
+// log, not just slog.
+func TestSweepRecordsContainerRemovalFailureToErrorLog(t *testing.T) {
+	runner := newFakeRunner()
+	runner.removeErr = errors.New("docker daemon unreachable")
+	s := newTestServer(t, runner)
+	postRun(t, s, map[string]any{"session_id": validSession1, "code": "pass"})
+
+	s.Tracker.mu.Lock()
+	s.Tracker.lastUsed[validSession1] = time.Now().Add(-1 * time.Hour)
+	s.Tracker.mu.Unlock()
+
+	errLogPath := filepath.Join(t.TempDir(), "errors.jsonl")
+	errLog, err := errlog.Open(errLogPath)
+	if err != nil {
+		t.Fatalf("errlog.Open: %v", err)
+	}
+	defer errLog.Close()
+
+	sweep(context.Background(), s, 5*time.Minute, discardLogger(), errLog)
+
+	entries, err := errlog.ReadAll(errLogPath)
+	if err != nil {
+		t.Fatalf("errlog.ReadAll: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Category != "sandbox_reaper" {
+		t.Fatalf("errlog entries = %#v, want one sandbox_reaper entry", entries)
+	}
+}
+
 func TestSweepKeepsSessionsWithinTTL(t *testing.T) {
 	runner := newFakeRunner()
 	s := newTestServer(t, runner)
 	postRun(t, s, map[string]any{"session_id": validSession1, "code": "pass"})
 
-	sweep(context.Background(), s, 5*time.Minute, discardLogger())
+	sweep(context.Background(), s, 5*time.Minute, discardLogger(), nil)
 
 	if !runner.running["bosun-sandbox-"+validSession1] {
 		t.Error("fresh session should not have been reaped")
@@ -72,7 +108,7 @@ func TestSweepRemovesOrphanedScratchDirWithNoTrackedSession(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	sweep(context.Background(), s, 5*time.Minute, discardLogger())
+	sweep(context.Background(), s, 5*time.Minute, discardLogger(), nil)
 
 	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
 		t.Error("orphaned scratch dir (no tracked session) should have been removed")

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/roman220/bosun-smarthelper/internal/errlog"
 )
 
 // sessionStateFile lives inside Server.ScratchRoot's sibling state dir —
@@ -149,7 +151,7 @@ func Reconcile(ctx context.Context, runner containerRunner, tracker *sessionTrac
 // Run ticks every tickInterval, removing any session idle past ttl — the
 // same ticker-goroutine shape as cmd/smarthelper/main.go's
 // runBackupScheduler/runTagNormalizer.
-func Run(ctx context.Context, s *Server, tickInterval, ttl time.Duration, logger *slog.Logger) {
+func Run(ctx context.Context, s *Server, tickInterval, ttl time.Duration, logger *slog.Logger, errLog *errlog.Logger) {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	for {
@@ -157,33 +159,36 @@ func Run(ctx context.Context, s *Server, tickInterval, ttl time.Duration, logger
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sweep(ctx, s, ttl, logger)
+			sweep(ctx, s, ttl, logger, errLog)
 		}
 	}
 }
 
-func sweep(ctx context.Context, s *Server, ttl time.Duration, logger *slog.Logger) {
+func sweep(ctx context.Context, s *Server, ttl time.Duration, logger *slog.Logger, errLog *errlog.Logger) {
 	for _, sessionID := range s.Tracker.Expired(time.Now(), ttl) {
 		name := "bosun-sandbox-" + sessionID
 		if err := s.Runner.Remove(ctx, name); err != nil {
 			logger.Warn("remove expired sandbox container", "session", sessionID, "error", err)
+			errLog.Record("sandbox_reaper", "remove_container", err)
 			continue // retry next tick rather than forgetting a container removal actually failed on
 		}
 		if err := os.RemoveAll(filepath.Join(s.ScratchRoot, sessionID)); err != nil {
 			logger.Warn("remove expired sandbox workspace", "session", sessionID, "error", err)
+			errLog.Record("sandbox_reaper", "remove_workspace", err)
 		}
 		if err := s.Tracker.Forget(sessionID); err != nil {
 			logger.Warn("persist sandbox session state after reaping", "session", sessionID, "error", err)
+			errLog.Record("sandbox_reaper", "forget_session", err)
 		}
 		logger.Info("reaped idle sandbox session", "session", sessionID)
 	}
-	sweepOrphanedScratchDirs(s, logger)
+	sweepOrphanedScratchDirs(s, logger, errLog)
 }
 
 // sweepOrphanedScratchDirs removes workspace directories with no tracked
 // session at all — a crash between creating one and ever recording a
 // Touch, otherwise a slow one-directional disk leak.
-func sweepOrphanedScratchDirs(s *Server, logger *slog.Logger) {
+func sweepOrphanedScratchDirs(s *Server, logger *slog.Logger, errLog *errlog.Logger) {
 	entries, err := os.ReadDir(s.ScratchRoot)
 	if err != nil {
 		return // no scratch root yet on a fresh install — nothing to sweep
@@ -199,6 +204,7 @@ func sweepOrphanedScratchDirs(s *Server, logger *slog.Logger) {
 		path := filepath.Join(s.ScratchRoot, entry.Name())
 		if err := os.RemoveAll(path); err != nil {
 			logger.Warn("remove orphaned sandbox workspace", "path", path, "error", err)
+			errLog.Record("sandbox_reaper", "remove_orphaned_workspace", err)
 		} else {
 			logger.Info("removed orphaned sandbox workspace", "path", path)
 		}

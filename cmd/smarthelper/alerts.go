@@ -9,6 +9,7 @@ import (
 
 	"github.com/roman220/bosun-smarthelper/internal/alerts"
 	"github.com/roman220/bosun-smarthelper/internal/config"
+	"github.com/roman220/bosun-smarthelper/internal/errlog"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
@@ -191,10 +192,12 @@ func runThresholdChecker(
 	ttsEngine voice.TTSEngine,
 	dataDir string,
 	logger *slog.Logger,
+	errLog *errlog.Logger,
 ) {
 	state, err := alerts.LoadThresholdState(dataDir)
 	if err != nil {
 		logger.Warn("load threshold alert state; starting fresh", "error", err)
+		errLog.Record("threshold_alert", "load_state", err)
 		state = map[string]bool{}
 	}
 
@@ -225,10 +228,12 @@ func runThresholdChecker(
 			next, errs := checker.Check(ctx, state)
 			for _, err := range errs {
 				logger.Warn("threshold alert check", "error", err)
+				errLog.Record("threshold_alert", "check", err)
 			}
 			state = next
 			if err := alerts.SaveThresholdState(dataDir, state); err != nil {
 				logger.Warn("save threshold alert state", "error", err)
+				errLog.Record("threshold_alert", "save_state", err)
 			}
 		}
 	}
@@ -246,10 +251,12 @@ func runNOAAChecker(
 	ttsEngine voice.TTSEngine,
 	dataDir string,
 	logger *slog.Logger,
+	errLog *errlog.Logger,
 ) {
 	seen, err := alerts.LoadNOAASeenIDs(dataDir)
 	if err != nil {
 		logger.Warn("load NOAA alert state; starting fresh", "error", err)
+		errLog.Record("noaa_alert", "load_state", err)
 		seen = map[string]bool{}
 	}
 
@@ -267,16 +274,19 @@ func runNOAAChecker(
 			lat, lon, err := currentPosition(ctx, registry, cfg.Alerts.NOAA)
 			if err != nil {
 				logger.Warn("resolve position for NOAA alerts", "error", err)
+				errLog.Record("noaa_alert", "resolve_position", err)
 				continue
 			}
 			notifiers := noaaAlertNotifiers(cfg, settingsStore, ttsEngine, logger)
 			next, errs := alerts.CheckNOAA(ctx, lat, lon, seen, notifiers)
 			for _, err := range errs {
 				logger.Warn("NOAA alert check", "error", err)
+				errLog.Record("noaa_alert", "check", err)
 			}
 			seen = next
 			if err := alerts.SaveNOAASeenIDs(dataDir, seen); err != nil {
 				logger.Warn("save NOAA alert state", "error", err)
+				errLog.Record("noaa_alert", "save_state", err)
 			}
 		}
 	}

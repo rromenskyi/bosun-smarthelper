@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -146,7 +147,13 @@ func serveCmd() *cobra.Command {
 			registry, docStore, adventureStore, fileDumpStore := buildRegistry(cfg, logger)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(live.NameRU, live.NameEN, live.StylePrompt)
-			ag.SetErrorLog(openErrorLog(cfg, logger))
+			// Shared with every background scheduler started below
+			// (runTagNormalizer, runBackupScheduler, etc.) — one process,
+			// one error log, so `smarthelper errors` shows a background
+			// job's failure the same way it already shows a tool/LLM one,
+			// not just what happens inside a chat request.
+			errLog := openErrorLog(cfg, logger)
+			ag.SetErrorLog(errLog)
 			if docStore != nil {
 				ag.SetTopicsProvider(docStore)
 			}
@@ -276,7 +283,7 @@ func serveCmd() *cobra.Command {
 					if alertsDataDir, err := resolveDataDir(""); err != nil {
 						logger.Warn("could not resolve data directory; threshold alerts disabled", "error", err)
 					} else {
-						go runThresholdChecker(cmd.Context(), cfg, settingsStore, metricsStore, ttsEngine, alertsDataDir, logger)
+						go runThresholdChecker(cmd.Context(), cfg, settingsStore, metricsStore, ttsEngine, alertsDataDir, logger, errLog)
 					}
 				}
 			}
@@ -289,13 +296,13 @@ func serveCmd() *cobra.Command {
 					if err != nil || interval <= 0 {
 						interval = 5 * time.Minute
 					}
-					go runTagNormalizer(cmd.Context(), server, mt, router, settingsStore, interval, logger)
+					go runTagNormalizer(cmd.Context(), server, mt, router, settingsStore, interval, logger, errLog)
 
 					mergeInterval, err := time.ParseDuration(cfg.Memo.MetricMergeCheckInterval)
 					if err != nil || mergeInterval <= 0 {
 						mergeInterval = 24 * time.Hour
 					}
-					go runMetricMergeChecker(cmd.Context(), server, mt, router, mergeInterval, logger)
+					go runMetricMergeChecker(cmd.Context(), server, mt, router, mergeInterval, logger, errLog)
 				}
 			}
 
@@ -305,7 +312,7 @@ func serveCmd() *cobra.Command {
 				logger.Warn("could not resolve backup data directory; backup disabled", "error", err)
 			} else {
 				server.SetBackupConfig(&s3cfg, dataDir)
-				go runBackupScheduler(cmd.Context(), server, settingsStore, s3cfg, dataDir, logger)
+				go runBackupScheduler(cmd.Context(), server, settingsStore, s3cfg, dataDir, logger, errLog)
 			}
 
 			server.SetAlertsConfigured(
@@ -322,7 +329,7 @@ func serveCmd() *cobra.Command {
 				if alertsDataDir, err := resolveDataDir(""); err != nil {
 					logger.Warn("could not resolve data directory; NOAA alerts disabled", "error", err)
 				} else {
-					go runNOAAChecker(cmd.Context(), cfg, registry, settingsStore, ttsEngine, alertsDataDir, logger)
+					go runNOAAChecker(cmd.Context(), cfg, registry, settingsStore, ttsEngine, alertsDataDir, logger, errLog)
 				}
 			}
 
@@ -405,7 +412,7 @@ func errorsCmd() *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
 		Use:   "errors",
-		Short: "Show recent tool/LLM failures recorded for review",
+		Short: "Show recent tool/LLM/background-job failures recorded for review (sandboxd's own log is separate — see docs/sandbox.md)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -491,10 +498,23 @@ func sandboxServeCmd() *cobra.Command {
 			server := sandbox.NewServer(tracker, cfg.Sandbox.ScratchDir, cfg.Sandbox.RuntimeImage,
 				cfg.Sandbox.MemoryLimit, cfg.Sandbox.CPULimit, timeout, maxTimeout, logger)
 
+			// sandboxd is a separate process/container from `serve` (see
+			// docs/sandbox.md), so it gets its own error log rather than
+			// sharing the main one — backed by StateDir, the one path
+			// sandboxd has that's actually bind-mounted/persisted (see
+			// docker-compose.yml's ./data/sandbox mount); its default
+			// per-user home directory is not.
+			errLog, err := errlog.Open(filepath.Join(cfg.Sandbox.StateDir, "errors.jsonl"))
+			if err != nil {
+				logger.Warn("could not open sandboxd error log; failures will not be recorded", "error", err)
+				errLog = nil
+			}
+
 			if err := sandbox.Reconcile(cmd.Context(), server.Runner, tracker); err != nil {
 				logger.Warn("reconcile sandbox session state against running containers", "error", err)
+				errLog.Record("sandbox_reaper", "reconcile", err)
 			}
-			go sandbox.Run(cmd.Context(), server, 2*time.Minute, sessionTTL, logger)
+			go sandbox.Run(cmd.Context(), server, 2*time.Minute, sessionTTL, logger, errLog)
 
 			logger.Info("sandboxd listening", "addr", cfg.Sandbox.ListenAddr)
 			return http.ListenAndServe(cfg.Sandbox.ListenAddr, server.Handler())

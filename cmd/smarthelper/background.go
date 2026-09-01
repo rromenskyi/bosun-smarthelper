@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/roman220/bosun-smarthelper/internal/backup"
+	"github.com/roman220/bosun-smarthelper/internal/errlog"
 	"github.com/roman220/bosun-smarthelper/internal/llm"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
@@ -34,6 +35,7 @@ func runTagNormalizer(
 	settingsStore *settings.Store,
 	interval time.Duration,
 	logger *slog.Logger,
+	errLog *errlog.Logger,
 ) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -52,6 +54,7 @@ func runTagNormalizer(
 				updated, err := memoTool.NormalizeTags(normCtx, client, canonicalTags, 10)
 				if err != nil {
 					logger.Warn("memo tag normalization failed", "error", err)
+					errLog.Record("tag_normalize", "memo", err)
 				} else if updated > 0 {
 					logger.Info("normalized memo tags", "count", updated)
 				}
@@ -73,6 +76,7 @@ func runMetricMergeChecker(
 	client *llm.Router,
 	interval time.Duration,
 	logger *slog.Logger,
+	errLog *errlog.Logger,
 ) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -87,6 +91,7 @@ func runMetricMergeChecker(
 				proposed, err := memoTool.CheckMetricMerges(checkCtx, client, 10)
 				if err != nil {
 					logger.Warn("metric merge check failed", "error", err)
+					errLog.Record("metric_merge", "memo", err)
 				} else if proposed > 0 {
 					logger.Info("proposed metric merges", "count", proposed)
 				}
@@ -111,6 +116,7 @@ func runBackupScheduler(
 	s3cfg backup.S3Config,
 	dataDir string,
 	logger *slog.Logger,
+	errLog *errlog.Logger,
 ) {
 	const checkInterval = 15 * time.Minute
 	ticker := time.NewTicker(checkInterval)
@@ -127,6 +133,7 @@ func runBackupScheduler(
 			due, err := backup.DueForRun(dataDir, data.BackupIntervalHours, time.Now())
 			if err != nil {
 				logger.Warn("check backup schedule", "error", err)
+				errLog.Record("backup", "check_schedule", err)
 				continue
 			}
 			if !due {
@@ -138,15 +145,18 @@ func runBackupScheduler(
 				var archive bytes.Buffer
 				if err := backup.BuildArchive(&archive, dataDir); err != nil {
 					logger.Error("build scheduled backup archive", "error", err)
+					errLog.Record("backup", "build_archive", err)
 					return
 				}
 				key := fmt.Sprintf("bosun-backup-%s.tar.gz", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
 				if err := backup.PutObject(runCtx, s3cfg, key, archive.Bytes(), "application/gzip"); err != nil {
 					logger.Error("upload scheduled backup", "error", err)
+					errLog.Record("backup", "upload", err)
 					return
 				}
 				if err := backup.RecordRun(dataDir, time.Now()); err != nil {
 					logger.Warn("record scheduled backup run", "error", err)
+					errLog.Record("backup", "record_run", err)
 				}
 				logger.Info("scheduled backup uploaded", "key", key, "size_bytes", archive.Len())
 			})
