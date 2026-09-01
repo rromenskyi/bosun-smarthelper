@@ -86,6 +86,11 @@
       padding: 0 3px; border-radius: 999px; background: var(--danger); color: #3a0f0a;
       font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
     }
+    .bell.has-unread { animation: notifications-pulse 1.6s ease-in-out infinite; border-radius: 999px; }
+    @keyframes notifications-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(211, 82, 66, .5); }
+      50% { box-shadow: 0 0 0 8px rgba(211, 82, 66, 0); }
+    }
     @keyframes bell-ring {
       0%, 100% { transform: rotate(0deg); }
       20% { transform: rotate(-18deg); }
@@ -623,6 +628,11 @@
             </span>
           </div>
           <p class="docs-hint" id="settings-alerts-none-hint" hidden>Ни один канал алертов не настроен — см. docs/alerts.md.</p>
+          <label class="settings-checkbox">
+            <input type="checkbox" id="settings-notifications-alert">
+            <span id="settings-notifications-alert-label">Звук и мигание вкладки при новом уведомлении</span>
+          </label>
+          <p class="docs-hint" id="settings-notifications-alert-hint">Значок и счётчик в шапке всегда показывают непрочитанные — это только про звук/мигание, если вкладка открыта в фоне.</p>
           <div class="settings-backup-header" id="settings-thresholds-header">
             <span class="settings-label" id="settings-label-thresholds">Пороговые алерты</span>
             <button type="button" class="clear" id="settings-threshold-add">+ Добавить</button>
@@ -1546,6 +1556,8 @@
       document.querySelector('#settings-alerts-webhook-test').textContent = text[locale].settingsAlertsTest;
       document.querySelector('#settings-alerts-speaker-test').textContent = text[locale].settingsAlertsTest;
       document.querySelector('#settings-alerts-none-hint').textContent = text[locale].settingsAlertsNone;
+      document.querySelector('#settings-notifications-alert-label').textContent = text[locale].settingsNotificationsAlertLabel;
+      document.querySelector('#settings-notifications-alert-hint').textContent = text[locale].settingsNotificationsAlertHint;
       document.querySelector('#settings-label-thresholds').textContent = text[locale].settingsLabelThresholds;
       document.querySelector('#settings-threshold-add').textContent = text[locale].thresholdAdd;
       document.querySelector('#settings-thresholds-empty').textContent = text[locale].thresholdsEmpty;
@@ -1778,6 +1790,8 @@
       document.querySelector('#settings-local-temp').value = settings.local_temperature;
       document.querySelector('#settings-canonical-tags').value = (settings.canonical_tags || []).join(', ');
       document.querySelector('#settings-dynamic-topics').checked = !!settings.dynamic_topics_enabled;
+      document.querySelector('#settings-notifications-alert').checked = !!settings.notifications_alert_enabled;
+      notificationsAlertEnabled = !!settings.notifications_alert_enabled;
       document.querySelector('#settings-ca-cert-hint').hidden = !data.ca_cert_available;
       document.querySelector('#settings-backup-auto').checked = !!settings.backup_auto_enabled;
       document.querySelector('#settings-backup-interval').value = settings.backup_interval_hours || 24;
@@ -2256,7 +2270,8 @@
         alerts_telegram_enabled: document.querySelector('#settings-alerts-telegram').checked,
         alerts_webhook_enabled: document.querySelector('#settings-alerts-webhook').checked,
         alerts_speaker_enabled: document.querySelector('#settings-alerts-speaker').checked,
-        alerts_thresholds: collectThresholdRules()
+        alerts_thresholds: collectThresholdRules(),
+        notifications_alert_enabled: document.querySelector('#settings-notifications-alert').checked
       };
       saveButton.disabled = true;
       savedHint.hidden = true;
@@ -2268,6 +2283,7 @@
         });
         if (response.ok) {
           savedHint.hidden = false;
+          notificationsAlertEnabled = payload.notifications_alert_enabled;
           setTimeout(() => { savedHint.hidden = true; }, 2000);
         }
       } catch {
@@ -2578,6 +2594,49 @@
     // even with zero notifications (it's a history view, not a
     // one-time-decision queue) — only hidden entirely when no
     // notifications store is configured server-side at all.
+    // notificationsAlertEnabled gates only the disruptive part (sound +
+    // blinking tab title) for a *newly arrived* unread notification — the
+    // badge count, the header icon's pulse, and the favicon dot below are
+    // always shown regardless, since they're passive state a glance can
+    // catch, not something that can surprise or annoy. Set from
+    // settings.notifications_alert_enabled once loadSettings runs, and
+    // kept in sync when the settings form is saved.
+    let notificationsAlertEnabled = false;
+    // Which currently-unread IDs were already known as of the last poll —
+    // comparing sets (not just the count) means a mark-read-elsewhere and
+    // a new arrival landing in the same 60s window can't cancel each
+    // other out into "no change detected".
+    let knownUnreadNotificationIDs = new Set();
+    let titleBlinkTimer = null;
+    const originalDocumentTitle = document.title;
+
+    function faviconDataURL(withBadge) {
+      const badge = withBadge ? '<circle cx="82" cy="20" r="16" fill="#ff3b30"/>' : '';
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">⚓</text>${badge}</svg>`;
+      return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+    }
+
+    function setFaviconBadge(active) {
+      const link = document.querySelector('link[rel="icon"]');
+      if (link) link.href = faviconDataURL(active);
+    }
+
+    function startTitleBlink() {
+      if (titleBlinkTimer) return;
+      let showAlert = false;
+      titleBlinkTimer = setInterval(() => {
+        document.title = showAlert ? originalDocumentTitle : text[language.value].notificationsNewTitle;
+        showAlert = !showAlert;
+      }, 1000);
+    }
+
+    function stopTitleBlink() {
+      if (!titleBlinkTimer) return;
+      clearInterval(titleBlinkTimer);
+      titleBlinkTimer = null;
+      document.title = originalDocumentTitle;
+    }
+
     async function refreshNotificationsBadge() {
       try {
         const response = await fetch('/api/notifications');
@@ -2592,6 +2651,19 @@
         const unread = data.unread_count || 0;
         notificationsBadge.hidden = unread === 0;
         notificationsBadge.textContent = String(unread);
+        notificationsToggle.classList.toggle('has-unread', unread > 0);
+        setFaviconBadge(unread > 0);
+
+        const currentUnreadIDs = new Set(notificationsCache.filter(n => !n.read).map(n => n.id));
+        const hasNewArrival = [...currentUnreadIDs].some(id => !knownUnreadNotificationIDs.has(id));
+        knownUnreadNotificationIDs = currentUnreadIDs;
+
+        if (unread === 0) {
+          stopTitleBlink();
+        } else if (notificationsAlertEnabled && hasNewArrival) {
+          bellAudio.play().catch(() => {});
+          startTitleBlink();
+        }
       } catch {
         notificationsCache = [];
       }
@@ -2656,6 +2728,7 @@
     }
 
     notificationsToggle.addEventListener('click', async () => {
+      stopTitleBlink();
       renderNotifications(await refreshNotificationsBadge());
       notificationsDialog.showModal();
     });

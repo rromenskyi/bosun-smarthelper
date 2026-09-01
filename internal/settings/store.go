@@ -57,6 +57,16 @@ type Data struct {
 	// failure mode rather than a feature nobody notices they need to flip
 	// on. See internal/agent.Agent.SetDynamicTopicsEnabled.
 	DynamicTopicsEnabled bool `json:"dynamic_topics_enabled,omitempty"`
+	// NotificationsAlertEnabled controls the notification zone's
+	// attention-grabbing behavior for a *new* unread notification arriving
+	// while the page is open — a sound chime and a blinking tab title (see
+	// index.html's refreshNotificationsBadge). Off by default, unlike the
+	// zone's persistent badge/icon glow/favicon dot (always shown
+	// regardless of this setting, since those are just passive state, not
+	// something that can surprise or annoy): a browser tab that starts
+	// beeping and blinking on its own is a bigger behavior change to
+	// opt into than a static badge.
+	NotificationsAlertEnabled bool `json:"notifications_alert_enabled,omitempty"`
 }
 
 // AlertsThresholdRule is one web-managed metric threshold — see
