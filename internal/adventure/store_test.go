@@ -269,6 +269,78 @@ func TestRenameSession(t *testing.T) {
 	}
 }
 
+func TestRenameSessionNotFound(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.RenameSession("ghost", "whatever"); err != ErrSessionNotFound {
+		t.Errorf("RenameSession on a missing session = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestRenameSessionToExistingNameFails(t *testing.T) {
+	s := openTestStore(t)
+	if _, err := s.CreateSession("nora", 1); err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+	if _, err := s.CreateSession("oscar", 1); err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+	if err := s.RenameSession("nora", "oscar"); err != ErrSessionExists {
+		t.Errorf("RenameSession onto an existing name = %v, want ErrSessionExists", err)
+	}
+	// Neither session should have been disturbed by the failed rename.
+	if _, err := s.LoadSession("nora"); err != nil {
+		t.Errorf("expected nora to still exist after a failed rename, got %v", err)
+	}
+	if _, err := s.LoadSession("oscar"); err != nil {
+		t.Errorf("expected oscar to still exist after a failed rename, got %v", err)
+	}
+}
+
+// TestRenameSessionUpdatesActiveSessionPointer guards RenameSession's
+// second write: a chat conversation already pointed at the old name must
+// follow the session to its new name, not silently point at nothing.
+func TestRenameSessionUpdatesActiveSessionPointer(t *testing.T) {
+	s := openTestStore(t)
+	if _, err := s.CreateSession("petra", 1); err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+	if err := s.SetActiveSession("chat-1", "petra"); err != nil {
+		t.Fatalf("SetActiveSession failed: %v", err)
+	}
+	if err := s.RenameSession("petra", "quinn"); err != nil {
+		t.Fatalf("RenameSession failed: %v", err)
+	}
+	name, ok, err := s.ActiveSession("chat-1")
+	if err != nil || !ok || name != "quinn" {
+		t.Errorf("active session after rename = name=%q ok=%v err=%v, want quinn", name, ok, err)
+	}
+}
+
+func TestDeleteSessionNotFound(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.DeleteSession("ghost"); err != ErrSessionNotFound {
+		t.Errorf("DeleteSession on a missing session = %v, want ErrSessionNotFound", err)
+	}
+}
+
+// TestSaveSessionNotFound guards Play's own error path: SaveSession is
+// called against a name that no longer exists (e.g. deleted out from
+// under an in-flight turn) and must report ErrSessionNotFound rather than
+// silently doing nothing (checkAffected's zero-rows-affected branch).
+func TestSaveSessionNotFound(t *testing.T) {
+	s := openTestStore(t)
+	game, err := s.CreateSession("rex", 1)
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+	if err := s.DeleteSession("rex"); err != nil {
+		t.Fatalf("DeleteSession failed: %v", err)
+	}
+	if err := s.SaveSession("rex", game); err != ErrSessionNotFound {
+		t.Errorf("SaveSession on a deleted session = %v, want ErrSessionNotFound", err)
+	}
+}
+
 func TestMemos(t *testing.T) {
 	s := openTestStore(t)
 
