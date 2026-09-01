@@ -180,12 +180,20 @@ times):
   substring-fallback match (embeddings unreachable) always scores `1` and
   is never filtered, since it's already a real match by definition, not a
   similarity guess.
-- **Each result's text is capped** at `maxSearchResultChars` (500 runes,
-  `internal/tools/memo.go`) — a search result should point at the answer,
-  not paste the whole source; unbounded text here (a 1500-char document
-  chunk, or memo's own 10000-char write limit, times however many
-  results) is itself a plausible trigger for a weak model choking on
-  context.
+- **Each result's text is capped**, but not by the same amount for both
+  kinds of match (`internal/tools/memo.go`): a memo's own raw content —
+  up to its 10000-char write limit, never pre-chunked — is capped at
+  `maxSearchResultChars` (500 runes); a document chunk — already bounded
+  to at most 1500 chars by `documents.maxChunkChars` — gets the more
+  generous `maxDocumentResultChars` (1500 runes), which in practice never
+  actually cuts anything. These used to share the tighter 500-char cap,
+  which routinely cut a genuinely relevant OCR'd chunk off partway
+  through. Confirmed live: a Ford manual's fuse-panel chunk had its
+  "which fuse protects what" table sitting right after ~500 characters of
+  unrelated preamble in the same OCR'd page — the model only ever saw the
+  preamble the old cap left in, and told the user the manual simply
+  didn't have the table it was asked for, mistaking the tool's own
+  truncation for a gap in the source material.
 - **`search`'s own `limit` argument is capped** at `maxSearchLimit` (20,
   same file) regardless of what's requested — `limit` is a model-supplied
   tool argument, not something this app controls, and 5 being the

@@ -376,33 +376,45 @@ type scoredMemo struct {
 	score  float64
 }
 
-// maxSearchResultChars caps how much raw text (memo content or a document
-// chunk) rides along with a single search result before it's fed back to
-// the LLM. Unbounded text here — up to memo's own 10000-char write limit,
-// or documents' 1500-char chunks, times up to `limit` results — risks
-// overwhelming a weak model's context and has been observed to trigger
-// degenerate output; a search result should point at the answer, not
+// maxSearchResultChars caps how much of a memo's raw content rides along
+// with a single search result before it's fed back to the LLM. A memo
+// isn't pre-chunked (unlike a document — see maxDocumentResultChars) and
+// can be up to its own 10000-char write limit, so without this a single
+// long memo could by itself contribute as much text as many document
+// results combined; a search result should point at the answer, not
 // paste the whole source.
 const maxSearchResultChars = 500
 
-// maxSearchLimit is the other half of that same mitigation: limit itself
-// is a model-supplied tool argument with no upper bound otherwise — live
-// evidence of exactly the risk maxSearchResultChars's comment already
-// warned about: after this deployment's document store grew from ~50 to
-// over 1000 documents (a bulk manual import), a single search call
-// requesting an unusually large limit produced a ~94,000-token request
-// against a local model with an 8192-token context, failing the turn
-// outright. Capping limit here, not just each result's text, bounds a
-// single search call's total contribution regardless of how large the
-// store grows.
+// maxDocumentResultChars caps a document chunk's text in a search
+// result — set equal to documents.maxChunkChars (a chunk is never larger
+// than that to begin with), so in practice this is a defensive assertion
+// rather than a truncation that actually cuts real content. It used to
+// share maxSearchResultChars's tighter 500-char limit, which routinely
+// cut a genuinely relevant OCR'd chunk off partway through. Confirmed
+// live: a Ford manual's fuse panel chunk had its "which fuse protects
+// what" table sitting right after ~500 characters of unrelated preamble
+// in the same OCR'd page — the model only ever saw the preamble the old
+// cap left in, never the table the user actually asked for, and said so
+// mistaking the tool's truncation for the manual simply not having one.
+const maxDocumentResultChars = 1500
+
+// maxSearchLimit is a complementary mitigation for a different risk:
+// limit itself is a model-supplied tool argument with no upper bound
+// otherwise — live evidence: after this deployment's document store grew
+// from ~50 to over 1000 documents (a bulk manual import), a single
+// search call requesting an unusually large limit produced a ~94,000
+// -token request against a local model with an 8192-token context,
+// failing the turn outright. Capping limit here, not just each result's
+// text, bounds a single search call's total contribution regardless of
+// how large the store grows.
 const maxSearchLimit = 20
 
-func truncateForSearch(text string) string {
+func truncateText(text string, maxChars int) string {
 	runes := []rune(text)
-	if len(runes) <= maxSearchResultChars {
+	if len(runes) <= maxChars {
 		return text
 	}
-	return string(runes[:maxSearchResultChars]) + "…"
+	return string(runes[:maxChars]) + "…"
 }
 
 // search ranks active memos, and uploaded-document chunks when a document
@@ -464,7 +476,7 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 		view := memoView(c.record, time.Now())
 		view["source"] = "memo"
 		view["relevance"] = c.score
-		view["content"] = truncateForSearch(c.record.Content)
+		view["content"] = truncateText(c.record.Content, maxSearchResultChars)
 		results = append(results, view)
 	}
 
@@ -480,7 +492,7 @@ func (t *MemoTool) search(ctx context.Context, data memoFile, args map[string]an
 					"source":         "document",
 					"document_id":    chunk.DocumentID,
 					"document_title": chunk.DocumentTitle,
-					"text":           truncateForSearch(chunk.Text),
+					"text":           truncateText(chunk.Text, maxDocumentResultChars),
 					"relevance":      chunk.Score,
 				}
 				if chunk.SourcePath != "" {
@@ -615,7 +627,7 @@ func (t *MemoTool) maintenance(data memoFile, now time.Time) (any, error) {
 		if record.Status == "archived" || (record.DueDate == "" && !hasDueMetricValue) {
 			continue
 		}
-		item := map[string]any{"key": record.Key, "content": truncateForSearch(record.Content)}
+		item := map[string]any{"key": record.Key, "content": truncateText(record.Content, maxSearchResultChars)}
 		if record.MetricName != "" {
 			item["metric_name"] = record.MetricName
 		}

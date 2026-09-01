@@ -287,6 +287,46 @@ func TestMemoToolSearchMergesDocumentResults(t *testing.T) {
 	}
 }
 
+// TestMemoToolSearchDocumentResultKeepsContentPastOldTruncationPoint is a
+// regression test for a real incident: a document chunk's useful content
+// (a fuse-panel "which fuse protects what" table) sat right after ~500
+// characters of unrelated preamble in the same OCR'd page. The old
+// shared 500-char truncation cut it off before the model ever saw it,
+// so it answered as if the manual simply didn't have the table. Document
+// chunks now get the more generous maxDocumentResultChars instead.
+func TestMemoToolSearchDocumentResultKeepsContentPastOldTruncationPoint(t *testing.T) {
+	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
+	docStore := documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	tool.SetDocumentStore(docStore)
+	ctx := context.Background()
+
+	preamble := strings.Repeat("filler ", 90) // ~630 chars, past the old 500-char cap
+	content := preamble + "Fuse Position 12 Circuits Protected: Dome Lamp, Map Lamp, Radio Memory."
+	if len(content) <= maxSearchResultChars {
+		t.Fatalf("test content is %d chars, want it longer than the old cap (%d) to actually exercise this", len(content), maxSearchResultChars)
+	}
+	if len(content) > maxDocumentResultChars {
+		t.Fatalf("test content is %d chars, want it under maxDocumentResultChars (%d) so nothing gets cut", len(content), maxDocumentResultChars)
+	}
+	if _, err := docStore.Add(ctx, "Fuse Panel", content, "ford-e350/diagrams"); err != nil {
+		t.Fatalf("add document: %v", err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]any{"action": "search", "query": "dome lamp"})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	view := result.(map[string]any)
+	results := view["results"].([]map[string]any)
+	if len(results) != 1 {
+		t.Fatalf("results = %#v, want 1 match", results)
+	}
+	text, _ := results[0]["text"].(string)
+	if !strings.Contains(text, "Dome Lamp") {
+		t.Errorf("result text = %q, want the fuse table past the old 500-char cutoff to still be present", text)
+	}
+}
+
 func TestMemoToolSearchDocumentResultOmitsSourcePathWhenEmpty(t *testing.T) {
 	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
 	docStore := documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
