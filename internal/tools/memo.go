@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/config"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/embeddings"
+	"github.com/roman220/bosun-smarthelper/internal/filedump"
 )
 
 // MemoTool stores and retrieves dated notes in a local JSON file.
@@ -21,6 +23,7 @@ type MemoTool struct {
 	path         string
 	embed        *embeddings.Client
 	docs         *documents.Store
+	fileDump     *filedump.Store
 	minRelevance float64
 	mu           sync.Mutex
 }
@@ -63,6 +66,15 @@ type memoRecord struct {
 	// due at; "maintenance" reports it alongside the most recent known
 	// MetricValue for the same MetricName, if any.
 	DueMetricValue float64 `json:"due_metric_value,omitempty"`
+	// Attachments are internal/filedump tree-relative paths (e.g.
+	// "memos/<key>/photo.jpg") a chat_file tool call moved in and linked
+	// to this memo — set by MemoTool.AttachFile, never by "write" directly.
+	// Served at /files/<path>; memoView turns each into that full URL so
+	// the model can embed it in a reply as ![...](url) (the chat UI's
+	// markdown renderer already turns that into an <img>, no new
+	// rendering code needed). Deleting the memo cascades to remove these
+	// files from filedump too — see Execute's "delete" case.
+	Attachments []string `json:"attachments,omitempty"`
 }
 
 type memoFile struct {
@@ -89,6 +101,61 @@ func NewMemoTool(cfg *config.MemoConfig, embedCfg *config.EmbeddingsConfig) *Mem
 // means search only ever considers memos.
 func (t *MemoTool) SetDocumentStore(store *documents.Store) {
 	t.docs = store
+}
+
+// SetFileDumpStore wires in the file store so AttachFile (see the
+// chat_file tool) can place an attachment under it and so deleting a memo
+// with attachments cascades to remove them. Optional — nil (the default,
+// or when filedump.path is unset) means AttachFile fails with a clear
+// error and delete has nothing to cascade.
+func (t *MemoTool) SetFileDumpStore(store *filedump.Store) {
+	t.fileDump = store
+}
+
+// memosAttachmentFolder is where every memo's attachments live in the
+// filedump tree, one subfolder per memo key — kept out of a memo's own
+// folder-as-topic (there isn't one; a memo isn't filedump-sourced) so
+// attachments never masquerade as a document upload's SourcePath.
+const memosAttachmentFolder = "memos"
+
+// AttachFile moves the file at fileDumpRelPath (already written into
+// filedump — see the chat_file tool's add_to_memo action) into
+// memos/<key>/ and appends the result to key's Attachments. Fails if no
+// filedump store is wired in, or key doesn't name an existing memo —
+// attaching to a memo that doesn't exist yet would silently orphan the
+// file with nothing pointing at it.
+func (t *MemoTool) AttachFile(key, fileDumpRelPath string) (map[string]any, error) {
+	if t.fileDump == nil {
+		return nil, fmt.Errorf("file storage is not configured")
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, fmt.Errorf("memo key is required")
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	data, err := t.load()
+	if err != nil {
+		return nil, err
+	}
+	record, ok := data.Memos[key]
+	if !ok {
+		return nil, fmt.Errorf("memo %q was not found", key)
+	}
+
+	newPath := path.Join(memosAttachmentFolder, key, path.Base(fileDumpRelPath))
+	if _, err := t.fileDump.Move(fileDumpRelPath, newPath); err != nil {
+		return nil, fmt.Errorf("move attachment: %w", err)
+	}
+
+	record.Attachments = append(record.Attachments, newPath)
+	record.UpdatedAt = time.Now().Format(time.RFC3339Nano)
+	data.Memos[key] = record
+	if err := t.save(data); err != nil {
+		return nil, err
+	}
+	return memoView(record, time.Now()), nil
 }
 
 func (t *MemoTool) Name() string {
@@ -364,6 +431,17 @@ func (t *MemoTool) Execute(ctx context.Context, args map[string]any) (any, error
 		delete(data.Memos, key)
 		if err := t.save(data); err != nil {
 			return nil, err
+		}
+		if len(record.Attachments) > 0 && t.fileDump != nil {
+			// Best-effort: the memo record itself is already gone by this
+			// point (deleting it is the part that must not be lost even
+			// if this fails), so a leftover attachment folder is orphaned
+			// clutter, not a correctness problem — same tolerance
+			// internal/webui/filedump.go already has for a cascade delete
+			// that partially fails.
+			if _, err := t.fileDump.Delete(path.Join(memosAttachmentFolder, key), true); err != nil {
+				return nil, fmt.Errorf("memo deleted, but its attachments could not be removed: %w", err)
+			}
 		}
 		return map[string]any{"deleted": true, "memo": memoView(record, time.Now())}, nil
 	default:
@@ -693,6 +771,13 @@ func memoView(record memoRecord, now time.Time) map[string]any {
 	}
 	if record.DueMetricValue != 0 {
 		view["due_metric_value"] = record.DueMetricValue
+	}
+	if len(record.Attachments) > 0 {
+		urls := make([]string, len(record.Attachments))
+		for i, path := range record.Attachments {
+			urls[i] = "/files/" + path
+		}
+		view["attachments"] = urls
 	}
 	return view
 }
