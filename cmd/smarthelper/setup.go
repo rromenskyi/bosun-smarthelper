@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/roman220/bosun-smarthelper/internal/adventure"
+	"github.com/roman220/bosun-smarthelper/internal/chatfiles"
 	"github.com/roman220/bosun-smarthelper/internal/config"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/embeddings"
@@ -44,7 +45,7 @@ func openErrorLog(cfg *config.Config, logger *slog.Logger) *errlog.Logger {
 // returns the file dump store (nil unless cfg.FileDump.Path is set —
 // see docs/filedump.md), a human-only, web-UI-only feature like
 // documents, never exposed as an LLM tool.
-func buildRegistry(cfg *config.Config, logger *slog.Logger) (*tools.Registry, *documents.Store, *adventure.Store, *filedump.Store) {
+func buildRegistry(cfg *config.Config, logger *slog.Logger) (*tools.Registry, *documents.Store, *adventure.Store, *filedump.Store, *chatfiles.Store) {
 	docStore := documents.NewStore(cfg.Documents.Path, embeddings.NewClient(&cfg.LLM.Embeddings))
 	memoTool := tools.NewMemoTool(&cfg.Memo, &cfg.LLM.Embeddings)
 	memoTool.SetDocumentStore(docStore)
@@ -82,6 +83,19 @@ func buildRegistry(cfg *config.Config, logger *slog.Logger) (*tools.Registry, *d
 			fileDumpStore = store
 		}
 	}
+	// Memo attachments (MemoTool.AttachFile) need filedump storage
+	// regardless of whether filedump.path is set — nil here just means
+	// AttachFile returns a clear "not configured" error instead of
+	// panicking, the same degrade-gracefully shape every other optional
+	// wiring in this function already has.
+	memoTool.SetFileDumpStore(fileDumpStore)
 
-	return registry, docStore, adventureStore, fileDumpStore
+	chatFilesStore, err := chatfiles.NewStore("")
+	if err != nil {
+		logger.Warn("could not open chat file attachment store; chat_file tool disabled", "error", err)
+	} else {
+		registry.Register(tools.NewChatFileTool(chatFilesStore, docStore, memoTool))
+	}
+
+	return registry, docStore, adventureStore, fileDumpStore, chatFilesStore
 }

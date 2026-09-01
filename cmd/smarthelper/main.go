@@ -20,6 +20,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/agent"
 	"github.com/roman220/bosun-smarthelper/internal/backup"
 	"github.com/roman220/bosun-smarthelper/internal/cameras"
+	"github.com/roman220/bosun-smarthelper/internal/chatfiles"
 	"github.com/roman220/bosun-smarthelper/internal/config"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/embeddings"
@@ -73,7 +74,7 @@ func mcpCmd() *cobra.Command {
 			}
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			registry, _, _, _ := buildRegistry(cfg, logger)
+			registry, _, _, _, _ := buildRegistry(cfg, logger)
 
 			server := mcp.NewServer(cfg.MCP.ServerName, version, registry, logger)
 			server.SetErrorLog(openErrorLog(cfg, logger))
@@ -144,7 +145,7 @@ func serveCmd() *cobra.Command {
 			live := settingsStore.Get()
 			router.SetTemperatures(live.RemoteTemperature, live.LocalTemperature)
 
-			registry, docStore, adventureStore, fileDumpStore := buildRegistry(cfg, logger)
+			registry, docStore, adventureStore, fileDumpStore, chatFilesStore := buildRegistry(cfg, logger)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(live.NameRU, live.NameEN, live.StylePrompt)
 			// Shared with every background scheduler started below
@@ -192,6 +193,11 @@ func serveCmd() *cobra.Command {
 			}
 			if fileDumpStore != nil {
 				server.SetFileDumpStore(fileDumpStore)
+			}
+			if chatFilesStore != nil {
+				server.SetChatFilesStore(chatFilesStore)
+				const chatFilesTTL = 1 * time.Hour
+				go chatfiles.Run(cmd.Context(), chatFilesStore, 10*time.Minute, chatFilesTTL, logger, errLog)
 			}
 			var ttsEngine voice.TTSEngine
 			if cfg.Voice.TTS.ModelPath != "" {
@@ -392,7 +398,7 @@ func chatCmd() *cobra.Command {
 			// when online, falling back to the local model when offline.
 			router.CheckConnectivity(cmd.Context())
 
-			registry, _, _, _ := buildRegistry(cfg, logger)
+			registry, _, _, _, _ := buildRegistry(cfg, logger)
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(cfg.Assistant.NameRU, cfg.Assistant.NameEN, cfg.Assistant.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
