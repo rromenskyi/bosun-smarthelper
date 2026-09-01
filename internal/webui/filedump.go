@@ -1,7 +1,6 @@
 package webui
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/filedump"
 )
 
@@ -201,7 +201,7 @@ func (s *Server) handleFileDumpUpload(w http.ResponseWriter, r *http.Request) {
 		targetPath  string
 		addToRAG    bool
 		title       string
-		ocrLanguage = defaultOCRLanguage
+		ocrLanguage = documents.DefaultOCRLanguage
 		relFilePath string
 		wrote       bool
 	)
@@ -277,7 +277,7 @@ func (s *Server) handleFileDumpUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	if !validOCRLanguage.MatchString(ocrLanguage) {
+	if !documents.ValidOCRLanguage.MatchString(ocrLanguage) {
 		response["rag_warning"] = "ocr_language must look like a tesseract language code, e.g. eng, rus, or eng+rus; the file was saved but not added to search"
 		writeJSON(w, http.StatusOK, response)
 		return
@@ -340,8 +340,8 @@ func (s *Server) ingestFileDumpUpload(ctx context.Context, relFilePath, title, o
 	defer cancel()
 	sourcePath := fileDumpFolderOf(relFilePath)
 
-	if bytes.HasPrefix(content, pdfMagic) {
-		pages, err := extractPDFPages(ingestCtx, content, s.documentImagesDir, "/document-images/", ocrLanguage)
+	if documents.IsPDF(content) {
+		pages, err := documents.ExtractPDFPages(ingestCtx, content, s.documentImagesDir, "/document-images/", ocrLanguage)
 		if err != nil {
 			return "", "could not process PDF for search: " + err.Error()
 		}
@@ -352,8 +352,8 @@ func (s *Server) ingestFileDumpUpload(ctx context.Context, relFilePath, title, o
 		return summary.ID, ""
 	}
 
-	if ext := sniffImageExt(content); ext != "" {
-		pages, err := ingestStandaloneImage(ingestCtx, content, ext, s.documentImagesDir, "/document-images/", ocrLanguage)
+	if ext := documents.SniffImageExt(content); ext != "" {
+		pages, err := documents.IngestStandaloneImage(ingestCtx, content, ext, s.documentImagesDir, "/document-images/", ocrLanguage)
 		if err != nil {
 			return "", "could not process image for search: " + err.Error()
 		}

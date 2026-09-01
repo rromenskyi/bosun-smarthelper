@@ -1,4 +1,4 @@
-package webui
+package documents
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 )
 
 // onePixelPNG is a minimal valid 1x1 transparent PNG — enough for
-// sniffImageExt/ingestStandaloneImage to treat it as a real image without
+// SniffImageExt/IngestStandaloneImage to treat it as a real image without
 // needing a real diagram scan.
 var onePixelPNG = mustDecodeBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
 
@@ -78,9 +78,9 @@ func TestExtractPDFPagesTextPage(t *testing.T) {
 	requirePoppler(t)
 	imagesDir := filepath.Join(t.TempDir(), "images")
 
-	pages, err := extractPDFPages(context.Background(), []byte(onePageTextPDF), imagesDir, "/document-images/", "eng")
+	pages, err := ExtractPDFPages(context.Background(), []byte(onePageTextPDF), imagesDir, "/document-images/", "eng")
 	if err != nil {
-		t.Fatalf("extractPDFPages: %v", err)
+		t.Fatalf("ExtractPDFPages: %v", err)
 	}
 	if len(pages) != 1 {
 		t.Fatalf("pages = %d, want 1", len(pages))
@@ -97,9 +97,9 @@ func TestExtractPDFPagesBlankPageRendersImage(t *testing.T) {
 	requirePoppler(t)
 	imagesDir := filepath.Join(t.TempDir(), "images")
 
-	pages, err := extractPDFPages(context.Background(), []byte(onePageBlankPDF), imagesDir, "/document-images/", "eng")
+	pages, err := ExtractPDFPages(context.Background(), []byte(onePageBlankPDF), imagesDir, "/document-images/", "eng")
 	if err != nil {
-		t.Fatalf("extractPDFPages: %v", err)
+		t.Fatalf("ExtractPDFPages: %v", err)
 	}
 	if len(pages) != 1 {
 		t.Fatalf("pages = %d, want 1", len(pages))
@@ -147,9 +147,9 @@ func TestExtractPDFPagesStripsRepeatedBoilerplateBeforeClassifying(t *testing.T)
 	requirePoppler(t)
 	imagesDir := filepath.Join(t.TempDir(), "images")
 
-	pages, err := extractPDFPages(context.Background(), []byte(twoPageBoilerplatePDF), imagesDir, "/document-images/", "eng")
+	pages, err := ExtractPDFPages(context.Background(), []byte(twoPageBoilerplatePDF), imagesDir, "/document-images/", "eng")
 	if err != nil {
-		t.Fatalf("extractPDFPages: %v", err)
+		t.Fatalf("ExtractPDFPages: %v", err)
 	}
 	if len(pages) != 2 {
 		t.Fatalf("pages = %d, want 2", len(pages))
@@ -201,7 +201,7 @@ func TestStripBoilerplateLinesPreservesRealContent(t *testing.T) {
 func TestExtractPDFPagesRejectsGarbage(t *testing.T) {
 	requirePoppler(t)
 	imagesDir := filepath.Join(t.TempDir(), "images")
-	if _, err := extractPDFPages(context.Background(), []byte("not a pdf at all"), imagesDir, "/document-images/", "eng"); err == nil {
+	if _, err := ExtractPDFPages(context.Background(), []byte("not a pdf at all"), imagesDir, "/document-images/", "eng"); err == nil {
 		t.Error("expected an error for content that isn't a valid PDF")
 	}
 }
@@ -267,8 +267,8 @@ func TestSniffImageExtRecognizesFormats(t *testing.T) {
 		{"empty", nil, ""},
 	}
 	for _, c := range cases {
-		if got := sniffImageExt(c.content); got != c.want {
-			t.Errorf("sniffImageExt(%s) = %q, want %q", c.name, got, c.want)
+		if got := SniffImageExt(c.content); got != c.want {
+			t.Errorf("SniffImageExt(%s) = %q, want %q", c.name, got, c.want)
 		}
 	}
 }
@@ -276,9 +276,9 @@ func TestSniffImageExtRecognizesFormats(t *testing.T) {
 func TestIngestStandaloneImageWritesFileAndReturnsPage(t *testing.T) {
 	imagesDir := filepath.Join(t.TempDir(), "images")
 
-	pages, err := ingestStandaloneImage(context.Background(), onePixelPNG, ".png", imagesDir, "/document-images/", "eng")
+	pages, err := IngestStandaloneImage(context.Background(), onePixelPNG, ".png", imagesDir, "/document-images/", "eng")
 	if err != nil {
-		t.Fatalf("ingestStandaloneImage: %v", err)
+		t.Fatalf("IngestStandaloneImage: %v", err)
 	}
 	if len(pages) != 1 {
 		t.Fatalf("pages = %d, want 1", len(pages))
@@ -446,13 +446,13 @@ func TestValidatePDFPageCount(t *testing.T) {
 
 func TestValidOCRLanguage(t *testing.T) {
 	for _, valid := range []string{"eng", "rus", "eng+rus", "fra+deu+ita"} {
-		if !validOCRLanguage.MatchString(valid) {
-			t.Errorf("validOCRLanguage(%q) = false, want true", valid)
+		if !ValidOCRLanguage.MatchString(valid) {
+			t.Errorf("ValidOCRLanguage(%q) = false, want true", valid)
 		}
 	}
 	for _, invalid := range []string{"", "english", "eng+", "eng rus", "eng; rm -rf /", "EN"} {
-		if validOCRLanguage.MatchString(invalid) {
-			t.Errorf("validOCRLanguage(%q) = true, want false", invalid)
+		if ValidOCRLanguage.MatchString(invalid) {
+			t.Errorf("ValidOCRLanguage(%q) = true, want false", invalid)
 		}
 	}
 }

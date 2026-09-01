@@ -1,4 +1,12 @@
-package webui
+// This file's functions were originally internal/webui/pdf.go — moved
+// here because they never actually depended on webui.Server (just plain
+// paths and strings), and a second caller needs them: the chat_file tool
+// (internal/tools) ingests an ad-hoc chat attachment into RAG the same
+// way a filedump upload does, but internal/tools can't import
+// internal/webui (webui already imports internal/tools, for the
+// Registry) — internal/documents is a home both already import without
+// a cycle.
+package documents
 
 import (
 	"bytes"
@@ -16,8 +24,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/roman220/bosun-smarthelper/internal/documents"
 )
 
 // minPDFPageTextChars below this, a page's real content is treated as a
@@ -36,7 +42,7 @@ const minPDFPageTextChars = 40
 // pathological.
 const maxPDFPages = 500
 
-// validatePDFPageCount is the seam extractPDFPages checks pageCount
+// validatePDFPageCount is the seam ExtractPDFPages checks pageCount
 // through — split out so the boundary condition is testable without a
 // real oversized PDF fixture.
 func validatePDFPageCount(pageCount int) error {
@@ -49,13 +55,13 @@ func validatePDFPageCount(pageCount int) error {
 	return nil
 }
 
-// extractPDFPages shells out to poppler-utils (pdfinfo, pdftotext,
+// ExtractPDFPages shells out to poppler-utils (pdfinfo, pdftotext,
 // pdftoppm — must be present in the runtime image) to turn a PDF into
 // per-page PageInputs: real text when a page has an extractable text
 // layer, otherwise a rendered page image. ocrLanguage is a tesseract
 // language spec (e.g. "eng", "rus", "eng+rus") for pages that need OCR —
 // see ValidOCRLanguage and ocrImage for why this isn't just always both.
-func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPrefix, ocrLanguage string) ([]documents.PageInput, error) {
+func ExtractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPrefix, ocrLanguage string) ([]PageInput, error) {
 	tempDir, err := os.MkdirTemp("", "bosun-pdf-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
@@ -88,12 +94,12 @@ func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPr
 	}
 	boilerplate := detectBoilerplateLines(rawTexts)
 
-	pages := make([]documents.PageInput, 0, pageCount)
+	pages := make([]PageInput, 0, pageCount)
 	for i, rawText := range rawTexts {
 		page := i + 1
 		cleanText := strings.TrimSpace(stripBoilerplateLines(rawText, boilerplate))
 		if len(cleanText) >= minPDFPageTextChars {
-			pages = append(pages, documents.PageInput{Text: fmt.Sprintf("Page %d\n\n%s", page, cleanText)})
+			pages = append(pages, PageInput{Text: fmt.Sprintf("Page %d\n\n%s", page, cleanText)})
 			continue
 		}
 		imagePath, imageURL, err := renderPDFPageImage(ctx, pdfPath, page, imagesDir, imageURLPrefix)
@@ -103,9 +109,9 @@ func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPr
 		correctPageOrientation(ctx, imagePath)
 		pageText := fmt.Sprintf("Page %d (diagram or scanned image, no text recognized)", page)
 		if ocrText, err := ocrImage(ctx, imagePath, ocrLanguage); err == nil && len(strings.TrimSpace(ocrText)) > 0 {
-			pageText = documents.CleanOCRText(fmt.Sprintf("Page %d (OCR)\n\n%s", page, strings.TrimSpace(ocrText)))
+			pageText = CleanOCRText(fmt.Sprintf("Page %d (OCR)\n\n%s", page, strings.TrimSpace(ocrText)))
 		}
-		pages = append(pages, documents.PageInput{Text: pageText, ImageURL: imageURL})
+		pages = append(pages, PageInput{Text: pageText, ImageURL: imageURL})
 	}
 	return pages, nil
 }
@@ -222,12 +228,12 @@ func renderPDFPageImage(ctx context.Context, pdfPath string, page int, imagesDir
 	return matches[0], urlPrefix + filepath.Base(matches[0]), nil
 }
 
-// validOCRLanguage matches a tesseract -l argument: one or more 3-letter
+// ValidOCRLanguage matches a tesseract -l argument: one or more 3-letter
 // language codes joined by "+" (e.g. "eng", "rus", "eng+rus") — tesseract's
 // own naming convention for its bundled language data files.
-var validOCRLanguage = regexp.MustCompile(`^[a-z]{3}(\+[a-z]{3})*$`)
+var ValidOCRLanguage = regexp.MustCompile(`^[a-z]{3}(\+[a-z]{3})*$`)
 
-// defaultOCRLanguage is used when a document upload doesn't specify one.
+// DefaultOCRLanguage is used when a document upload doesn't specify one.
 // Not "eng+rus": running both on an English-only technical diagram
 // measurably made things worse, not more permissive — tesseract's combined
 // model frequently misread plain English glyphs as look-alike Cyrillic
@@ -236,15 +242,15 @@ var validOCRLanguage = regexp.MustCompile(`^[a-z]{3}(\+[a-z]{3})*$`)
 // it. A manual that's actually in Russian (or any other language
 // tesseract's image has data for) should pass that language explicitly at
 // upload time instead.
-const defaultOCRLanguage = "eng"
+const DefaultOCRLanguage = "eng"
 
 // ocrImage runs tesseract on an already-rendered image with the given
-// language spec (validate with validOCRLanguage before calling; an invalid
+// language spec (validate with ValidOCRLanguage before calling; an invalid
 // one just makes tesseract itself fail, but validating earlier gives a
 // clearer error to the uploader).
 func ocrImage(ctx context.Context, imagePath, language string) (string, error) {
 	if language == "" {
-		language = defaultOCRLanguage
+		language = DefaultOCRLanguage
 	}
 	out, err := exec.CommandContext(ctx, "tesseract", imagePath, "-", "-l", language).Output()
 	if err != nil {
@@ -369,9 +375,21 @@ var imageSniffs = []struct {
 	{[]byte("GIF89a"), ".gif"},
 }
 
-// sniffImageExt returns the file extension for a recognized image format,
+// pdfMagic is the standard PDF file signature.
+var pdfMagic = []byte("%PDF-")
+
+// IsPDF reports whether content starts with a PDF file signature — the
+// same magic-bytes sniffing SniffImageExt does for image formats, so a
+// caller (filedump upload, the chat_file tool) can dispatch to
+// ExtractPDFPages/IngestStandaloneImage/plain text the same way regardless
+// of where the file came from.
+func IsPDF(content []byte) bool {
+	return bytes.HasPrefix(content, pdfMagic)
+}
+
+// SniffImageExt returns the file extension for a recognized image format,
 // or "" if content doesn't match any of imageSniffs.
-func sniffImageExt(content []byte) string {
+func SniffImageExt(content []byte) string {
 	for _, s := range imageSniffs {
 		if bytes.HasPrefix(content, s.prefix) {
 			return s.ext
@@ -380,15 +398,15 @@ func sniffImageExt(content []byte) string {
 	return ""
 }
 
-// ingestStandaloneImage OCRs an image uploaded on its own (a scraped
+// IngestStandaloneImage OCRs an image uploaded on its own (a scraped
 // manual's diagram, a photographed fuse panel — anything that isn't a
 // scanned page inside a PDF) and returns it as a one-page
-// []documents.PageInput, the same {Text, ImageURL} shape a diagram-only
-// PDF page gets from extractPDFPages/ocrImage — a standalone diagram
+// []PageInput, the same {Text, ImageURL} shape a diagram-only
+// PDF page gets from ExtractPDFPages/ocrImage — a standalone diagram
 // deserves identical treatment (OCR'd once, served from imagesDir,
 // findable by its recognized text) rather than a separate, divergent
 // pipeline.
-func ingestStandaloneImage(ctx context.Context, content []byte, ext, imagesDir, imageURLPrefix, ocrLanguage string) ([]documents.PageInput, error) {
+func IngestStandaloneImage(ctx context.Context, content []byte, ext, imagesDir, imageURLPrefix, ocrLanguage string) ([]PageInput, error) {
 	if err := os.MkdirAll(imagesDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create images dir: %w", err)
 	}
@@ -404,7 +422,7 @@ func ingestStandaloneImage(ctx context.Context, content []byte, ext, imagesDir, 
 	imageURL := imageURLPrefix + filepath.Base(imagePath)
 	text := "Diagram (no text recognized)"
 	if ocrText, err := ocrImage(ctx, imagePath, ocrLanguage); err == nil && len(strings.TrimSpace(ocrText)) > 0 {
-		text = documents.CleanOCRText(strings.TrimSpace(ocrText))
+		text = CleanOCRText(strings.TrimSpace(ocrText))
 	}
-	return []documents.PageInput{{Text: text, ImageURL: imageURL}}, nil
+	return []PageInput{{Text: text, ImageURL: imageURL}}, nil
 }

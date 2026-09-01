@@ -2,6 +2,7 @@ package webui
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -13,6 +14,21 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/filedump"
 )
+
+// onePixelPNG is a minimal valid 1x1 transparent PNG — enough for the RAG
+// ingestion path to recognize it as a real image without needing a real
+// diagram scan. Same fixture internal/documents/ingest_test.go uses; kept
+// as a separate copy here rather than exported across packages, since it's
+// test-only data with no other reason to be part of documents' public API.
+var onePixelPNG = mustDecodeBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+
+func mustDecodeBase64(s string) []byte {
+	data, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
 
 func newFileDumpTestServer(t *testing.T) (*Server, *documents.Store) {
 	t.Helper()

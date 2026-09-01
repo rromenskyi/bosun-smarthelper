@@ -1085,9 +1085,6 @@ func (s *Server) handleDocumentsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "documents": list})
 }
 
-// pdfMagic is the standard PDF file signature.
-var pdfMagic = []byte("%PDF-")
-
 type addPagesRequest struct {
 	Documents []struct {
 		Title string `json:"title"`
