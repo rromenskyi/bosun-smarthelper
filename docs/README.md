@@ -98,6 +98,10 @@ top-level tour has room for. Grouped by what you're trying to do.
   past chat session to continue, closing one, or starting a fresh one —
   regular (auto-titled, saved) or temporary (never written to disk,
   never listed).
+- **[chat-files.md](chat-files.md)** — a 📎 button to attach a file
+  directly to a chat message (temporary, gone in about an hour unless
+  claimed), and the `chat_file` tool that lets the model read it, add
+  it to RAG, or link it to a memo.
 
 ## How it behaves, and why
 
