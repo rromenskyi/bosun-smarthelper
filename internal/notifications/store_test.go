@@ -130,6 +130,63 @@ func TestDeleteUnknownIDIsNotAnError(t *testing.T) {
 	}
 }
 
+func TestAddDedupedSuppressesRepeatWithinWindow(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.AddDeduped(Notification{Source: "backup", Title: "Backup failed"}, time.Hour); err != nil {
+		t.Fatalf("AddDeduped (first): %v", err)
+	}
+	got, err := store.AddDeduped(Notification{Source: "backup", Title: "Backup failed"}, time.Hour)
+	if err != nil {
+		t.Fatalf("AddDeduped (repeat): %v", err)
+	}
+	if got.ID != "" {
+		t.Errorf("expected the repeat to be suppressed (zero Notification), got %#v", got)
+	}
+
+	list, err := store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("list = %#v, want exactly 1 (the repeat must not have been added)", list)
+	}
+}
+
+func TestAddDedupedAllowsRepeatAfterWindow(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.AddDeduped(Notification{Source: "backup", Title: "Backup failed", At: time.Now().Add(-2 * time.Hour)}, time.Hour); err != nil {
+		t.Fatalf("AddDeduped (first): %v", err)
+	}
+	got, err := store.AddDeduped(Notification{Source: "backup", Title: "Backup failed"}, time.Hour)
+	if err != nil {
+		t.Fatalf("AddDeduped (after window): %v", err)
+	}
+	if got.ID == "" {
+		t.Error("expected a notification past the dedup window to be added")
+	}
+	list, err := store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("list = %#v, want 2 (window elapsed, both should exist)", list)
+	}
+}
+
+func TestAddDedupedAllowsDifferentTitle(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.AddDeduped(Notification{Source: "backup", Title: "Backup failed"}, time.Hour); err != nil {
+		t.Fatalf("AddDeduped: %v", err)
+	}
+	got, err := store.AddDeduped(Notification{Source: "backup", Title: "Backup succeeded"}, time.Hour)
+	if err != nil {
+		t.Fatalf("AddDeduped (different title): %v", err)
+	}
+	if got.ID == "" {
+		t.Error("expected a different title to not be suppressed")
+	}
+}
+
 func TestAddTrimsOldestPastCap(t *testing.T) {
 	store := newTestStore(t)
 	for i := 0; i < maxNotifications+10; i++ {

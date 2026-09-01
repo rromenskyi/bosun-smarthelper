@@ -65,6 +65,37 @@ func NewStore(path string) *Store {
 // now if unset. Trims the oldest entries once the store exceeds
 // maxNotifications.
 func (s *Store) Add(n Notification) (Notification, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.addLocked(n)
+}
+
+// AddDeduped is Add, but skipped — returning the zero Notification and a
+// nil error — if a notification with the same Source and Title was
+// already recorded within window. Guards a recurring background check (a
+// threshold rule ticking every 30s, a broken backup schedule checked
+// every 15 minutes) from flooding the zone with a fresh entry every
+// single tick it keeps failing; the first occurrence still gets through
+// immediately, and a genuinely different failure (different title) always
+// does too, regardless of window.
+func (s *Store) AddDeduped(n Notification, window time.Duration) (Notification, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.load()
+	if err != nil {
+		return Notification{}, err
+	}
+	cutoff := time.Now().Add(-window)
+	for _, existing := range data.Notifications {
+		if existing.Source == n.Source && existing.Title == n.Title && existing.At.After(cutoff) {
+			return Notification{}, nil
+		}
+	}
+	return s.addLocked(n)
+}
+
+// addLocked is Add's actual body. Callers must hold s.mu.
+func (s *Store) addLocked(n Notification) (Notification, error) {
 	if n.At.IsZero() {
 		n.At = time.Now()
 	}
@@ -76,8 +107,6 @@ func (s *Store) Add(n Notification) (Notification, error) {
 		n.ID = id
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	data, err := s.load()
 	if err != nil {
 		return Notification{}, err
