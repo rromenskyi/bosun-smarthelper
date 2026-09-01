@@ -30,6 +30,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/filedump"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
+	"github.com/roman220/bosun-smarthelper/internal/notifications"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
 	"github.com/roman220/bosun-smarthelper/internal/voice"
@@ -188,6 +189,8 @@ type Server struct {
 	fileDumpDir   string
 
 	chatFilesStore *chatfiles.Store
+
+	notificationsStore *notifications.Store
 }
 
 // generationHandle is the in-flight state for one session's chat request —
@@ -489,6 +492,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chat/files", s.handleChatFilesList)
 	mux.HandleFunc("POST /api/chat/files", s.handleChatFilesUpload)
 	mux.HandleFunc("DELETE /api/chat/files", s.handleChatFilesDelete)
+	mux.HandleFunc("GET /api/notifications", s.handleNotificationsList)
+	mux.HandleFunc("POST /api/notifications/read", s.handleNotificationsMarkRead)
+	mux.HandleFunc("DELETE /api/notifications", s.handleNotificationsDelete)
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("POST /api/settings", s.handleSettingsUpdate)
 	mux.HandleFunc("GET /ca.pem", s.handleCACert)

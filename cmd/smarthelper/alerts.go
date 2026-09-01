@@ -11,6 +11,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/config"
 	"github.com/roman220/bosun-smarthelper/internal/errlog"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
+	"github.com/roman220/bosun-smarthelper/internal/notifications"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
 	"github.com/roman220/bosun-smarthelper/internal/voice"
@@ -85,6 +86,33 @@ func sendTestAlert(ctx context.Context, cfg *config.Config, ttsEngine voice.TTSE
 	})
 }
 
+// notificationStoreNotifier persists every alert it's given to
+// internal/notifications, regardless of which other channels a rule
+// opted into — the notification zone's whole point is "don't lose
+// important alerts," so unlike Telegram/webhook/speaker it's not itself
+// one of the opt-in checkboxes.
+type notificationStoreNotifier struct {
+	store *notifications.Store
+}
+
+func (n *notificationStoreNotifier) Notify(_ context.Context, alert alerts.Alert) error {
+	_, err := n.store.Add(notifications.Notification{
+		Source:   alert.Source,
+		Severity: string(alert.Severity),
+		Title:    alert.Title,
+		Body:     alert.Body,
+		At:       alert.At,
+	})
+	return err
+}
+
+func notificationNotifier(store *notifications.Store) alerts.Notifier {
+	if store == nil {
+		return nil
+	}
+	return &notificationStoreNotifier{store: store}
+}
+
 func collectNotifiers(candidates ...alerts.Notifier) []alerts.Notifier {
 	var notifiers []alerts.Notifier
 	for _, n := range candidates {
@@ -101,12 +129,13 @@ func collectNotifiers(candidates ...alerts.Notifier) []alerts.Notifier {
 // no per-rule channel selection to make, just one on/off per channel.
 // Re-read on every check rather than cached once, so flipping a settings
 // toggle takes effect on the very next tick, not after a restart.
-func noaaAlertNotifiers(cfg *config.Config, settingsStore *settings.Store, ttsEngine voice.TTSEngine, logger *slog.Logger) []alerts.Notifier {
+func noaaAlertNotifiers(cfg *config.Config, settingsStore *settings.Store, ttsEngine voice.TTSEngine, logger *slog.Logger, notificationStore *notifications.Store) []alerts.Notifier {
 	data := settingsStore.Get()
 	return collectNotifiers(
 		telegramNotifier(cfg.Alerts.Channels.Telegram, data.AlertsTelegramEnabled, logger),
 		webhookNotifier(cfg.Alerts.Channels.Webhook, data.AlertsWebhookEnabled),
 		speakerNotifier(cfg.Alerts.Channels.Speaker, data.AlertsSpeakerEnabled, ttsEngine, data.DefaultLanguage, logger),
+		notificationNotifier(notificationStore),
 	)
 }
 
@@ -116,11 +145,12 @@ func noaaAlertNotifiers(cfg *config.Config, settingsStore *settings.Store, ttsEn
 // config.yaml/.env, same "config decides what exists" rule as
 // noaaAlertNotifiers, just keyed off the rule's own checkboxes instead of
 // a single global toggle.
-func thresholdRuleNotifiers(cfg *config.Config, rule settings.AlertsThresholdRule, ttsEngine voice.TTSEngine, language string, logger *slog.Logger) []alerts.Notifier {
+func thresholdRuleNotifiers(cfg *config.Config, rule settings.AlertsThresholdRule, ttsEngine voice.TTSEngine, language string, logger *slog.Logger, notificationStore *notifications.Store) []alerts.Notifier {
 	return collectNotifiers(
 		telegramNotifier(cfg.Alerts.Channels.Telegram, rule.Telegram, logger),
 		webhookNotifier(cfg.Alerts.Channels.Webhook, rule.Webhook),
 		speakerNotifier(cfg.Alerts.Channels.Speaker, rule.Speaker, ttsEngine, language, logger),
+		notificationNotifier(notificationStore),
 	)
 }
 
@@ -193,6 +223,7 @@ func runThresholdChecker(
 	dataDir string,
 	logger *slog.Logger,
 	errLog *errlog.Logger,
+	notificationStore *notifications.Store,
 ) {
 	state, err := alerts.LoadThresholdState(dataDir)
 	if err != nil {
@@ -221,7 +252,7 @@ func runThresholdChecker(
 					SmoothingSamples: rule.SmoothingSamples,
 					CustomText:       rule.CustomText,
 					PlaySiren:        rule.Siren,
-					Notifiers:        thresholdRuleNotifiers(cfg, rule, ttsEngine, data.DefaultLanguage, logger),
+					Notifiers:        thresholdRuleNotifiers(cfg, rule, ttsEngine, data.DefaultLanguage, logger, notificationStore),
 				})
 			}
 			checker := alerts.ThresholdChecker{Store: metricsStore, Thresholds: thresholds}
@@ -252,6 +283,7 @@ func runNOAAChecker(
 	dataDir string,
 	logger *slog.Logger,
 	errLog *errlog.Logger,
+	notificationStore *notifications.Store,
 ) {
 	seen, err := alerts.LoadNOAASeenIDs(dataDir)
 	if err != nil {
@@ -277,7 +309,7 @@ func runNOAAChecker(
 				errLog.Record("noaa_alert", "resolve_position", err)
 				continue
 			}
-			notifiers := noaaAlertNotifiers(cfg, settingsStore, ttsEngine, logger)
+			notifiers := noaaAlertNotifiers(cfg, settingsStore, ttsEngine, logger, notificationStore)
 			next, errs := alerts.CheckNOAA(ctx, lat, lon, seen, notifiers)
 			for _, err := range errs {
 				logger.Warn("NOAA alert check", "error", err)

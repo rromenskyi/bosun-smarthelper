@@ -28,6 +28,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/llm"
 	"github.com/roman220/bosun-smarthelper/internal/mcp"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
+	"github.com/roman220/bosun-smarthelper/internal/notifications"
 	"github.com/roman220/bosun-smarthelper/internal/sandbox"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
@@ -155,6 +156,11 @@ func serveCmd() *cobra.Command {
 			// not just what happens inside a chat request.
 			errLog := openErrorLog(cfg, logger)
 			ag.SetErrorLog(errLog)
+			// Shared by the threshold and NOAA checkers below — a persisted
+			// record of every alert either one fires, for the web UI's
+			// notification zone. Always on, unlike the opt-in
+			// Telegram/webhook/speaker channels.
+			notificationStore := notifications.NewStore("")
 			if docStore != nil {
 				ag.SetTopicsProvider(docStore)
 			}
@@ -181,6 +187,7 @@ func serveCmd() *cobra.Command {
 			server.SetDocumentStore(docStore)
 			server.SetToolRegistry(registry)
 			server.SetSettingsStore(settingsStore)
+			server.SetNotificationsStore(notificationStore)
 			server.SetTemperatureController(router)
 			server.SetProviderOverrideController(router)
 			server.SetCACertFile(cfg.Web.CACertFile)
@@ -289,7 +296,7 @@ func serveCmd() *cobra.Command {
 					if alertsDataDir, err := resolveDataDir(""); err != nil {
 						logger.Warn("could not resolve data directory; threshold alerts disabled", "error", err)
 					} else {
-						go runThresholdChecker(cmd.Context(), cfg, settingsStore, metricsStore, ttsEngine, alertsDataDir, logger, errLog)
+						go runThresholdChecker(cmd.Context(), cfg, settingsStore, metricsStore, ttsEngine, alertsDataDir, logger, errLog, notificationStore)
 					}
 				}
 			}
@@ -335,7 +342,7 @@ func serveCmd() *cobra.Command {
 				if alertsDataDir, err := resolveDataDir(""); err != nil {
 					logger.Warn("could not resolve data directory; NOAA alerts disabled", "error", err)
 				} else {
-					go runNOAAChecker(cmd.Context(), cfg, registry, settingsStore, ttsEngine, alertsDataDir, logger, errLog)
+					go runNOAAChecker(cmd.Context(), cfg, registry, settingsStore, ttsEngine, alertsDataDir, logger, errLog, notificationStore)
 				}
 			}
 
