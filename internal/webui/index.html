@@ -176,9 +176,29 @@
       background: var(--bg);
     }
     .composer {
-      display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: end;
+      display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: end;
       padding: 10px; border: 1px solid var(--line); border-radius: 22px;
       background: rgba(20, 36, 30, .96); box-shadow: 0 18px 60px rgba(0, 0, 0, .3);
+    }
+    .composer.drag-over { border-color: var(--accent); background: rgba(60, 120, 90, .18); }
+    .attach {
+      width: 46px; height: 46px; border-radius: 15px; border: 1px solid var(--line);
+      cursor: pointer; background: transparent; color: var(--text); font-size: 18px;
+    }
+    .attach:disabled { opacity: .4; cursor: wait; }
+    .chat-attachments {
+      display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px;
+    }
+    .chat-attachments[hidden] { display: none; }
+    .chat-attachment-chip {
+      display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px;
+      border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2);
+      font-size: 12px; color: var(--muted); max-width: 220px;
+    }
+    .chat-attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chat-attachment-chip button {
+      border: 0; background: transparent; color: var(--danger); cursor: pointer;
+      font-size: 13px; line-height: 1; padding: 2px;
     }
     textarea {
       resize: none; min-height: 46px; max-height: 150px; padding: 12px 10px;
@@ -653,7 +673,10 @@
     </section>
 
     <form id="chat-form">
+      <div class="chat-attachments" id="chat-attachments" hidden></div>
       <div class="composer">
+        <input type="file" id="chat-file-input" multiple hidden>
+        <button class="attach" id="attach" type="button" aria-label="Прикрепить файл" title="Прикрепить файл">📎</button>
         <textarea id="message" rows="1" maxlength="4000" placeholder="Напиши сообщение…" required></textarea>
         <button class="mic" id="mic" type="button" aria-label="Голосовой ввод" title="Голосовой ввод" hidden>🎤</button>
         <button class="send" id="send" type="button" aria-label="Отправить">↑</button>
@@ -688,6 +711,9 @@
     const empty = document.querySelector('#empty');
     const send = document.querySelector('#send');
     const mic = document.querySelector('#mic');
+    const attach = document.querySelector('#attach');
+    const chatFileInput = document.querySelector('#chat-file-input');
+    const chatAttachmentsRow = document.querySelector('#chat-attachments');
     const language = document.querySelector('#language');
     const bell = document.querySelector('#bell');
     const bellAudio = new Audio(BELL_SOUND);
@@ -723,6 +749,97 @@
     // field), so a reload mid-temporary-chat still shows the indicator
     // instead of silently losing it.
     let sessionIsTemporary = false;
+    // Files attached to this chat but not yet sent — uploaded to
+    // /api/chat/files as soon as picked (not deferred until send), so the
+    // chat_file tool already sees them the moment a message mentioning
+    // them arrives. Cleared from this local list once the message is
+    // sent; the underlying temp file lives on server-side (see
+    // internal/chatfiles) until the model claims it or the TTL reaper
+    // gets to it, whichever comes first.
+    let pendingChatFiles = [];
+
+    function renderChatAttachments() {
+      chatAttachmentsRow.innerHTML = '';
+      chatAttachmentsRow.hidden = pendingChatFiles.length === 0;
+      for (const file of pendingChatFiles) {
+        const chip = document.createElement('span');
+        chip.className = 'chat-attachment-chip';
+        const label = document.createElement('span');
+        label.textContent = file.name;
+        label.title = file.name;
+        chip.appendChild(label);
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.textContent = '✕';
+        removeButton.setAttribute('aria-label', text[language.value].chatAttachRemoveTitle);
+        removeButton.title = text[language.value].chatAttachRemoveTitle;
+        removeButton.addEventListener('click', () => removeChatAttachment(file.name));
+        chip.appendChild(removeButton);
+        chatAttachmentsRow.appendChild(chip);
+      }
+    }
+
+    async function uploadChatFile(file) {
+      const formData = new FormData();
+      formData.append('session_id', sessionId);
+      formData.append('file', file);
+      try {
+        const response = await fetch('/api/chat/files', { method: 'POST', body: formData });
+        const data = await response.json();
+        if (!response.ok) {
+          alert(text[language.value].chatAttachUploadFailed + (data.error ? ' ' + data.error : ''));
+          return;
+        }
+        pendingChatFiles.push({ name: data.name, size: file.size });
+        renderChatAttachments();
+      } catch {
+        alert(text[language.value].chatAttachUploadFailed);
+      }
+    }
+
+    async function removeChatAttachment(name) {
+      pendingChatFiles = pendingChatFiles.filter(f => f.name !== name);
+      renderChatAttachments();
+      try {
+        await fetch(`/api/chat/files?session_id=${encodeURIComponent(sessionId)}&name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+      } catch {
+        // Best-effort: the chip is already gone from the UI either way,
+        // and the TTL reaper cleans up a temp file this couldn't delete.
+      }
+    }
+
+    // Appends a short, plain note naming every pending attachment to the
+    // outgoing message — not a system-prompt change, just part of this
+    // one message's own text, the same as if the user had typed
+    // "here's photo.jpg" themselves. Lets the model reliably notice an
+    // attachment exists without any standing prompt bloat; it discovers
+    // what to do with it through the chat_file tool's own description.
+    function withChatAttachmentNote(value) {
+      if (pendingChatFiles.length === 0) return value;
+      const names = pendingChatFiles.map(f => f.name).join(', ');
+      pendingChatFiles = [];
+      renderChatAttachments();
+      return value + text[language.value].chatAttachNote(names);
+    }
+
+    attach.addEventListener('click', () => chatFileInput.click());
+    chatFileInput.addEventListener('change', async () => {
+      for (const file of chatFileInput.files) {
+        await uploadChatFile(file);
+      }
+      chatFileInput.value = '';
+    });
+    for (const eventName of ['dragover', 'dragleave', 'drop']) {
+      form.addEventListener(eventName, event => {
+        if (!event.dataTransfer || !event.dataTransfer.types.includes('Files')) return;
+        event.preventDefault();
+        document.querySelector('.composer').classList.toggle('drag-over', eventName === 'dragover');
+        if (eventName !== 'drop') return;
+        for (const file of event.dataTransfer.files) {
+          uploadChatFile(file);
+        }
+      });
+    }
 
     function escapeHTML(value) {
       return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1058,6 +1175,7 @@
       if (busy || !value.trim()) return;
       busy = true;
       setSendButtonState(true);
+      value = withChatAttachmentNote(value.trim());
       addMessage('user', value.trim());
       input.value = '';
       resizeInput();
