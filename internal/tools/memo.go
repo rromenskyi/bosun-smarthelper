@@ -118,13 +118,13 @@ func (t *MemoTool) SetFileDumpStore(store *filedump.Store) {
 // attachments never masquerade as a document upload's SourcePath.
 const memosAttachmentFolder = "memos"
 
-// AttachFile moves the file at fileDumpRelPath (already written into
-// filedump — see the chat_file tool's add_to_memo action) into
-// memos/<key>/ and appends the result to key's Attachments. Fails if no
-// filedump store is wired in, or key doesn't name an existing memo —
-// attaching to a memo that doesn't exist yet would silently orphan the
-// file with nothing pointing at it.
-func (t *MemoTool) AttachFile(key, fileDumpRelPath string) (map[string]any, error) {
+// AttachFile writes content as filename into memos/<key>/ (creating the
+// folder if needed — see the chat_file tool's add_to_memo action) and
+// appends the result to key's Attachments. Fails if no filedump store is
+// wired in, or key doesn't name an existing memo — attaching to a memo
+// that doesn't exist yet would silently orphan the file with nothing
+// pointing at it.
+func (t *MemoTool) AttachFile(key, filename string, content []byte) (map[string]any, error) {
 	if t.fileDump == nil {
 		return nil, fmt.Errorf("file storage is not configured")
 	}
@@ -144,12 +144,19 @@ func (t *MemoTool) AttachFile(key, fileDumpRelPath string) (map[string]any, erro
 		return nil, fmt.Errorf("memo %q was not found", key)
 	}
 
-	newPath := path.Join(memosAttachmentFolder, key, path.Base(fileDumpRelPath))
-	if _, err := t.fileDump.Move(fileDumpRelPath, newPath); err != nil {
-		return nil, fmt.Errorf("move attachment: %w", err)
+	dest, relPath, err := t.fileDump.OpenForWrite(path.Join(memosAttachmentFolder, key), filename)
+	if err != nil {
+		return nil, fmt.Errorf("write attachment: %w", err)
+	}
+	if _, err := dest.Write(content); err != nil {
+		dest.Close()
+		return nil, fmt.Errorf("write attachment: %w", err)
+	}
+	if err := dest.Close(); err != nil {
+		return nil, fmt.Errorf("write attachment: %w", err)
 	}
 
-	record.Attachments = append(record.Attachments, newPath)
+	record.Attachments = append(record.Attachments, relPath)
 	record.UpdatedAt = time.Now().Format(time.RFC3339Nano)
 	data.Memos[key] = record
 	if err := t.save(data); err != nil {

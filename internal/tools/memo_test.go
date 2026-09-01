@@ -66,7 +66,7 @@ func TestMemoToolWriteReadArchiveDelete(t *testing.T) {
 	}
 }
 
-func TestMemoToolAttachFileLinksToMemoAndMovesFile(t *testing.T) {
+func TestMemoToolAttachFileLinksToMemo(t *testing.T) {
 	tool := NewMemoTool(&config.MemoConfig{Path: filepath.Join(t.TempDir(), "memos.json")}, nil)
 	fileDumpStore, err := filedump.NewStore(filepath.Join(t.TempDir(), "filedump"))
 	if err != nil {
@@ -79,14 +79,7 @@ func TestMemoToolAttachFileLinksToMemoAndMovesFile(t *testing.T) {
 		t.Fatalf("write memo: %v", err)
 	}
 
-	f, rel, err := fileDumpStore.OpenForWrite("", "photo.jpg")
-	if err != nil {
-		t.Fatalf("OpenForWrite: %v", err)
-	}
-	f.WriteString("fake-jpeg-bytes")
-	f.Close()
-
-	view, err := tool.AttachFile("fuse-panel", rel)
+	view, err := tool.AttachFile("fuse-panel", "photo.jpg", []byte("fake-jpeg-bytes"))
 	if err != nil {
 		t.Fatalf("AttachFile: %v", err)
 	}
@@ -95,12 +88,12 @@ func TestMemoToolAttachFileLinksToMemoAndMovesFile(t *testing.T) {
 		t.Fatalf("attachments = %#v, want [/files/memos/fuse-panel/photo.jpg]", view["attachments"])
 	}
 
-	// The file must have actually moved, not just been referenced in place.
-	if _, err := os.Stat(filepath.Join(fileDumpStore.Root(), "photo.jpg")); !os.IsNotExist(err) {
-		t.Error("original file still exists at its old location")
+	written, err := os.ReadFile(filepath.Join(fileDumpStore.Root(), "memos", "fuse-panel", "photo.jpg"))
+	if err != nil {
+		t.Fatalf("attachment not found at its new location: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(fileDumpStore.Root(), "memos", "fuse-panel", "photo.jpg")); err != nil {
-		t.Errorf("attachment not found at its new location: %v", err)
+	if string(written) != "fake-jpeg-bytes" {
+		t.Errorf("attachment content = %q, want %q", written, "fake-jpeg-bytes")
 	}
 
 	read, err := tool.Execute(ctx, map[string]any{"action": "read", "key": "fuse-panel"})
@@ -121,13 +114,7 @@ func TestMemoToolAttachFileRequiresExistingMemo(t *testing.T) {
 	}
 	tool.SetFileDumpStore(fileDumpStore)
 
-	f, rel, err := fileDumpStore.OpenForWrite("", "photo.jpg")
-	if err != nil {
-		t.Fatalf("OpenForWrite: %v", err)
-	}
-	f.Close()
-
-	if _, err := tool.AttachFile("never-written", rel); err == nil {
+	if _, err := tool.AttachFile("never-written", "photo.jpg", []byte("x")); err == nil {
 		t.Error("expected an error attaching to a memo that doesn't exist")
 	}
 }
@@ -138,7 +125,7 @@ func TestMemoToolAttachFileRequiresFileDumpStore(t *testing.T) {
 	if _, err := tool.Execute(ctx, map[string]any{"action": "write", "key": "k", "content": "c"}); err != nil {
 		t.Fatalf("write memo: %v", err)
 	}
-	if _, err := tool.AttachFile("k", "photo.jpg"); err == nil {
+	if _, err := tool.AttachFile("k", "photo.jpg", []byte("x")); err == nil {
 		t.Error("expected an error when no file dump store is configured")
 	}
 }
@@ -158,12 +145,7 @@ func TestMemoToolDeleteCascadesAttachments(t *testing.T) {
 	if _, err := tool.Execute(ctx, map[string]any{"action": "write", "key": "fuse-panel", "content": "c"}); err != nil {
 		t.Fatalf("write memo: %v", err)
 	}
-	f, rel, err := fileDumpStore.OpenForWrite("", "photo.jpg")
-	if err != nil {
-		t.Fatalf("OpenForWrite: %v", err)
-	}
-	f.Close()
-	if _, err := tool.AttachFile("fuse-panel", rel); err != nil {
+	if _, err := tool.AttachFile("fuse-panel", "photo.jpg", []byte("x")); err != nil {
 		t.Fatalf("AttachFile: %v", err)
 	}
 
