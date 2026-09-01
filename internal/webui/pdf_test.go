@@ -113,6 +113,88 @@ func TestExtractPDFPagesBlankPageRendersImage(t *testing.T) {
 	}
 }
 
+// twoPageBoilerplatePDF mimics a real incident: every page's only
+// extractable text is a source site's download-stamp watermark, with no
+// other content at all (the real page content is a diagram this hand
+// -written PDF doesn't attempt to draw). At 58 characters, that
+// watermark alone clears minPDFPageTextChars, so before boilerplate
+// stripping both pages were misclassified as text pages and their
+// (real-world) diagrams never got rendered or OCR'd.
+const twoPageBoilerplatePDF = `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R 6 0 R]/Count 2>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/MediaBox[0 0 400 200]/Contents 5 0 R>>endobj
+4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+5 0 obj<</Length 90>>
+stream
+BT /F1 10 Tf 20 100 Td (Downloaded from www.Manualslib.com manuals search engine) Tj ET
+endstream
+endobj
+6 0 obj<</Type/Page/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/MediaBox[0 0 400 200]/Contents 7 0 R>>endobj
+7 0 obj<</Length 90>>
+stream
+BT /F1 10 Tf 20 100 Td (Downloaded from www.Manualslib.com manuals search engine) Tj ET
+endstream
+endobj
+trailer<</Size 8/Root 1 0 R>>
+%%EOF
+`
+
+func TestExtractPDFPagesStripsRepeatedBoilerplateBeforeClassifying(t *testing.T) {
+	requirePoppler(t)
+	imagesDir := filepath.Join(t.TempDir(), "images")
+
+	pages, err := extractPDFPages(context.Background(), []byte(twoPageBoilerplatePDF), imagesDir, "/document-images/", "eng")
+	if err != nil {
+		t.Fatalf("extractPDFPages: %v", err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("pages = %d, want 2", len(pages))
+	}
+	for i, p := range pages {
+		if p.ImageURL == "" {
+			t.Errorf("page %d: image_url = %q, want a rendered image — a repeated watermark line alone shouldn't count as real page text", i, p.ImageURL)
+		}
+		if strings.Contains(p.Text, "Manualslib") {
+			t.Errorf("page %d text = %q, want the watermark stripped instead of stored as if it were real content", i, p.Text)
+		}
+	}
+}
+
+func TestDetectBoilerplateLinesRequiresRepetitionAcrossPages(t *testing.T) {
+	lines := detectBoilerplateLines([]string{
+		"Downloaded from www.Manualslib.com manuals search engine",
+		"Downloaded from www.Manualslib.com manuals search engine",
+		"Downloaded from www.Manualslib.com manuals search engine",
+	})
+	if !lines["Downloaded from www.Manualslib.com manuals search engine"] {
+		t.Error("expected the line repeated on every page to be detected as boilerplate")
+	}
+}
+
+// TestDetectBoilerplateLinesIgnoresSinglePageContent guards against a
+// trivial false positive: without the count >= 2 requirement, a
+// one-page document's own unique content would be "more than half" of
+// one page and get wrongly flagged as boilerplate.
+func TestDetectBoilerplateLinesIgnoresSinglePageContent(t *testing.T) {
+	lines := detectBoilerplateLines([]string{"Hello World, this is a much longer line of test text"})
+	if len(lines) != 0 {
+		t.Errorf("boilerplate = %#v, want none for a single-page document", lines)
+	}
+}
+
+func TestStripBoilerplateLinesPreservesRealContent(t *testing.T) {
+	boilerplate := map[string]bool{"Downloaded from www.Manualslib.com manuals search engine": true}
+	text := "Exploded View - V-Twin Engine Parts\nDownloaded from www.Manualslib.com manuals search engine"
+	got := stripBoilerplateLines(text, boilerplate)
+	if strings.Contains(got, "Manualslib") {
+		t.Errorf("stripped text = %q, want the watermark line removed", got)
+	}
+	if !strings.Contains(got, "Exploded View") {
+		t.Errorf("stripped text = %q, want the real content line kept", got)
+	}
+}
+
 func TestExtractPDFPagesRejectsGarbage(t *testing.T) {
 	requirePoppler(t)
 	imagesDir := filepath.Join(t.TempDir(), "images")

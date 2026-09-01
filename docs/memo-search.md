@@ -103,14 +103,29 @@ found after the fact has to be fixed by hand (clear that chunk's
 (detected by its `%PDF-` magic bytes). `internal/webui/pdf.go` shells out
 to poppler-utils
 (`pdfinfo`/`pdftotext`/`pdftoppm` — installed in the Docker image, see the
-Dockerfile) page by page: a page with a real text layer becomes a text
-`PageInput`; a page below `minPDFPageTextChars` (a scanned page, or one
-that's mostly a diagram) is instead rendered to a PNG and becomes an
-image-only `PageInput`, same as the manually-curated diagrams above.
-**There is no OCR** — a scanned page's rendered image has no extracted
-text next to it, so it's only findable by its generic "Page N" label, not
-by its actual content. Adding an OCR engine (e.g. `tesseract-ocr`) would
-close that gap for scanned manuals; it isn't installed yet.
+Dockerfile): a page with at least `minPDFPageTextChars` of real
+extractable text becomes a text `PageInput`; a page below that (a scanned
+page, or one that's mostly a diagram) is instead rendered to a PNG,
+OCR'd (`ocrImage`, `tesseract`), and becomes an image-only `PageInput`
+with the recognized text alongside it, same as the manually-curated
+diagrams above.
+
+Before that per-page decision, `extractPDFPages` runs
+`detectBoilerplateLines` across every page's raw extracted text first: a
+line repeated verbatim on more than half the pages (each page counted at
+most once, so it can't repeat within a page to fake the count) is
+treated as a running header/footer/watermark, not real content, and
+stripped before the `minPDFPageTextChars` check. Confirmed live as a
+real bug, not a theoretical one: a manualslib.com-sourced manual's
+diagram pages had no extractable text at all except that site's
+"Downloaded from www.Manualslib.com manuals search engine" stamp —
+which alone was longer than `minPDFPageTextChars` — so every diagram
+page in the document (the parts one the user actually asked to see
+included) was misclassified as a text page and its image was never
+rendered or OCR'd. A one-page document never has anything stripped: the
+detector requires a line to repeat on at least 2 pages, not just clear
+the fraction, so a short single page's own unique content is never
+mistaken for boilerplate.
 
 `POST /api/documents/pages` is a separate, script-only ingestion path
 (JSON body: `{"title", "pages": [{"text", "image_url"}]}`, no UI button)

@@ -49,14 +49,25 @@ func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPr
 		return nil, fmt.Errorf("PDF has no pages")
 	}
 
-	pages := make([]documents.PageInput, 0, pageCount)
+	// Extracted in a first pass, not decided page-by-page as before,
+	// because classifying a page needs to know what's boilerplate across
+	// the *whole* document first — see detectBoilerplateLines.
+	rawTexts := make([]string, pageCount)
 	for page := 1; page <= pageCount; page++ {
 		text, err := pdfPageText(ctx, pdfPath, page)
 		if err != nil {
 			return nil, err
 		}
-		if len(strings.TrimSpace(text)) >= minPDFPageTextChars {
-			pages = append(pages, documents.PageInput{Text: fmt.Sprintf("Page %d\n\n%s", page, strings.TrimSpace(text))})
+		rawTexts[page-1] = text
+	}
+	boilerplate := detectBoilerplateLines(rawTexts)
+
+	pages := make([]documents.PageInput, 0, pageCount)
+	for i, rawText := range rawTexts {
+		page := i + 1
+		cleanText := strings.TrimSpace(stripBoilerplateLines(rawText, boilerplate))
+		if len(cleanText) >= minPDFPageTextChars {
+			pages = append(pages, documents.PageInput{Text: fmt.Sprintf("Page %d\n\n%s", page, cleanText)})
 			continue
 		}
 		imagePath, imageURL, err := renderPDFPageImage(ctx, pdfPath, page, imagesDir, imageURLPrefix)
@@ -70,6 +81,67 @@ func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPr
 		pages = append(pages, documents.PageInput{Text: pageText, ImageURL: imageURL})
 	}
 	return pages, nil
+}
+
+// boilerplateLineThreshold: a line repeated verbatim on more than this
+// fraction of a PDF's pages is running header/footer/watermark noise
+// (e.g. a source site's "Downloaded from ..." stamp), not real page
+// content. Confirmed live: a manualslib.com-sourced manual's diagram
+// pages had no extractable text at all except that exact watermark
+// line — which alone was longer than minPDFPageTextChars — so every
+// diagram page in the document (including the one the user actually
+// wanted, an engine parts exploded view) was misclassified as a text
+// page and its real image content was never rendered or OCR'd at all.
+const boilerplateLineThreshold = 0.5
+
+// detectBoilerplateLines finds every line that appears verbatim (after
+// trimming) on more than boilerplateLineThreshold of pageTexts — each
+// page counted at most once per distinct line, so a line repeated
+// within a single page's own content can't inflate the count. Requiring
+// count >= 2 (not just the fraction) matters for a one-page document:
+// without it, that page's only line would trivially be "more than half"
+// of one page and get wrongly treated as boilerplate.
+func detectBoilerplateLines(pageTexts []string) map[string]bool {
+	counts := make(map[string]int, 8)
+	for _, text := range pageTexts {
+		seenOnThisPage := make(map[string]bool)
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || seenOnThisPage[line] {
+				continue
+			}
+			seenOnThisPage[line] = true
+			counts[line]++
+		}
+	}
+	threshold := float64(len(pageTexts)) * boilerplateLineThreshold
+	boilerplate := make(map[string]bool, len(counts))
+	for line, count := range counts {
+		if count >= 2 && float64(count) > threshold {
+			boilerplate[line] = true
+		}
+	}
+	return boilerplate
+}
+
+// stripBoilerplateLines removes every line detectBoilerplateLines found,
+// keeping the rest — applied before comparing a page's text against
+// minPDFPageTextChars, so a repeated header/footer/watermark line can
+// never by itself make a genuinely image-only page look like a text
+// page.
+func stripBoilerplateLines(text string, boilerplate map[string]bool) string {
+	if len(boilerplate) == 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if boilerplate[strings.TrimSpace(line)] {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 func pdfPageCount(ctx context.Context, pdfPath string) (int, error) {
