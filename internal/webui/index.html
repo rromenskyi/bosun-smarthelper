@@ -417,6 +417,27 @@
     }
     .merges-list-actions button.approve { border-color: var(--accent); color: var(--accent-strong); }
     .merges-list-actions button.reject { border-color: var(--danger); color: var(--danger); }
+    dialog#notifications-dialog {
+      border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
+      color: var(--text); width: min(92vw, 480px); max-height: 85vh; overflow-y: auto; padding: 18px;
+    }
+    dialog#notifications-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+    dialog#notifications-dialog h2 { margin: 0 0 10px; font-size: 16px; }
+    .notifications-toolbar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+    .notifications-toolbar button {
+      border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px;
+    }
+    .notifications-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+    .notifications-list li {
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+      padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; font-size: 13px;
+    }
+    .notifications-list li.unread { border-color: var(--accent); background: rgba(60, 120, 90, .1); }
+    .notifications-list .notification-content { display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+    .notifications-list .notification-content strong { font-size: 13px; }
+    .notifications-list .notification-time { color: var(--muted); font-size: 11px; }
+    .notifications-list .notification-content p { margin: 4px 0 0; color: var(--text); }
+    .notifications-list button { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-size: 14px; flex: 0 0 auto; }
     dialog#sessions-dialog {
       border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2);
       color: var(--text); width: min(92vw, 480px); max-height: 85vh; overflow-y: auto; padding: 18px;
@@ -468,6 +489,7 @@
         <button class="bell" id="adventure-mute" type="button" aria-label="Звук локации" title="Звук локации" hidden>🔊</button>
         <audio id="adventure-scene-audio" loop></audio>
         <button class="bell" id="merges-toggle" type="button" aria-label="Слияние счётчиков" title="Слияние счётчиков" hidden>🔗<span class="badge" id="merges-badge" hidden>0</span></button>
+        <button class="bell" id="notifications-toggle" type="button" aria-label="Уведомления" title="Уведомления" hidden>⚠️<span class="badge" id="notifications-badge" hidden>0</span></button>
         <button class="bell" id="bell" type="button" aria-label="Позвать старпома" title="Позвать старпома">🔔</button>
         <button type="button" class="status" id="status" title="Онлайн/оффлайн: авто"><span class="dot"></span><span>Подключение…</span></button>
       </div>
@@ -647,6 +669,16 @@
       <button type="button" class="clear" id="merges-close">Закрыть</button>
     </dialog>
 
+    <dialog id="notifications-dialog">
+      <h2 id="notifications-title">Уведомления</h2>
+      <p class="docs-hint" id="notifications-empty" hidden>Пока нет уведомлений.</p>
+      <div class="notifications-toolbar">
+        <button type="button" id="notifications-mark-all-read">Отметить все прочитанными</button>
+      </div>
+      <ul class="notifications-list" id="notifications-list"></ul>
+      <button type="button" class="clear" id="notifications-close">Закрыть</button>
+    </dialog>
+
     <dialog id="cameras-dialog">
       <h2 id="cameras-title">Камеры</h2>
       <div class="metrics-range" id="cameras-picker"></div>
@@ -731,6 +763,11 @@
     const mergesDialog = document.querySelector('#merges-dialog');
     const mergesList = document.querySelector('#merges-list');
     const mergesEmpty = document.querySelector('#merges-empty');
+    const notificationsToggle = document.querySelector('#notifications-toggle');
+    const notificationsBadge = document.querySelector('#notifications-badge');
+    const notificationsDialog = document.querySelector('#notifications-dialog');
+    const notificationsList = document.querySelector('#notifications-list');
+    const notificationsEmpty = document.querySelector('#notifications-empty');
     const metricsCharts = document.querySelector('#metrics-charts');
     const metricsEmpty = document.querySelector('#metrics-empty');
     let busy = false;
@@ -1528,6 +1565,13 @@
       mergesEmpty.textContent = text[locale].mergesEmpty;
       document.querySelector('#merges-close').textContent = text[locale].mergesClose;
       renderMerges(mergesCache);
+      notificationsToggle.title = text[locale].notificationsToggleTitle;
+      notificationsToggle.setAttribute('aria-label', text[locale].notificationsToggleTitle);
+      document.querySelector('#notifications-title').textContent = text[locale].notificationsTitle;
+      notificationsEmpty.textContent = text[locale].notificationsEmpty;
+      document.querySelector('#notifications-mark-all-read').textContent = text[locale].notificationsMarkAllRead;
+      document.querySelector('#notifications-close').textContent = text[locale].notificationsClose;
+      renderNotifications(notificationsCache);
     }
 
     form.addEventListener('submit', event => { event.preventDefault(); ask(input.value); });
@@ -2525,6 +2569,107 @@
     // without needing the page reloaded.
     refreshMergesBadge();
     setInterval(refreshMergesBadge, 5 * 60 * 1000);
+
+    // Notification zone (docs/chat-files.md's sibling feature, see
+    // internal/notifications) — a persisted record of every threshold/NOAA
+    // alert that's fired, so one only ever spoken through the speaker or
+    // sent to Telegram isn't gone the moment it's delivered. Unlike the
+    // merges queue, the toggle stays visible once the feature is enabled
+    // even with zero notifications (it's a history view, not a
+    // one-time-decision queue) — only hidden entirely when no
+    // notifications store is configured server-side at all.
+    async function refreshNotificationsBadge() {
+      try {
+        const response = await fetch('/api/notifications');
+        const data = await response.json();
+        if (!data.enabled) {
+          notificationsToggle.hidden = true;
+          notificationsCache = [];
+          return notificationsCache;
+        }
+        notificationsToggle.hidden = false;
+        notificationsCache = Array.isArray(data.notifications) ? data.notifications : [];
+        const unread = data.unread_count || 0;
+        notificationsBadge.hidden = unread === 0;
+        notificationsBadge.textContent = String(unread);
+      } catch {
+        notificationsCache = [];
+      }
+      return notificationsCache;
+    }
+    let notificationsCache = [];
+
+    function formatNotificationTime(iso) {
+      try {
+        return new Date(iso).toLocaleString(language.value === 'ru' ? 'ru-RU' : 'en-US', { dateStyle: 'short', timeStyle: 'short' });
+      } catch {
+        return iso;
+      }
+    }
+
+    function renderNotifications(list) {
+      notificationsList.innerHTML = '';
+      notificationsEmpty.hidden = list.length > 0;
+      list.forEach(n => {
+        const li = document.createElement('li');
+        li.className = n.read ? '' : 'unread';
+        const content = document.createElement('div');
+        content.className = 'notification-content';
+        const title = document.createElement('strong');
+        title.textContent = n.title;
+        const time = document.createElement('span');
+        time.className = 'notification-time';
+        time.textContent = formatNotificationTime(n.at);
+        const body = document.createElement('p');
+        body.textContent = n.body;
+        content.append(title, time, body);
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.textContent = '✕';
+        dismiss.title = text[language.value].notificationsDismissTitle;
+        dismiss.addEventListener('click', event => {
+          event.stopPropagation();
+          dismissNotification(n.id);
+        });
+        li.append(content, dismiss);
+        if (!n.read) {
+          li.addEventListener('click', () => markNotificationRead(n.id));
+        }
+        notificationsList.appendChild(li);
+      });
+    }
+
+    async function markNotificationRead(id) {
+      try {
+        await fetch('/api/notifications/read', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id })
+        });
+      } catch {}
+      renderNotifications(await refreshNotificationsBadge());
+    }
+
+    async function dismissNotification(id) {
+      try {
+        await fetch(`/api/notifications?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      } catch {}
+      renderNotifications(await refreshNotificationsBadge());
+    }
+
+    notificationsToggle.addEventListener('click', async () => {
+      renderNotifications(await refreshNotificationsBadge());
+      notificationsDialog.showModal();
+    });
+    document.querySelector('#notifications-close').addEventListener('click', () => notificationsDialog.close());
+    document.querySelector('#notifications-mark-all-read').addEventListener('click', async () => {
+      try {
+        await fetch('/api/notifications/read', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true })
+        });
+      } catch {}
+      renderNotifications(await refreshNotificationsBadge());
+    });
+    refreshNotificationsBadge();
+    setInterval(refreshNotificationsBadge, 60 * 1000);
 
     // Reflects sessionIsTemporary in the UI — called anywhere that
     // variable changes, including after hydrateHistory sets it from the
