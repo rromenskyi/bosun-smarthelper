@@ -10,10 +10,23 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/backup"
 	"github.com/roman220/bosun-smarthelper/internal/errlog"
 	"github.com/roman220/bosun-smarthelper/internal/llm"
+	"github.com/roman220/bosun-smarthelper/internal/notifications"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
 	"github.com/roman220/bosun-smarthelper/internal/webui"
 )
+
+// notificationDedupWindow bounds how often the *same* recurring
+// background-check failure (a broken embeddings server failing tag
+// normalization every 5 minutes, a bad S3 key failing every backup
+// schedule check) can add a fresh entry to the notification zone —
+// without it, a persistent failure would flood the zone with an
+// identical entry every single tick instead of the one the user actually
+// needs to see. Shared by every AddDeduped call in this file and
+// alerts.go; a genuinely new failure (different title) is never
+// suppressed, and the first occurrence of any failure always gets
+// through immediately.
+const notificationDedupWindow = time.Hour
 
 // runTagNormalizer periodically maps memos' free-form tags onto
 // cfg.Memo.CanonicalTags (see internal/tools/memo_tags.go), but only when
@@ -36,6 +49,7 @@ func runTagNormalizer(
 	interval time.Duration,
 	logger *slog.Logger,
 	errLog *errlog.Logger,
+	notificationStore *notifications.Store,
 ) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -55,6 +69,10 @@ func runTagNormalizer(
 				if err != nil {
 					logger.Warn("memo tag normalization failed", "error", err)
 					errLog.Record("tag_normalize", "memo", err)
+					notificationStore.AddDeduped(notifications.Notification{
+						Source: "tag_normalize", Severity: "warning",
+						Title: "Memo tag normalization failed", Body: err.Error(),
+					}, notificationDedupWindow)
 				} else if updated > 0 {
 					logger.Info("normalized memo tags", "count", updated)
 				}
@@ -77,6 +95,7 @@ func runMetricMergeChecker(
 	interval time.Duration,
 	logger *slog.Logger,
 	errLog *errlog.Logger,
+	notificationStore *notifications.Store,
 ) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -92,6 +111,10 @@ func runMetricMergeChecker(
 				if err != nil {
 					logger.Warn("metric merge check failed", "error", err)
 					errLog.Record("metric_merge", "memo", err)
+					notificationStore.AddDeduped(notifications.Notification{
+						Source: "metric_merge", Severity: "warning",
+						Title: "Metric merge check failed", Body: err.Error(),
+					}, notificationDedupWindow)
 				} else if proposed > 0 {
 					logger.Info("proposed metric merges", "count", proposed)
 				}
@@ -117,6 +140,7 @@ func runBackupScheduler(
 	dataDir string,
 	logger *slog.Logger,
 	errLog *errlog.Logger,
+	notificationStore *notifications.Store,
 ) {
 	const checkInterval = 15 * time.Minute
 	ticker := time.NewTicker(checkInterval)
@@ -134,6 +158,10 @@ func runBackupScheduler(
 			if err != nil {
 				logger.Warn("check backup schedule", "error", err)
 				errLog.Record("backup", "check_schedule", err)
+				notificationStore.AddDeduped(notifications.Notification{
+					Source: "backup", Severity: "warning",
+					Title: "Could not check backup schedule", Body: err.Error(),
+				}, notificationDedupWindow)
 				continue
 			}
 			if !due {
@@ -146,12 +174,20 @@ func runBackupScheduler(
 				if err := backup.BuildArchive(&archive, dataDir); err != nil {
 					logger.Error("build scheduled backup archive", "error", err)
 					errLog.Record("backup", "build_archive", err)
+					notificationStore.AddDeduped(notifications.Notification{
+						Source: "backup", Severity: "warning",
+						Title: "Scheduled backup failed", Body: "Could not build the archive: " + err.Error(),
+					}, notificationDedupWindow)
 					return
 				}
 				key := fmt.Sprintf("bosun-backup-%s.tar.gz", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
 				if err := backup.PutObject(runCtx, s3cfg, key, archive.Bytes(), "application/gzip"); err != nil {
 					logger.Error("upload scheduled backup", "error", err)
 					errLog.Record("backup", "upload", err)
+					notificationStore.AddDeduped(notifications.Notification{
+						Source: "backup", Severity: "warning",
+						Title: "Scheduled backup failed", Body: "Could not upload the archive: " + err.Error(),
+					}, notificationDedupWindow)
 					return
 				}
 				if err := backup.RecordRun(dataDir, time.Now()); err != nil {
@@ -159,6 +195,11 @@ func runBackupScheduler(
 					errLog.Record("backup", "record_run", err)
 				}
 				logger.Info("scheduled backup uploaded", "key", key, "size_bytes", archive.Len())
+				notificationStore.Add(notifications.Notification{
+					Source: "backup", Severity: "info",
+					Title: "Scheduled backup completed",
+					Body:  fmt.Sprintf("%s (%.1f MB)", key, float64(archive.Len())/1e6),
+				})
 			})
 		}
 	}

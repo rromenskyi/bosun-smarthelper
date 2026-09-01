@@ -229,6 +229,10 @@ func runThresholdChecker(
 	if err != nil {
 		logger.Warn("load threshold alert state; starting fresh", "error", err)
 		errLog.Record("threshold_alert", "load_state", err)
+		notificationStore.AddDeduped(notifications.Notification{
+			Source: "threshold_alert", Severity: "warning",
+			Title: "Could not load threshold alert state", Body: err.Error(),
+		}, notificationDedupWindow)
 		state = map[string]bool{}
 	}
 
@@ -260,11 +264,19 @@ func runThresholdChecker(
 			for _, err := range errs {
 				logger.Warn("threshold alert check", "error", err)
 				errLog.Record("threshold_alert", "check", err)
+				notificationStore.AddDeduped(notifications.Notification{
+					Source: "threshold_alert", Severity: "warning",
+					Title: "Threshold alert check failed", Body: err.Error(),
+				}, notificationDedupWindow)
 			}
 			state = next
 			if err := alerts.SaveThresholdState(dataDir, state); err != nil {
 				logger.Warn("save threshold alert state", "error", err)
 				errLog.Record("threshold_alert", "save_state", err)
+				notificationStore.AddDeduped(notifications.Notification{
+					Source: "threshold_alert", Severity: "warning",
+					Title: "Could not save threshold alert state", Body: err.Error(),
+				}, notificationDedupWindow)
 			}
 		}
 	}
@@ -289,6 +301,10 @@ func runNOAAChecker(
 	if err != nil {
 		logger.Warn("load NOAA alert state; starting fresh", "error", err)
 		errLog.Record("noaa_alert", "load_state", err)
+		notificationStore.AddDeduped(notifications.Notification{
+			Source: "noaa_alert", Severity: "warning",
+			Title: "Could not load NOAA alert state", Body: err.Error(),
+		}, notificationDedupWindow)
 		seen = map[string]bool{}
 	}
 
@@ -307,6 +323,10 @@ func runNOAAChecker(
 			if err != nil {
 				logger.Warn("resolve position for NOAA alerts", "error", err)
 				errLog.Record("noaa_alert", "resolve_position", err)
+				notificationStore.AddDeduped(notifications.Notification{
+					Source: "noaa_alert", Severity: "warning",
+					Title: "Could not resolve position for NOAA alerts", Body: err.Error(),
+				}, notificationDedupWindow)
 				continue
 			}
 			notifiers := noaaAlertNotifiers(cfg, settingsStore, ttsEngine, logger, notificationStore)
@@ -314,11 +334,19 @@ func runNOAAChecker(
 			for _, err := range errs {
 				logger.Warn("NOAA alert check", "error", err)
 				errLog.Record("noaa_alert", "check", err)
+				notificationStore.AddDeduped(notifications.Notification{
+					Source: "noaa_alert", Severity: "warning",
+					Title: "NOAA alert check failed", Body: err.Error(),
+				}, notificationDedupWindow)
 			}
 			seen = next
 			if err := alerts.SaveNOAASeenIDs(dataDir, seen); err != nil {
 				logger.Warn("save NOAA alert state", "error", err)
 				errLog.Record("noaa_alert", "save_state", err)
+				notificationStore.AddDeduped(notifications.Notification{
+					Source: "noaa_alert", Severity: "warning",
+					Title: "Could not save NOAA alert state", Body: err.Error(),
+				}, notificationDedupWindow)
 			}
 		}
 	}

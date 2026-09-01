@@ -197,6 +197,40 @@ mark it read or ✕ to dismiss it entirely. `GET /api/notifications` (list
 `enabled: false` rather than erroring when no store is configured, the
 same shape as the other optional web UI features.
 
+### Beyond threshold/NOAA alerts: background job completions and failures
+
+The zone also records two other categories, on the reasoning that
+something is "important" here if it either (a) has *no other visibility*
+in the web UI at all, or (b) genuinely indicates a malfunction or
+data-loss risk rather than routine/expected state (a GPS tool reporting
+"no fix yet" doesn't qualify; a scheduled backup failing to upload does):
+
+- **Filedump RAG ingestion** (`internal/webui/filedump.go`'s
+  `notifyFileDumpIngest`) — a background upload's completion, success or
+  failure, previously only showed as a badge in the file browser someone
+  had to think to go check. One notification per real upload; no flood
+  risk since uploads aren't a recurring tick.
+- **Background scheduler failures** — `runTagNormalizer`,
+  `runMetricMergeChecker`, `runBackupScheduler`
+  (`cmd/smarthelper/background.go`), and the threshold/NOAA checkers'
+  *own* infrastructure failures (loading/saving state, resolving
+  position) as opposed to the alerts they detect. A completed *scheduled*
+  backup also gets a plain info notification — the one bit of "did it
+  actually work" confirmation beyond checking S3 directly. Routine
+  per-turn tool/LLM errors are deliberately excluded: the user already
+  sees those live in the conversation the moment they happen, so
+  duplicating them into the zone would just be noise.
+
+Every one of these recurring-ticker failures goes through
+`notifications.Store.AddDeduped` (`notificationDedupWindow`, currently
+1 hour) rather than plain `Add` — a threshold check ticks every 30s, a
+backup schedule check every 15 minutes, so a persistent failure (a dead
+embeddings server, bad S3 credentials) would otherwise flood the zone
+with an identical entry every single tick instead of the one the user
+actually needs to see. The first occurrence always gets through
+immediately; a genuinely different failure (different title) is never
+suppressed regardless of the window.
+
 ## Settings page
 
 Once a channel is configured, the settings page's "Алерты"/"Alerts" tab

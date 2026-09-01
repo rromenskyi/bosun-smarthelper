@@ -309,13 +309,13 @@ func serveCmd() *cobra.Command {
 					if err != nil || interval <= 0 {
 						interval = 5 * time.Minute
 					}
-					go runTagNormalizer(cmd.Context(), server, mt, router, settingsStore, interval, logger, errLog)
+					go runTagNormalizer(cmd.Context(), server, mt, router, settingsStore, interval, logger, errLog, notificationStore)
 
 					mergeInterval, err := time.ParseDuration(cfg.Memo.MetricMergeCheckInterval)
 					if err != nil || mergeInterval <= 0 {
 						mergeInterval = 24 * time.Hour
 					}
-					go runMetricMergeChecker(cmd.Context(), server, mt, router, mergeInterval, logger, errLog)
+					go runMetricMergeChecker(cmd.Context(), server, mt, router, mergeInterval, logger, errLog, notificationStore)
 				}
 			}
 
@@ -325,7 +325,7 @@ func serveCmd() *cobra.Command {
 				logger.Warn("could not resolve backup data directory; backup disabled", "error", err)
 			} else {
 				server.SetBackupConfig(&s3cfg, dataDir)
-				go runBackupScheduler(cmd.Context(), server, settingsStore, s3cfg, dataDir, logger, errLog)
+				go runBackupScheduler(cmd.Context(), server, settingsStore, s3cfg, dataDir, logger, errLog, notificationStore)
 			}
 
 			server.SetAlertsConfigured(
