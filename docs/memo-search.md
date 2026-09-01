@@ -127,6 +127,20 @@ detector requires a line to repeat on at least 2 pages, not just clear
 the fraction, so a short single page's own unique content is never
 mistaken for boilerplate.
 
+Every rendered/uploaded image (a diagram-only PDF page or a standalone
+image upload) is auto-rotated before OCR runs on it:
+`correctPageOrientation` calls `tesseract --psm 0` (orientation/script
+detection, needs the separate `tesseract-ocr-data-osd` package — see the
+Dockerfile) to read the image's `Rotate: N` line, then applies that many
+degrees of clockwise rotation with a small pure-Go transpose
+(`rotateImageFile`/`rotateImage90CW` — no ImageMagick dependency, since
+OSD only ever reports exact 90° multiples so no interpolation is
+needed). A scanned page that came out of a scanner sideways or upside
+down is OCR'd correctly instead of returning garbage or nothing.
+Detection is best-effort: OSD can fail outright on a diagram-heavy,
+low-text image ("Too few characters..."), and that's treated as "no
+rotation needed" rather than an ingestion failure.
+
 `POST /api/documents/pages` is a separate, script-only ingestion path
 (JSON body: `{"title", "pages": [{"text", "image_url"}]}`, no UI button)
 for a bulk import that already has its own pre-segmented pages and image

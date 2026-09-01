@@ -3,6 +3,9 @@ package webui
 import (
 	"context"
 	"encoding/base64"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -297,6 +300,133 @@ func TestIngestStandaloneImageWritesFileAndReturnsPage(t *testing.T) {
 	if string(data) != string(onePixelPNG) {
 		t.Error("saved image bytes don't match the uploaded content")
 	}
+}
+
+func TestRotateLineRERecognizesTesseractOSDOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want string
+	}{
+		{
+			name: "no rotation needed",
+			out:  "Page number: 0\nOrientation in degrees: 0\nRotate: 0\nOrientation confidence: 8.72\nScript: Latin\nScript confidence: 2.93\n",
+			want: "0",
+		},
+		{
+			name: "rotated 90 detected",
+			out:  "Page number: 0\nOrientation in degrees: 90\nRotate: 270\nOrientation confidence: 5.81\nScript: Latin\nScript confidence: 3.79\n",
+			want: "270",
+		},
+	}
+	for _, c := range cases {
+		match := rotateLineRE.FindStringSubmatch(c.out)
+		if match == nil {
+			t.Fatalf("%s: rotateLineRE found no match in %q", c.name, c.out)
+		}
+		if match[1] != c.want {
+			t.Errorf("%s: rotateLineRE captured %q, want %q", c.name, match[1], c.want)
+		}
+	}
+}
+
+func TestRotateImage90CWRotatesPixelsAndSwapsDimensions(t *testing.T) {
+	// A 2x1 image: left pixel red, right pixel blue. Rotating 90 clockwise
+	// should produce a 1x2 image with red on top, blue on bottom.
+	src := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	src.Set(0, 0, color.RGBA{R: 255, A: 255})
+	src.Set(1, 0, color.RGBA{B: 255, A: 255})
+
+	rotated := rotateImage90CW(src)
+
+	bounds := rotated.Bounds()
+	if bounds.Dx() != 1 || bounds.Dy() != 2 {
+		t.Fatalf("rotated bounds = %v, want 1x2", bounds)
+	}
+	r, g, b, a := rotated.At(0, 0).RGBA()
+	if r>>8 != 255 || g>>8 != 0 || b>>8 != 0 || a>>8 != 255 {
+		t.Errorf("top pixel = (%d,%d,%d,%d), want red", r>>8, g>>8, b>>8, a>>8)
+	}
+	r, g, b, a = rotated.At(0, 1).RGBA()
+	if r>>8 != 0 || g>>8 != 0 || b>>8 != 255 || a>>8 != 255 {
+		t.Errorf("bottom pixel = (%d,%d,%d,%d), want blue", r>>8, g>>8, b>>8, a>>8)
+	}
+}
+
+func TestRotateImageFileEndToEnd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rotate.png")
+
+	// 2x1: left red, right blue — same fixture as above, written to disk.
+	src := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	src.Set(0, 0, color.RGBA{R: 255, A: 255})
+	src.Set(1, 0, color.RGBA{B: 255, A: 255})
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := png.Encode(f, src); err != nil {
+		f.Close()
+		t.Fatalf("encode: %v", err)
+	}
+	f.Close()
+
+	if err := rotateImageFile(path, 90); err != nil {
+		t.Fatalf("rotateImageFile: %v", err)
+	}
+
+	f, err = os.Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer f.Close()
+	got, _, err := image.Decode(f)
+	if err != nil {
+		t.Fatalf("decode rotated file: %v", err)
+	}
+	bounds := got.Bounds()
+	if bounds.Dx() != 1 || bounds.Dy() != 2 {
+		t.Fatalf("rotated file bounds = %v, want 1x2", bounds)
+	}
+	r, _, _, _ := got.At(0, 0).RGBA()
+	if r>>8 != 255 {
+		t.Errorf("top pixel red channel = %d, want 255 (red on top after 90CW)", r>>8)
+	}
+}
+
+func TestRotateImageFileDegreesZeroIsNoOp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "norotate.png")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := png.Encode(f, onePixelImage()); err != nil {
+		f.Close()
+		t.Fatalf("encode: %v", err)
+	}
+	f.Close()
+
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+
+	if err := rotateImageFile(path, 0); err != nil {
+		t.Fatalf("rotateImageFile: %v", err)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Error("rotateImageFile(0) modified the file; want a no-op")
+	}
+}
+
+func onePixelImage() image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{G: 255, A: 255})
+	return img
 }
 
 func TestValidOCRLanguage(t *testing.T) {

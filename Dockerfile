@@ -51,6 +51,11 @@ FROM alpine:edge
 # language data, matching this deployment's chat languages) then reads text
 # off that rendered image, so a scanned page is still searchable by its
 # actual content instead of just a generic page-number label.
+# tesseract-ocr-data-osd: orientation/script detection data — a separate
+# trained-data file from any language pack, needed for `tesseract --psm 0`
+# (ocrImage's rotation-detection pass) to run at all; without it tesseract
+# fails outright with "Failed loading language 'osd'" rather than just
+# skipping detection.
 #
 # bosun is uid/gid 1000 specifically to match this host's own user
 # (roman220) — persistent data is bind-mounted from a plain host directory
@@ -68,7 +73,7 @@ FROM alpine:edge
 # alsa-utils: provides aplay, the default alerts.channels.speaker player
 # (internal/alerts/speaker.go) — needs the host's /dev/snd and "audio"
 # group passed through too, see docker-compose.yml and docs/alerts.md.
-RUN apk add --no-cache ca-certificates poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-rus onnxruntime ffmpeg alsa-utils && \
+RUN apk add --no-cache ca-certificates poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-rus tesseract-ocr-data-osd onnxruntime ffmpeg alsa-utils && \
     addgroup -g 1000 bosun && adduser -S -u 1000 -G bosun -h /home/bosun -s /sbin/nologin bosun && \
     mkdir -p /home/bosun/.local/share/bosun && \
     chown -R bosun:bosun /home/bosun

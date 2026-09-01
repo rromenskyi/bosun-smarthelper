@@ -6,6 +6,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"image"
+	_ "image/gif" // registers the GIF decoder with image.Decode, for a rotated standalone GIF upload
+	_ "image/jpeg" // same, for JPEG
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,6 +78,7 @@ func extractPDFPages(ctx context.Context, pdfBytes []byte, imagesDir, imageURLPr
 		if err != nil {
 			return nil, err
 		}
+		correctPageOrientation(ctx, imagePath)
 		pageText := fmt.Sprintf("Page %d (diagram or scanned image, no text recognized)", page)
 		if ocrText, err := ocrImage(ctx, imagePath, ocrLanguage); err == nil && len(strings.TrimSpace(ocrText)) > 0 {
 			pageText = documents.CleanOCRText(fmt.Sprintf("Page %d (OCR)\n\n%s", page, strings.TrimSpace(ocrText)))
@@ -226,6 +231,100 @@ func ocrImage(ctx context.Context, imagePath, language string) (string, error) {
 	return string(out), nil
 }
 
+// rotateLineRE matches tesseract --psm 0's "Rotate: N" output line — the
+// clockwise degrees needed to correct the image's orientation (always
+// one of 0/90/180/270, tesseract's OSD never reports anything else).
+var rotateLineRE = regexp.MustCompile(`(?m)^Rotate:\s*(-?\d+)`)
+
+// detectRotation runs tesseract's orientation/script detection pass
+// (--psm 0, needs the separate tesseract-ocr-data-osd package — see
+// Dockerfile) and returns the clockwise degrees needed to correct
+// imagePath, or 0 if detection didn't produce a usable answer. That's
+// not a hard error: OSD needs enough recognizable glyph shapes to work
+// at all, and routinely fails outright ("Too few characters...") on a
+// diagram-heavy page with little or no text — exactly the kind of page
+// this OCR path exists for — in which case "leave it as-is" is already
+// the right behavior, the same as before rotation detection existed.
+func detectRotation(ctx context.Context, imagePath string) int {
+	out, err := exec.CommandContext(ctx, "tesseract", imagePath, "-", "-l", "osd", "--psm", "0").Output()
+	if err != nil {
+		return 0
+	}
+	match := rotateLineRE.FindSubmatch(out)
+	if match == nil {
+		return 0
+	}
+	degrees, err := strconv.Atoi(string(match[1]))
+	if err != nil {
+		return 0
+	}
+	return ((degrees % 360) + 360) % 360
+}
+
+// correctPageOrientation detects and corrects imagePath's rotation
+// in-place before OCR/serving it — a rotated diagram (e.g. a wide
+// landscape exploded view embedded sideways in a portrait-page PDF,
+// confirmed to exist in real manuals this app has ingested) would
+// otherwise both OCR poorly (tesseract's default page segmentation
+// assumes roughly upright text) and display sideways to whoever views
+// the served image_url. Best-effort: a detection or rotation failure
+// just leaves the image as tesseract/the source produced it, matching
+// how a failed OCR pass is already tolerated rather than aborting
+// ingestion.
+func correctPageOrientation(ctx context.Context, imagePath string) {
+	rotation := detectRotation(ctx, imagePath)
+	if rotation == 0 {
+		return
+	}
+	_ = rotateImageFile(imagePath, rotation)
+}
+
+// rotateImageFile decodes the image at path, rotates it clockwise by
+// degrees (must be a multiple of 90 — tesseract's OSD is the only
+// caller, and never reports anything else), and overwrites path with
+// the rotated image re-encoded as PNG. Pure Go (image/png), no external
+// tool: a fixed 90/180/270 rotation is just an index transpose, nothing
+// arbitrary-angle rotation's interpolation math is needed for.
+func rotateImageFile(path string, degrees int) error {
+	steps := (degrees / 90) % 4
+	if steps == 0 {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open image to rotate: %w", err)
+	}
+	img, _, err := image.Decode(f)
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("decode image to rotate: %w", err)
+	}
+	for i := 0; i < steps; i++ {
+		img = rotateImage90CW(img)
+	}
+	out, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create rotated image: %w", err)
+	}
+	defer out.Close()
+	if err := png.Encode(out, img); err != nil {
+		return fmt.Errorf("encode rotated image: %w", err)
+	}
+	return nil
+}
+
+func rotateImage90CW(img image.Image) image.Image {
+	bounds := img.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	rotated := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			rotated.Set(h-1-y, x, img.At(bounds.Min.X+x, bounds.Min.Y+y))
+		}
+	}
+	return rotated
+}
+
 func randomHex(n int) (string, error) {
 	buf := make([]byte, n)
 	if _, err := rand.Read(buf); err != nil {
@@ -279,6 +378,7 @@ func ingestStandaloneImage(ctx context.Context, content []byte, ext, imagesDir, 
 	if err := os.WriteFile(imagePath, content, 0o600); err != nil {
 		return nil, fmt.Errorf("write image: %w", err)
 	}
+	correctPageOrientation(ctx, imagePath)
 	imageURL := imageURLPrefix + filepath.Base(imagePath)
 	text := "Diagram (no text recognized)"
 	if ocrText, err := ocrImage(ctx, imagePath, ocrLanguage); err == nil && len(strings.TrimSpace(ocrText)) > 0 {
