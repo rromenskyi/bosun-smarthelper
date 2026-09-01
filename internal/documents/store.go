@@ -170,6 +170,79 @@ func (s *Store) AddPages(ctx context.Context, title string, pages []PageInput, s
 	return summarize(record), nil
 }
 
+// DocumentSpec is one document to add via AddManyPages — the same shape
+// AddPages takes per call.
+type DocumentSpec struct {
+	Title      string
+	Pages      []PageInput
+	SourcePath string
+}
+
+// AddManyPages embeds and adds every spec, exactly as a loop of AddPages
+// calls would, but performs a single mutate/save for the whole batch
+// instead of one per document. The real cost of a write is the full-file
+// re-encode+fsync (see mutate/save) — proportional to the *whole* store's
+// size, not to what changed — so collapsing N documents into one flush
+// turns N full-file rewrites into one. A bulk import of many small
+// documents (e.g. examples/import-manual's per-diagram uploads) is
+// exactly this shape.
+//
+// All-or-nothing on validation: every spec's title/pages are checked
+// before anything is embedded, so a bad entry partway through a large
+// batch fails before wasting embedding calls on the entries before it —
+// but note this is not transactional against a partial embedding
+// *failure*: an individual page whose Embed call errors just gets no
+// vector (falls back to substring search for that chunk), the same
+// per-page tolerance AddPages already has, it isn't a reason to fail the
+// whole batch.
+func (s *Store) AddManyPages(ctx context.Context, specs []DocumentSpec) ([]Summary, error) {
+	if len(specs) == 0 {
+		return nil, fmt.Errorf("at least one document is required")
+	}
+	titles := make([]string, len(specs))
+	for i, spec := range specs {
+		title := strings.TrimSpace(spec.Title)
+		if title == "" {
+			return nil, fmt.Errorf("document %d: title is required", i)
+		}
+		if len(spec.Pages) == 0 {
+			return nil, fmt.Errorf("document %d (%q): has no pages", i, title)
+		}
+		titles[i] = title
+	}
+
+	records := make([]Record, len(specs))
+	for i, spec := range specs {
+		id, err := newID()
+		if err != nil {
+			return nil, fmt.Errorf("generate document id: %w", err)
+		}
+		record := Record{ID: id, Title: titles[i], CreatedAt: time.Now().Format(time.RFC3339), SourcePath: spec.SourcePath}
+		for _, page := range spec.Pages {
+			chunk := Chunk{Text: page.Text, ImageURL: page.ImageURL}
+			if s.embed != nil && strings.TrimSpace(page.Text) != "" {
+				if vector, err := s.embed.Embed(ctx, page.Text); err == nil {
+					chunk.Embedding = vector
+				}
+			}
+			record.Chunks = append(record.Chunks, chunk)
+		}
+		records[i] = record
+	}
+
+	summaries := make([]Summary, len(records))
+	if err := s.mutate(func(cache map[string]Record) error {
+		for i, record := range records {
+			cache[record.ID] = record
+			summaries[i] = summarize(record)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return summaries, nil
+}
+
 // List returns all documents, newest first.
 func (s *Store) List() ([]Summary, error) {
 	cache, err := s.snapshot()

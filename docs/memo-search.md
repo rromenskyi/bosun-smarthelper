@@ -142,15 +142,25 @@ low-text image ("Too few characters..."), and that's treated as "no
 rotation needed" rather than an ingestion failure.
 
 `POST /api/documents/pages` is a separate, script-only ingestion path
-(JSON body: `{"title", "pages": [{"text", "image_url"}]}`, no UI button)
-for a bulk import that already has its own pre-segmented pages and image
-files — e.g. an HTML-based manual site's pages, where the importer script
-copies image files directly into `ImagesDir()` and references them by the
-resulting `/document-images/...` path. `examples/import-manual/` is the
-reusable version of the pipeline that loaded the CHARM Ford E-350 service
-manual this way: one document per manual chapter, text pages chunked
-normally, diagram pages (e.g. the fuse panel charts under Power and
-Ground Distribution) OCR'd and added with their original image plus a
+(JSON body: `{"documents": [{"title", "pages": [{"text", "image_url"}]}]}`,
+no UI button) for a bulk import that already has its own pre-segmented
+pages and image files — e.g. an HTML-based manual site's pages, where the
+importer script copies image files directly into `ImagesDir()` and
+references them by the resulting `/document-images/...` path. The whole
+batch is added in one call to `documents.Store.AddManyPages`, which does a
+single disk flush for every document in the request instead of one per
+document — see its doc comment; an overnight review measured a single
+write against the live store at ~1.7s pre-optimization, and a bulk import
+is exactly N of those back to back if each document round-trips on its
+own. `examples/import-manual/` is the reusable version of the pipeline
+that loaded the CHARM Ford E-350 service manual this way (though that
+script itself now uploads through `POST /api/files/upload` instead, one
+file at a time, so its files also land in the browsable filedump tree —
+see docs/filedump.md — this endpoint remains for a caller that only wants
+RAG entries with no raw file storage): one document per manual chapter,
+text pages chunked normally, diagram pages (e.g. the fuse panel charts
+under Power and Ground Distribution) OCR'd and added with their original
+image plus a
 caption as text — see that directory's README for prerequisites and how
 to point it at a different manual.
 

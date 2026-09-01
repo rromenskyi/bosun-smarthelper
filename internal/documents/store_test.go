@@ -390,6 +390,105 @@ func TestStoreConcurrentAccessDoesNotRace(t *testing.T) {
 	}
 }
 
+func TestAddManyPagesAddsEveryDocumentInOneCall(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	ctx := context.Background()
+
+	summaries, err := store.AddManyPages(ctx, []DocumentSpec{
+		{Title: "First", Pages: []PageInput{{Text: "fuse panel diagram"}}, SourcePath: "manuals/a"},
+		{Title: "Second", Pages: []PageInput{{Text: "wiring page one"}, {Text: "wiring page two"}}, SourcePath: "manuals/b"},
+	})
+	if err != nil {
+		t.Fatalf("AddManyPages: %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("summaries = %d, want 2", len(summaries))
+	}
+	if summaries[0].Title != "First" || summaries[0].ChunkCount != 1 || summaries[0].SourcePath != "manuals/a" {
+		t.Errorf("summaries[0] = %#v", summaries[0])
+	}
+	if summaries[1].Title != "Second" || summaries[1].ChunkCount != 2 || summaries[1].SourcePath != "manuals/b" {
+		t.Errorf("summaries[1] = %#v", summaries[1])
+	}
+	if summaries[0].ID == summaries[1].ID {
+		t.Error("both documents got the same ID")
+	}
+
+	list, err := store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("List() = %d documents, want 2", len(list))
+	}
+}
+
+func TestAddManyPagesRejectsEmptyBatch(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	if _, err := store.AddManyPages(context.Background(), nil); err == nil {
+		t.Error("expected an error for an empty batch")
+	}
+}
+
+// TestAddManyPagesValidatesEveryDocumentBeforeAddingAny locks in the
+// all-or-nothing contract: a bad entry anywhere in the batch must leave
+// the store completely untouched, not partially populated by whatever
+// came before it.
+func TestAddManyPagesValidatesEveryDocumentBeforeAddingAny(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	ctx := context.Background()
+
+	_, err := store.AddManyPages(ctx, []DocumentSpec{
+		{Title: "Valid", Pages: []PageInput{{Text: "real content"}}},
+		{Title: "", Pages: []PageInput{{Text: "irrelevant"}}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a spec with a blank title")
+	}
+
+	list, err := store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("List() = %#v, want empty — a failed batch must add nothing", list)
+	}
+}
+
+func TestAddManyPagesRejectsDocumentWithNoPages(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "documents.json"), nil)
+	_, err := store.AddManyPages(context.Background(), []DocumentSpec{
+		{Title: "Empty", Pages: nil},
+	})
+	if err == nil {
+		t.Error("expected an error for a document with no pages")
+	}
+}
+
+// TestAddManyPagesWritesSurviveFreshInstance guards that a batched write
+// is persisted just as durably as AddPages's per-document write — the
+// whole point of batching is skipping *redundant* flushes, not skipping
+// the flush itself.
+func TestAddManyPagesWritesSurviveFreshInstance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "documents.json")
+	first := NewStore(path, nil)
+	if _, err := first.AddManyPages(context.Background(), []DocumentSpec{
+		{Title: "A", Pages: []PageInput{{Text: "content a"}}},
+		{Title: "B", Pages: []PageInput{{Text: "content b"}}},
+	}); err != nil {
+		t.Fatalf("AddManyPages: %v", err)
+	}
+
+	second := NewStore(path, nil)
+	list, err := second.List()
+	if err != nil {
+		t.Fatalf("List from fresh instance: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("list from fresh instance = %d documents, want 2", len(list))
+	}
+}
+
 func TestStoreImagesDirIsSiblingOfStoreFile(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "documents.json"), nil)

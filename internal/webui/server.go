@@ -36,10 +36,13 @@ import (
 
 const maxRequestBody = 16 * 1024
 
-// maxDocumentUploadBytes bounds a reference-document upload (e.g. a car
-// manual as plain text) — generous compared to maxRequestBody's normal chat
-// message cap, but still bounded.
-const maxDocumentUploadBytes = 2 << 20
+// maxDocumentUploadBytes bounds a POST /api/documents/pages request body —
+// a batch of pre-segmented documents (title + page text/image URLs, no raw
+// image bytes; see handleDocumentAddPages), generous compared to
+// maxRequestBody's normal chat message cap but still bounded. Raised from
+// the single-document endpoint's original 2MB once the endpoint started
+// accepting a whole batch in one call.
+const maxDocumentUploadBytes = 16 << 20
 
 //go:embed index.html
 var indexHTML []byte
@@ -1086,11 +1089,13 @@ func (s *Server) handleDocumentsList(w http.ResponseWriter, r *http.Request) {
 var pdfMagic = []byte("%PDF-")
 
 type addPagesRequest struct {
-	Title string `json:"title"`
-	Pages []struct {
-		Text     string `json:"text"`
-		ImageURL string `json:"image_url"`
-	} `json:"pages"`
+	Documents []struct {
+		Title string `json:"title"`
+		Pages []struct {
+			Text     string `json:"text"`
+			ImageURL string `json:"image_url"`
+		} `json:"pages"`
+	} `json:"documents"`
 }
 
 // handleDocumentAddPages is a scripted/advanced ingestion path (no UI
@@ -1099,6 +1104,13 @@ type addPagesRequest struct {
 // site's HTML pages and copied its diagram images into documentImagesDir
 // itself. Ordinary uploads go through handleFileDumpUpload instead (see
 // filedump.go), with add_to_rag=true.
+//
+// Takes a batch of documents in one call, not one per request: this
+// endpoint's whole reason to exist is bulk import, and
+// documents.Store.AddManyPages does a single disk flush for the entire
+// batch instead of one per document — see its doc comment for why that
+// matters once a batch runs into the hundreds/thousands (an
+// overnight-review finding, not a hypothetical).
 func (s *Server) handleDocumentAddPages(w http.ResponseWriter, r *http.Request) {
 	if s.documents == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "document search is not configured"})
@@ -1112,23 +1124,27 @@ func (s *Server) handleDocumentAddPages(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
-	if len(request.Pages) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "pages is required"})
+	if len(request.Documents) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "documents is required"})
 		return
 	}
-	pages := make([]documents.PageInput, len(request.Pages))
-	for i, p := range request.Pages {
-		pages[i] = documents.PageInput{Text: p.Text, ImageURL: p.ImageURL}
+	specs := make([]documents.DocumentSpec, len(request.Documents))
+	for i, doc := range request.Documents {
+		pages := make([]documents.PageInput, len(doc.Pages))
+		for j, p := range doc.Pages {
+			pages[j] = documents.PageInput{Text: p.Text, ImageURL: p.ImageURL}
+		}
+		specs[i] = documents.DocumentSpec{Title: doc.Title, Pages: pages}
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
 	defer cancel()
-	summary, err := s.documents.AddPages(ctx, request.Title, pages, "")
+	summaries, err := s.documents.AddManyPages(ctx, specs)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, summary)
+	writeJSON(w, http.StatusOK, map[string]any{"documents": summaries})
 }
 
 func (s *Server) handleDocumentDelete(w http.ResponseWriter, r *http.Request) {

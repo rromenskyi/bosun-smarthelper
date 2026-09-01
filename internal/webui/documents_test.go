@@ -87,7 +87,7 @@ func TestServerDocumentAddPagesAndServeImage(t *testing.T) {
 		t.Fatalf("write fake image: %v", err)
 	}
 
-	payload := `{"title":"Fuse diagrams","pages":[{"text":"Fuse panel diagram","image_url":"/document-images/fuse-panel.png"}]}`
+	payload := `{"documents":[{"title":"Fuse diagrams","pages":[{"text":"Fuse panel diagram","image_url":"/document-images/fuse-panel.png"}]}]}`
 	request := httptest.NewRequest(http.MethodPost, "/api/documents/pages", strings.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -104,5 +104,66 @@ func TestServerDocumentAddPagesAndServeImage(t *testing.T) {
 	}
 	if imageResponse.Body.String() != "fake-png-bytes" {
 		t.Errorf("image body = %q", imageResponse.Body.String())
+	}
+}
+
+// TestServerDocumentAddPagesAcceptsABatch guards the endpoint's actual
+// reason to exist post-batching: several documents in one request must
+// all land, and the response must report all of them (not just the last
+// or first one).
+func TestServerDocumentAddPagesAcceptsABatch(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
+
+	payload := `{"documents":[
+		{"title":"Chapter One","pages":[{"text":"first chapter content"}]},
+		{"title":"Chapter Two","pages":[{"text":"second chapter content"},{"text":"more content"}]}
+	]}`
+	request := httptest.NewRequest(http.MethodPost, "/api/documents/pages", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("add pages status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	var decoded struct {
+		Documents []struct {
+			Title      string `json:"title"`
+			ChunkCount int    `json:"chunk_count"`
+		} `json:"documents"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(decoded.Documents) != 2 {
+		t.Fatalf("response documents = %d, want 2: %s", len(decoded.Documents), response.Body.String())
+	}
+	if decoded.Documents[0].Title != "Chapter One" || decoded.Documents[0].ChunkCount != 1 {
+		t.Errorf("documents[0] = %#v", decoded.Documents[0])
+	}
+	if decoded.Documents[1].Title != "Chapter Two" || decoded.Documents[1].ChunkCount != 2 {
+		t.Errorf("documents[1] = %#v", decoded.Documents[1])
+	}
+
+	list, err := server.documents.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("store has %d documents, want 2", len(list))
+	}
+}
+
+func TestServerDocumentAddPagesRejectsEmptyDocumentsList(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.SetDocumentStore(documents.NewStore(filepath.Join(t.TempDir(), "documents.json"), nil))
+
+	request := httptest.NewRequest(http.MethodPost, "/api/documents/pages", strings.NewReader(`{"documents":[]}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for an empty documents list", response.Code)
 	}
 }
