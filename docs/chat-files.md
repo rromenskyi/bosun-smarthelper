@@ -1,12 +1,25 @@
 # Chat file attachments
 
-A 📎 button next to the chat compose bar (plus drag-and-drop onto it) for
-attaching a file directly to a message — a photo, a PDF, a short text
-file — as scratch input for that conversation, distinct from
-`filedump.md`'s permanent, browsable file tree. Nothing happens to the
-file automatically: it's up to the model, via the `chat_file` tool, once
-the user's message says what to do with it ("add this to the fuse panel
-note", "add this to search as 'generator manual'").
+Three ways to attach a file directly to a message — a photo, a PDF, a
+short text file — as scratch input for that conversation, distinct from
+`filedump.md`'s permanent, browsable file tree:
+
+- A 📎 button next to the compose bar (opens a file picker).
+- Drag-and-drop anywhere on the page, not just the compose bar — the
+  whole window is the drop target (with a page-wide `preventDefault` so
+  an errant drop never navigates the browser away to the file instead).
+- Paste (e.g. a screenshot copied from another app) directly into the
+  message box. A pasted file has no real name, and browsers reuse the
+  same generic one ("image.png") for every paste in a session, so it's
+  renamed to something unique (`pasted-<timestamp>.<ext>`) before
+  upload — otherwise a second pasted screenshot would silently overwrite
+  the first one still waiting to be claimed (see chatfiles.Store.Save's
+  same-name-replaces behavior).
+
+Nothing happens to the file automatically: it's up to the model, via the
+`chat_file` tool, once the user's message says what to do with it ("add
+this to the fuse panel note", "add this to search as 'generator
+manual'").
 
 ## Why a separate store from filedump
 

@@ -876,17 +876,57 @@
       }
       chatFileInput.value = '';
     });
-    for (const eventName of ['dragover', 'dragleave', 'drop']) {
-      form.addEventListener(eventName, event => {
-        if (!event.dataTransfer || !event.dataTransfer.types.includes('Files')) return;
+
+    // Drop target is the whole page, not just the composer — dropping a
+    // file even slightly outside a small compose bar is easy to miss, and
+    // without a page-wide preventDefault the browser's *default* behavior
+    // for a drop anywhere it isn't explicitly handled is to navigate away
+    // to that file, discarding the whole chat. dragleave is deliberately
+    // not handled per-element (only drop and dragend clear the
+    // highlight) — tracking enter/leave across every child element without
+    // flicker needs a counter for little practical benefit here.
+    for (const eventName of ['dragover', 'drop']) {
+      window.addEventListener(eventName, event => {
+        if (!event.dataTransfer || !Array.from(event.dataTransfer.types || []).includes('Files')) return;
         event.preventDefault();
-        document.querySelector('.composer').classList.toggle('drag-over', eventName === 'dragover');
-        if (eventName !== 'drop') return;
-        for (const file of event.dataTransfer.files) {
-          uploadChatFile(file);
-        }
       });
     }
+    document.body.addEventListener('dragover', event => {
+      if (!event.dataTransfer || !event.dataTransfer.types.includes('Files')) return;
+      document.querySelector('.composer').classList.add('drag-over');
+    });
+    document.body.addEventListener('dragend', () => {
+      document.querySelector('.composer').classList.remove('drag-over');
+    });
+    document.body.addEventListener('drop', event => {
+      if (!event.dataTransfer || !event.dataTransfer.types.includes('Files')) return;
+      document.querySelector('.composer').classList.remove('drag-over');
+      for (const file of event.dataTransfer.files) {
+        uploadChatFile(file);
+      }
+    });
+
+    // Clipboard paste — e.g. a screenshot copied from another app — is
+    // uploaded the same way a dropped/picked file is. A pasted image's
+    // File.name is a generic browser-assigned one ("image.png" in
+    // Chrome), identical across separate pastes in the same session,
+    // which would otherwise silently overwrite an earlier pasted image
+    // still waiting to be claimed (chatfiles.Store.Save treats a
+    // same-name re-upload as "replace what I just sent") — renamed to
+    // something unique before uploading so two different pastes never
+    // collide.
+    input.addEventListener('paste', event => {
+      const items = event.clipboardData && event.clipboardData.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        if (!file) continue;
+        event.preventDefault();
+        const ext = (file.type.split('/')[1] || 'png').split('+')[0];
+        uploadChatFile(new File([file], `pasted-${Date.now()}.${ext}`, { type: file.type }));
+      }
+    });
 
     function escapeHTML(value) {
       return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
