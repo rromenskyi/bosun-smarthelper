@@ -3,12 +3,21 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/roman220/bosun-smarthelper/internal/chatfiles"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
+	"github.com/roman220/bosun-smarthelper/internal/llm"
 )
+
+// defaultDescribePrompt is used when the model calls "describe" without
+// its own prompt — a plain "what's in this photo" ask, not tailored to
+// any particular use case (fuse panel, engine part, whatever it turns
+// out to be), since the model can always pass a more specific prompt
+// once it knows what it's looking at.
+const defaultDescribePrompt = "Describe what is shown in this image in detail: objects, people, animals, any readable text, numbers, or tags. Be factual and specific."
 
 // maxReadableChatFileBytes bounds how much of an attached text file's
 // content the "read" action returns straight into the tool result — this
@@ -25,19 +34,29 @@ const maxReadableChatFileBytes = 200_000
 // name/description and the user's own message mentioning the
 // attachment, the same way any other tool is discovered.
 type ChatFileTool struct {
-	files *chatfiles.Store
-	docs  *documents.Store
-	memo  *MemoTool
+	files        *chatfiles.Store
+	docs         *documents.Store
+	memo         *MemoTool
+	remoteVision *llm.RemoteClient
+	localVision  *llm.LocalClient
 }
 
-// NewChatFileTool wires everything the tool's actions need. docs/memo may
-// be nil (matching how other optional features degrade elsewhere in this
-// codebase) — the corresponding action just returns a clear error instead
-// of the tool failing to register at all. add_to_memo's actual filedump
-// write happens inside memo.AttachFile, which holds its own
-// *filedump.Store — this tool never needs one directly.
-func NewChatFileTool(files *chatfiles.Store, docs *documents.Store, memo *MemoTool) *ChatFileTool {
-	return &ChatFileTool{files: files, docs: docs, memo: memo}
+// NewChatFileTool wires everything the tool's actions need. docs/memo/
+// vision clients may be nil (matching how other optional features
+// degrade elsewhere in this codebase) — the corresponding action just
+// returns a clear error instead of the tool failing to register at all.
+// add_to_memo's actual filedump write happens inside memo.AttachFile,
+// which holds its own *filedump.Store — this tool never needs one
+// directly.
+//
+// describe tries remoteVision first (see internal/llm/vision.go — it
+// already retries a few times against the flaky upstream this
+// deployment sits behind) and only falls back to localVision if that's
+// exhausted: remote is fast when it lands on a working backend, local
+// is slow (a real photo measured ~170s on this deployment's CPU-only
+// hardware) but doesn't depend on someone else's infrastructure at all.
+func NewChatFileTool(files *chatfiles.Store, docs *documents.Store, memo *MemoTool, remoteVision *llm.RemoteClient, localVision *llm.LocalClient) *ChatFileTool {
+	return &ChatFileTool{files: files, docs: docs, memo: memo, remoteVision: remoteVision, localVision: localVision}
 }
 
 func (t *ChatFileTool) Name() string { return "chat_file" }
@@ -45,6 +64,8 @@ func (t *ChatFileTool) Name() string { return "chat_file" }
 func (t *ChatFileTool) Description() string {
 	return "Work with a file the user just attached to this chat message (mentioned in their message as an attachment, not a document upload). " +
 		"Call \"list\" first to see what's attached and get the exact filename. " +
+		"\"describe\" answers what's actually in a photo/image — use this whenever the user asks what something in the picture is, before reaching for add_to_rag. " +
+		"It can occasionally fail or time out (the vision backend behind it is flaky) — if so, just say the description failed and offer to try again, don't guess at the image's contents yourself. " +
 		"\"read\" returns a small text file's content directly (txt/csv/markdown/json only) so you can discuss it or fold it into a memo yourself with the memo tool. " +
 		"\"add_to_rag\" ingests any file — photo, PDF, or text — into the searchable document index; always ask the user what title (and optionally folder) to use first, never guess. " +
 		"\"add_to_memo\" links the file to an existing memo (write the memo first with the memo tool if it doesn't exist yet) so it's shown alongside that note. " +
@@ -57,13 +78,17 @@ func (t *ChatFileTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"action": map[string]any{
 				"type": "string",
-				"enum": []string{"list", "read", "add_to_rag", "add_to_memo"},
-				"description": "list: show attached files. read: return a small text file's content. " +
+				"enum": []string{"list", "describe", "read", "add_to_rag", "add_to_memo"},
+				"description": "list: show attached files. describe: answer what's in a photo. read: return a small text file's content. " +
 					"add_to_rag: ingest into document search. add_to_memo: link to an existing memo.",
 			},
 			"filename": map[string]any{
 				"type":        "string",
-				"description": "Exact name of the attached file, from \"list\" — required for read/add_to_rag/add_to_memo.",
+				"description": "Exact name of the attached file, from \"list\" — required for describe/read/add_to_rag/add_to_memo.",
+			},
+			"prompt": map[string]any{
+				"type":        "string",
+				"description": "Optional for describe — a specific question about the image (e.g. \"what breed is this cow?\"). Defaults to a general description.",
 			},
 			"title": map[string]any{
 				"type":        "string",
@@ -100,6 +125,8 @@ func (t *ChatFileTool) Execute(ctx context.Context, args map[string]any) (any, e
 	switch action {
 	case "list":
 		return t.list(sessionID)
+	case "describe":
+		return t.describe(ctx, sessionID, args)
 	case "read":
 		return t.read(sessionID, args)
 	case "add_to_rag":
@@ -148,6 +175,51 @@ func (t *ChatFileTool) read(sessionID string, args map[string]any) (any, error) 
 		return nil, fmt.Errorf("%q doesn't look like a text file — use add_to_rag instead", filename)
 	}
 	return map[string]any{"filename": filename, "content": string(content)}, nil
+}
+
+// describe answers what's actually shown in an attached photo — the tool
+// action to reach for on "what's in this picture", instead of forcing the
+// user through add_to_rag (an OCR pipeline that finds printed text, not a
+// description of the scene) just to get an answer to that question.
+func (t *ChatFileTool) describe(ctx context.Context, sessionID string, args map[string]any) (any, error) {
+	if t.remoteVision == nil && t.localVision == nil {
+		return nil, fmt.Errorf("image description is not configured")
+	}
+	filename, err := filenameArg(args)
+	if err != nil {
+		return nil, err
+	}
+	content, err := t.files.Read(sessionID, filename)
+	if err != nil {
+		return nil, err
+	}
+	mimeType := http.DetectContentType(content)
+	if !strings.HasPrefix(mimeType, "image/") {
+		return nil, fmt.Errorf("%q isn't an image — describe only works on photos/pictures", filename)
+	}
+	prompt, _ := args["prompt"].(string)
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		prompt = defaultDescribePrompt
+	}
+
+	var description string
+	var visionErr error
+	if t.remoteVision != nil {
+		description, visionErr = t.remoteVision.DescribeImage(ctx, prompt, content, mimeType)
+	} else {
+		visionErr = fmt.Errorf("remote vision not configured")
+	}
+	if visionErr != nil && t.localVision != nil {
+		// Slow (a real photo can take a couple of minutes on modest
+		// hardware) but doesn't depend on someone else's flaky backend —
+		// worth the wait only after remote's own retries are exhausted.
+		description, visionErr = t.localVision.DescribeImage(ctx, prompt, content, mimeType)
+	}
+	if visionErr != nil {
+		return nil, fmt.Errorf("couldn't describe the image right now — worth trying again: %w", visionErr)
+	}
+	return map[string]any{"filename": filename, "description": description}, nil
 }
 
 // addToRAG dispatches on content, the same PDF/image/plain-text

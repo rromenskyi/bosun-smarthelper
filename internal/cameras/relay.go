@@ -92,6 +92,24 @@ func (r *Relay) Connected() bool {
 	return r.connected
 }
 
+// Snapshot waits for and returns one JPEG frame — the camera security
+// checker's one-shot equivalent of ServeHTTP's continuous stream. Errors
+// immediately if the camera isn't currently connected rather than
+// waiting on a channel nothing will ever publish to.
+func (r *Relay) Snapshot(ctx context.Context) ([]byte, error) {
+	if !r.Connected() {
+		return nil, fmt.Errorf("camera %q is not connected", r.Name)
+	}
+	ch := r.subscribe()
+	defer r.unsubscribe(ch)
+	select {
+	case frame := <-ch:
+		return frame, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func (r *Relay) connectOnce(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.StreamURL, nil)
 	if err != nil {

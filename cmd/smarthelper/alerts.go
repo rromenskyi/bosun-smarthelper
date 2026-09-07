@@ -314,6 +314,7 @@ func runNOAAChecker(
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	positionFailing := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -323,12 +324,16 @@ func runNOAAChecker(
 			if err != nil {
 				logger.Warn("resolve position for NOAA alerts", "error", err)
 				errLog.Record("noaa_alert", "resolve_position", err)
-				notificationStore.AddDeduped(notifications.Notification{
-					Source: "noaa_alert", Severity: "warning",
-					Title: "Could not resolve position for NOAA alerts", Body: err.Error(),
-				}, notificationDedupWindow)
+				if !positionFailing {
+					notificationStore.Add(notifications.Notification{
+						Source: "noaa_alert", Severity: "warning",
+						Title: "Could not resolve position for NOAA alerts", Body: err.Error(),
+					})
+					positionFailing = true
+				}
 				continue
 			}
+			positionFailing = false
 			notifiers := noaaAlertNotifiers(cfg, settingsStore, ttsEngine, logger, notificationStore)
 			next, errs := alerts.CheckNOAA(ctx, lat, lon, seen, notifiers)
 			for _, err := range errs {

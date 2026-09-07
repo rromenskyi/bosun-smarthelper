@@ -47,11 +47,40 @@ of it instead:
 
 ## The `chat_file` tool
 
-Four actions, all scoped to the current chat session
+Five actions, all scoped to the current chat session
 (`tools.SessionIDFromContext` — the same mechanism `run_code` already
 uses to scope a sandbox workspace per conversation):
 
 - `list` — names and sizes of whatever's currently attached.
+- `describe` — answers "what's in this photo" directly: a one-off
+  vision request (the raw image as a base64 `image_url` content part,
+  plus a text prompt — `prompt` is optional, defaulting to a general
+  "describe this image" ask), bypassing the normal `[]Message`/
+  string-content path every other call uses. Tries remote first
+  (`RemoteClient.DescribeImage`, `internal/llm/vision.go`), falls back
+  to local (`LocalClient.DescribeImage`, `internal/llm/local_vision.go`)
+  only if that's exhausted:
+  - Remote is fast when it lands on a working backend, but the proxy
+    behind this deployment fans a single model name out across multiple
+    upstream backends and not all of them support image input
+    (confirmed live: one rejects any multimodal request outright) — a
+    request landing on the wrong one fails, so `DescribeImage` retries
+    several times before giving up, since a later attempt has a real
+    chance of landing on a vision-capable backend instead.
+  - Local (llama-server serving Gemma 3n) turned out to already support
+    vision out of the box — its GGUF repo ships an `mmproj` file that
+    `-hf`'s `--mmproj-auto` (the llama-server default) downloads and
+    loads automatically, at no cost to ordinary text turns: the
+    projector only runs when a request actually carries an image. It's
+    slow (a real photo measured ~170s end-to-end on this deployment's
+    CPU-only hardware, once prompt processing and generation are both
+    accounted for) but doesn't depend on someone else's infrastructure —
+    worth the wait only as a last resort, after every remote attempt has
+    already failed. Only works when local is configured with
+    `api_format: openai` (this deployment's setup) — the native Ollama
+    image-embedding shape isn't implemented.
+  A response's leading `<think>...</think>` block (reasoning-model
+  output) is stripped from either path, keeping only the actual answer.
 - `read` — returns a small text file's content directly (txt/csv/
   markdown/json only, capped at ~200KB) so the model can discuss it or
   fold it into a memo itself.

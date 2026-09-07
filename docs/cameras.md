@@ -125,3 +125,73 @@ one showing indefinitely.
   to seek inside the `<video>` element). `{file}` is rejected unless
   it's a plain filename (no path separators, no `..`), so this can never
   resolve outside that camera's own segment directory.
+
+## Security mode
+
+An opt-in background checker (`cmd/smarthelper/cameras.go`'s
+`runCameraSecurityChecker`) that polls every connected camera for a
+person and raises an alert when one appears — off by default
+(`settings.Data.CameraSecurityEnabled`, a settings-page toggle) and
+hidden entirely from the settings page unless both a `cameras:` list and
+`persondetect.base_url` are configured (`GET /api/settings`'s
+`camera_security_configured`).
+
+**Why a separate small local model instead of the vision-capable LLM
+path** (`internal/llm/vision.go`, `chat_file`'s `describe` action): that
+path is fine for an occasional "what's in this photo" ask, but at a few
+seconds (remote, when it lands on a working backend) to ~170s (local
+fallback) per call, it's far too slow and expensive to poll continuously.
+`deploy/persondetect` runs YOLOv8n (the smallest/fastest COCO-trained
+variant) behind a one-endpoint HTTP wrapper — measured well under 2s per
+frame on this deployment's CPU-only hardware, using `internal/persondetect.Client`.
+Interestingly, the local *chat* model (Gemma 3n, `internal/llm/local_vision.go`)
+turns out to already support vision too (its GGUF repo ships an `mmproj`
+llama-server auto-loads) — but it's the same order of magnitude slow as
+the remote fallback, for the same reason: it's a general-purpose model,
+not one built to answer one narrow question ("is there a person here")
+as fast as possible.
+
+**Interval**: `settings.Data.CameraSecurityIntervalSeconds` (0 falls back
+to `cameraSecurityDefaultInterval`, 30s) — a per-camera cadence, not a
+single interval for the whole checker: the background loop itself ticks
+every 5s (`cameraSecurityTick`) and only actually snapshots+detects a
+camera once that camera's own interval has elapsed since its last check,
+the same "short tick, per-item due check" split `runBackupScheduler`
+already uses.
+
+**Edge-triggered, not per-tick**: a person standing in frame across
+several consecutive checks fires exactly one alert (tracked in-memory,
+per camera, reset once no person is detected) — the same reasoning
+already applied to the NOAA position-resolve failure notification
+(`cmd/smarthelper/alerts.go`). A snapshot/detect failure is deduped the
+same way (one notification when it starts failing, silent while it keeps
+failing, nothing extra when it recovers) rather than one per tick, since
+a disconnected or misbehaving camera would otherwise spam the
+notification zone every 5-30s.
+
+**On detection**, three things happen:
+
+- A notification (`internal/notifications`) — always, regardless of any
+  other setting; this is the "did anything even happen" record.
+- A spoken announcement, if `alerts.channels.speaker` is configured *and*
+  the settings page's speaker-alerts toggle (`AlertsSpeakerEnabled`) is
+  on — camera security doesn't get its own separate speaker toggle, since
+  "should alerts be spoken aloud" is one preference shared with
+  threshold/NOAA alerts, not one per alert source
+  (`cameraSecurityNotifiers`).
+- The triggering frame is saved to `internal/filedump`, under
+  `cameras/<name>/<timestamp>.jpg` — so a detection can be reviewed
+  after the fact, not just announced in the moment. The notification
+  body links to it (`/files/<path>`).
+
+## Config
+
+```yaml
+persondetect:
+  base_url: "http://localhost:8100"   # deploy/persondetect (docker-compose.yml)
+  timeout: "5s"
+```
+
+Empty `base_url` (the default) disables the feature entirely: the
+checker never starts, and the settings page hides the toggle rather than
+show one that would silently do nothing.

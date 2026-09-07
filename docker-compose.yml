@@ -126,6 +126,24 @@ services:
       --embeddings -c 512 -np 1 -t 2
       --sleep-idle-seconds 300
 
+  # Camera security mode's person detector (docs/cameras.md) — a small
+  # local YOLOv8n model, deliberately separate from the vision-capable
+  # LLM path (llama-chat/remote): fast and cheap enough to poll every
+  # camera on a short interval, unlike a multi-second-to-minutes vision
+  # call. No volume mount: unlike llama-chat/llama-embed's GGUF weights
+  # (fetched at container start, cached outside the image so a rebuild
+  # doesn't re-download them), yolov8n.pt is baked into this image at
+  # build time (see deploy/persondetect/Dockerfile) — it's ~6MB, not
+  # worth a bind mount for.
+  persondetect:
+    build: ./deploy/persondetect
+    image: bosun-persondetect:local
+    container_name: persondetect
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - PORT=8100
+
   # STT (docs/voice.md). See deploy/whisper/Dockerfile for why this is
   # built from source, same as llama-chat/llama-embed.
   whisper-stt:

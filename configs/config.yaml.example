@@ -363,6 +363,15 @@ metrics:
 #     segment_seconds: 300                   # 5-minute segments...
 #     segment_count: 50                      # ...50 of them = ~4 hours on disk before the oldest is overwritten
 
+# Camera security mode (docs/cameras.md): points at the small local
+# YOLOv8n person-detector (deploy/persondetect) that backs the settings
+# page's "Security mode" toggle. Empty base_url (the default) leaves the
+# toggle hidden entirely — this is separate from the cameras: list above,
+# which only needs to exist for security mode to have anything to check.
+# persondetect:
+#   base_url: "http://localhost:8100"
+#   timeout: "5s"
+
 # Alerts: NOAA weather alerts for the current position, and any
 # metrics.sources-sampled metric crossing a threshold — see docs/alerts.md.
 # Delivered through Telegram/a webhook/the local speaker, each only once

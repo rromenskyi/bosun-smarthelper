@@ -274,3 +274,33 @@ func TestRelayConnectedTracksUpstreamState(t *testing.T) {
 		t.Error("want Connected() false after the upstream drops, before the next reconnect")
 	}
 }
+
+func TestRelaySnapshotReturnsOneFrame(t *testing.T) {
+	ready := make(chan struct{})
+	upstream := fakeCameraServer(t, [][]byte{[]byte("frame-1"), []byte("frame-2")}, ready)
+	relay := NewRelay("test", upstream.URL, discardLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go relay.Run(ctx)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !relay.Connected() {
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(ready)
+
+	frame, err := relay.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(frame) == 0 {
+		t.Error("expected a non-empty frame")
+	}
+}
+
+func TestRelaySnapshotErrorsWhenNotConnected(t *testing.T) {
+	relay := NewRelay("test", "http://127.0.0.1:0/nonexistent", discardLogger())
+	if _, err := relay.Snapshot(context.Background()); err == nil {
+		t.Error("expected an error taking a snapshot from a relay that was never started")
+	}
+}

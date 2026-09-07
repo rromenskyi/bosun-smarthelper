@@ -8,25 +8,36 @@ import (
 
 // Config holds all configuration for the application
 type Config struct {
-	Assistant AssistantConfig `mapstructure:"assistant"`
-	LLM       LLMConfig       `mapstructure:"llm"`
-	MCP       MCPConfig       `mapstructure:"mcp"`
-	Web       WebConfig       `mapstructure:"web"`
-	Memo      MemoConfig      `mapstructure:"memo"`
-	Documents DocumentsConfig `mapstructure:"documents"`
-	ErrorLog  ErrorLogConfig  `mapstructure:"error_log"`
-	Online    OnlineConfig    `mapstructure:"online_tools"`
-	Maps      MapsConfig      `mapstructure:"maps"`
-	Sensors   SensorsConfig   `mapstructure:"sensors"`
-	Logging   LoggingConfig   `mapstructure:"logging"`
-	Voice     VoiceConfig     `mapstructure:"voice"`
-	Metrics   MetricsConfig   `mapstructure:"metrics"`
-	Backup    BackupConfig    `mapstructure:"backup"`
-	Alerts    AlertsConfig    `mapstructure:"alerts"`
-	Sandbox   SandboxConfig   `mapstructure:"sandbox"`
-	Adventure AdventureConfig `mapstructure:"adventure"`
-	Cameras   []CameraConfig  `mapstructure:"cameras"`
-	FileDump  FileDumpConfig  `mapstructure:"filedump"`
+	Assistant    AssistantConfig    `mapstructure:"assistant"`
+	LLM          LLMConfig          `mapstructure:"llm"`
+	MCP          MCPConfig          `mapstructure:"mcp"`
+	Web          WebConfig          `mapstructure:"web"`
+	Memo         MemoConfig         `mapstructure:"memo"`
+	Documents    DocumentsConfig    `mapstructure:"documents"`
+	ErrorLog     ErrorLogConfig     `mapstructure:"error_log"`
+	Online       OnlineConfig       `mapstructure:"online_tools"`
+	Maps         MapsConfig         `mapstructure:"maps"`
+	Sensors      SensorsConfig      `mapstructure:"sensors"`
+	Logging      LoggingConfig      `mapstructure:"logging"`
+	Voice        VoiceConfig        `mapstructure:"voice"`
+	Metrics      MetricsConfig      `mapstructure:"metrics"`
+	Backup       BackupConfig       `mapstructure:"backup"`
+	Alerts       AlertsConfig       `mapstructure:"alerts"`
+	Sandbox      SandboxConfig      `mapstructure:"sandbox"`
+	Adventure    AdventureConfig    `mapstructure:"adventure"`
+	Cameras      []CameraConfig     `mapstructure:"cameras"`
+	FileDump     FileDumpConfig     `mapstructure:"filedump"`
+	PersonDetect PersonDetectConfig `mapstructure:"persondetect"`
+}
+
+// PersonDetectConfig points at the small local YOLOv8n HTTP service
+// (deploy/persondetect, internal/persondetect) that backs camera
+// security mode (docs/cameras.md) — an empty BaseURL disables the
+// feature entirely (the settings-page toggle just does nothing), same
+// "empty BaseURL means not configured" convention as EmbeddingsConfig.
+type PersonDetectConfig struct {
+	BaseURL string `mapstructure:"base_url"`
+	Timeout string `mapstructure:"timeout"`
 }
 
 // AdventureConfig is the optional text-adventure game feature (see
@@ -651,6 +662,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.router.prefer_remote", true)
 	v.SetDefault("llm.embeddings.base_url", "")
 	v.SetDefault("llm.embeddings.timeout", "10s")
+	v.SetDefault("persondetect.base_url", "")
+	v.SetDefault("persondetect.timeout", "5s")
 	v.SetDefault("memo.tag_normalize_interval", "5m")
 	// Below this cosine similarity, a memo/document search hit is noise,
 	// not a real answer — filtered out before it ever reaches the LLM.

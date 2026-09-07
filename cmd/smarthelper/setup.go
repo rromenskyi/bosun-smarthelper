@@ -10,6 +10,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/embeddings"
 	"github.com/roman220/bosun-smarthelper/internal/errlog"
 	"github.com/roman220/bosun-smarthelper/internal/filedump"
+	"github.com/roman220/bosun-smarthelper/internal/llm"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
 )
 
@@ -44,8 +45,11 @@ func openErrorLog(cfg *config.Config, logger *slog.Logger) *errlog.Logger {
 // cfg.Adventure.NarrateLocal/NarrateRemote actually applies. It also
 // returns the file dump store (nil unless cfg.FileDump.Path is set —
 // see docs/filedump.md), a human-only, web-UI-only feature like
-// documents, never exposed as an LLM tool.
-func buildRegistry(cfg *config.Config, logger *slog.Logger) (*tools.Registry, *documents.Store, *adventure.Store, *filedump.Store, *chatfiles.Store) {
+// documents, never exposed as an LLM tool. remoteClient/localClient (nil
+// in the mcp command, which builds no router of its own) back chat_file's
+// "describe" action — remote first (see internal/llm/vision.go), local
+// as a slow-but-reliable fallback (see internal/llm/local_vision.go).
+func buildRegistry(cfg *config.Config, logger *slog.Logger, remoteClient *llm.RemoteClient, localClient *llm.LocalClient) (*tools.Registry, *documents.Store, *adventure.Store, *filedump.Store, *chatfiles.Store) {
 	docStore := documents.NewStore(cfg.Documents.Path, embeddings.NewClient(&cfg.LLM.Embeddings))
 	memoTool := tools.NewMemoTool(&cfg.Memo, &cfg.LLM.Embeddings)
 	memoTool.SetDocumentStore(docStore)
@@ -94,7 +98,7 @@ func buildRegistry(cfg *config.Config, logger *slog.Logger) (*tools.Registry, *d
 	if err != nil {
 		logger.Warn("could not open chat file attachment store; chat_file tool disabled", "error", err)
 	} else {
-		registry.Register(tools.NewChatFileTool(chatFilesStore, docStore, memoTool))
+		registry.Register(tools.NewChatFileTool(chatFilesStore, docStore, memoTool, remoteClient, localClient))
 	}
 
 	return registry, docStore, adventureStore, fileDumpStore, chatFilesStore

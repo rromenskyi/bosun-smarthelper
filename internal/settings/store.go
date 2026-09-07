@@ -67,6 +67,16 @@ type Data struct {
 	// beeping and blinking on its own is a bigger behavior change to
 	// opt into than a static badge.
 	NotificationsAlertEnabled bool `json:"notifications_alert_enabled,omitempty"`
+	// CameraSecurityEnabled turns on person-detection polling of every
+	// connected camera (see cmd/smarthelper/cameras.go's security
+	// checker, internal/persondetect) — off by default: continuous
+	// polling costs real CPU (a local YOLOv8n inference per camera per
+	// interval) and isn't something to run unattended by default the way
+	// e.g. threshold alerts are. CameraSecurityIntervalSeconds is how
+	// often each camera is checked; 0 falls back to a sane default (see
+	// cmd/smarthelper's wiring) rather than a busy-loop.
+	CameraSecurityEnabled         bool `json:"camera_security_enabled,omitempty"`
+	CameraSecurityIntervalSeconds int  `json:"camera_security_interval_seconds,omitempty"`
 }
 
 // AlertsThresholdRule is one web-managed metric threshold — see

@@ -146,38 +146,39 @@ type Status struct {
 
 // Server serves the embedded UI and chat API.
 type Server struct {
-	asker             Asker
-	status            func() Status
-	logger            *slog.Logger
-	requestTimeout    time.Duration
-	local             localQueue
-	sessionsMu        sync.Mutex
-	sessions          map[string]chatSession
-	sessionOptions    SessionOptions
-	documents         *documents.Store
-	documentImagesDir string
-	activityMu        sync.Mutex
-	lastChatAt        time.Time
-	languageMu        sync.RWMutex
-	defaultLanguage   string
-	settingsStore     *settings.Store
-	temps             temperatureController
-	caCertFile        string
-	ttsEngine         voice.TTSEngine
-	sttEngine         voice.STTEngine
-	providerOverride  providerOverrideController
-	metricsStore      *metrics.Store
-	metricsLabels     map[string]MetricLabel
-	memoTool          *tools.MemoTool
-	toolRegistry      *tools.Registry
-	backupS3Cfg       *backup.S3Config
-	backupDataDir     string
-	alertsConfigured  alertsConfigured
-	alertsTestSender  func(ctx context.Context, channel string) error
-	cameraManager     *cameras.Manager
-	cameraDataDir     string
-	generationsMu     sync.Mutex
-	generations       map[string]*generationHandle
+	asker                  Asker
+	status                 func() Status
+	logger                 *slog.Logger
+	requestTimeout         time.Duration
+	local                  localQueue
+	sessionsMu             sync.Mutex
+	sessions               map[string]chatSession
+	sessionOptions         SessionOptions
+	documents              *documents.Store
+	documentImagesDir      string
+	activityMu             sync.Mutex
+	lastChatAt             time.Time
+	languageMu             sync.RWMutex
+	defaultLanguage        string
+	settingsStore          *settings.Store
+	temps                  temperatureController
+	caCertFile             string
+	ttsEngine              voice.TTSEngine
+	sttEngine              voice.STTEngine
+	providerOverride       providerOverrideController
+	metricsStore           *metrics.Store
+	metricsLabels          map[string]MetricLabel
+	memoTool               *tools.MemoTool
+	toolRegistry           *tools.Registry
+	backupS3Cfg            *backup.S3Config
+	backupDataDir          string
+	alertsConfigured       alertsConfigured
+	alertsTestSender       func(ctx context.Context, channel string) error
+	cameraManager          *cameras.Manager
+	cameraDataDir          string
+	personDetectConfigured bool
+	generationsMu          sync.Mutex
+	generations            map[string]*generationHandle
 
 	adventureStore         *adventure.Store
 	adventureNarrator      adventureNarrator

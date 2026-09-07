@@ -74,6 +74,7 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		"alerts_webhook_configured":  s.alertsConfigured.Webhook,
 		"alerts_speaker_configured":  s.alertsConfigured.Speaker,
 		"adventure_configured":       s.adventureStore != nil,
+		"camera_security_configured": s.cameraManager != nil && s.personDetectConfigured,
 	})
 }
 
@@ -125,6 +126,10 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if data.BackupAutoEnabled && data.BackupIntervalHours <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backup_interval_hours must be positive when backup_auto_enabled is true"})
+		return
+	}
+	if data.CameraSecurityIntervalSeconds < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "camera_security_interval_seconds must not be negative"})
 		return
 	}
 	for _, rule := range data.AlertsThresholds {

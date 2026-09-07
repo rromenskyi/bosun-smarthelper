@@ -21,6 +21,15 @@ func (s *Server) SetCameraManager(manager *cameras.Manager, dataDir string) {
 	s.cameraDataDir = dataDir
 }
 
+// SetPersonDetectConfigured surfaces (via GET /api/settings) whether
+// persondetect.base_url is set, so the settings page can hide the
+// camera security toggle rather than show one that would just silently
+// do nothing — same "config decides what exists, settings decides what's
+// on" split as SetAlertsConfigured.
+func (s *Server) SetPersonDetectConfigured(configured bool) {
+	s.personDetectConfigured = configured
+}
+
 type cameraInfo struct {
 	Name    string `json:"name"`
 	LabelRU string `json:"label_ru"`

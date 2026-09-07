@@ -18,12 +18,17 @@ import (
 // needing the exact same on-disk page format.
 //
 // Opens its own read connection to path — safe to run against the live
-// database while internal/metrics.Store (a separate OS process, since
-// this only ever runs from the standalone `smarthelper backup` command)
-// has it open too, the same as any two ordinary SQLite readers on one
-// file.
+// database while internal/metrics.Store has it open too, whether that's
+// a separate process (the standalone `smarthelper backup` command) or
+// the same one (runBackupScheduler's automatic, in-process schedule).
+// Relies on metrics.Store having put the database in WAL mode (a
+// persistent, file-level setting, so it's already in effect regardless
+// of which of those wrote it) so a read here never blocks on or blocks
+// an in-progress write; _busy_timeout is one more layer of defense
+// (waits out a lock instead of failing immediately) for anything WAL
+// alone doesn't cover, e.g. a checkpoint in progress.
 func DumpSQL(path string) ([]byte, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+"?_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: %w", path, err)
 	}

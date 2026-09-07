@@ -48,7 +48,18 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create metrics store directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	// journal_mode(WAL): SetMaxOpenConns(1) below only serializes access
+	// through *this* *sql.DB handle — it does nothing for a second,
+	// independent connection opened on the same file, which is exactly
+	// what internal/backup.DumpSQL does (confirmed live: automatic
+	// backups, run in-process on a schedule since runBackupScheduler,
+	// started failing with "database is locked" against the collector's
+	// own writes). WAL mode is a persistent, file-level setting — once
+	// applied here, any other connection to this same path (this
+	// process's own backup dump, or `smarthelper backup`'s separate
+	// process) can read concurrently with an in-progress write instead of
+	// contending for the same lock.
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, fmt.Errorf("open metrics store: %w", err)
 	}

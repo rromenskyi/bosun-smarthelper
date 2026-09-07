@@ -1,17 +1,23 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/roman220/bosun-smarthelper/internal/chatfiles"
 	"github.com/roman220/bosun-smarthelper/internal/config"
 	"github.com/roman220/bosun-smarthelper/internal/documents"
 	"github.com/roman220/bosun-smarthelper/internal/filedump"
+	"github.com/roman220/bosun-smarthelper/internal/llm"
 )
 
 // onePixelPNG is a minimal valid 1x1 transparent PNG — same fixture
@@ -50,7 +56,7 @@ func newChatFileTestTool(t *testing.T) (*ChatFileTool, *chatfiles.Store, *docume
 	}
 	memoTool.SetFileDumpStore(fileDumpStore)
 
-	tool := NewChatFileTool(filesStore, docStore, memoTool)
+	tool := NewChatFileTool(filesStore, docStore, memoTool, nil, nil)
 	return tool, filesStore, docStore, memoTool
 }
 
@@ -63,7 +69,7 @@ func TestChatFileToolRequiresSessionID(t *testing.T) {
 }
 
 func TestChatFileToolNotConfiguredReturnsError(t *testing.T) {
-	tool := NewChatFileTool(nil, nil, nil)
+	tool := NewChatFileTool(nil, nil, nil, nil, nil)
 	ctx := ContextWithSessionID(context.Background(), "session-1")
 	if _, err := tool.Execute(ctx, map[string]any{"action": "list"}); err == nil {
 		t.Error("expected an error when chatfiles isn't configured")
@@ -267,5 +273,114 @@ func TestChatFileToolUnsupportedAction(t *testing.T) {
 	ctx := ContextWithSessionID(context.Background(), "session-1")
 	if _, err := tool.Execute(ctx, map[string]any{"action": "explode"}); err == nil {
 		t.Error("expected an error for an unsupported action")
+	}
+}
+
+func newTestVisionClient(t *testing.T, description string) *llm.RemoteClient {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"model":"text","choices":[{"index":0,"message":{"role":"assistant","content":%q},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`, description)
+	}))
+	t.Cleanup(server.Close)
+
+	const keyEnv = "SMARTHELPER_TEST_CHATFILE_VISION_KEY"
+	t.Setenv(keyEnv, "vision-secret")
+	client, err := llm.NewRemoteClient(server.URL, "text", keyEnv, "", 0.7, 5*time.Second)
+	if err != nil {
+		t.Fatalf("llm.NewRemoteClient: %v", err)
+	}
+	return client
+}
+
+func TestChatFileToolDescribeReturnsDescription(t *testing.T) {
+	tool, filesStore, _, _ := newChatFileTestTool(t)
+	tool.remoteVision = newTestVisionClient(t, "a black cow with a yellow ear tag")
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+
+	if _, err := filesStore.Save("session-1", "cow.png", bytes.NewReader(onePixelPNG)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	result, err := tool.Execute(ctx, map[string]any{"action": "describe", "filename": "cow.png"})
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	view, _ := result.(map[string]any)
+	if view["description"] != "a black cow with a yellow ear tag" {
+		t.Errorf("description = %#v", view["description"])
+	}
+	if view["filename"] != "cow.png" {
+		t.Errorf("filename = %#v", view["filename"])
+	}
+}
+
+func TestChatFileToolDescribeRequiresImage(t *testing.T) {
+	tool, filesStore, _, _ := newChatFileTestTool(t)
+	tool.remoteVision = newTestVisionClient(t, "should never be reached")
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+
+	if _, err := filesStore.Save("session-1", "notes.txt", strings.NewReader("hello")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := tool.Execute(ctx, map[string]any{"action": "describe", "filename": "notes.txt"}); err == nil {
+		t.Error("expected an error describing a non-image file")
+	}
+}
+
+func TestChatFileToolDescribeRequiresVisionConfigured(t *testing.T) {
+	tool, filesStore, _, _ := newChatFileTestTool(t)
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+
+	if _, err := filesStore.Save("session-1", "cow.png", bytes.NewReader(onePixelPNG)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := tool.Execute(ctx, map[string]any{"action": "describe", "filename": "cow.png"}); err == nil {
+		t.Error("expected an error when vision isn't configured")
+	}
+}
+
+func newTestVisionLocalClient(t *testing.T, description string) *llm.LocalClient {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"model":"default","choices":[{"index":0,"message":{"role":"assistant","content":%q},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`, description)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := llm.NewOpenAICompatibleLocalClient(server.URL, "default", "", 0.7, 5*time.Second, false)
+	if err != nil {
+		t.Fatalf("llm.NewOpenAICompatibleLocalClient: %v", err)
+	}
+	return client
+}
+
+func TestChatFileToolDescribeFallsBackToLocalWhenRemoteFails(t *testing.T) {
+	// RemoteClient.DescribeImage retries several times against a failing
+	// backend before giving up (see internal/llm/vision.go) — this test
+	// just eats that real delay rather than exposing a test-only knob
+	// from another package to shorten it.
+	tool, filesStore, _, _ := newChatFileTestTool(t)
+	failingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		fmt.Fprint(w, `{"error":{"message":"upstream ollama returned 400: no vision here"}}`)
+	}))
+	t.Cleanup(failingServer.Close)
+	const keyEnv = "SMARTHELPER_TEST_CHATFILE_FALLBACK_KEY"
+	t.Setenv(keyEnv, "secret")
+	remoteClient, err := llm.NewRemoteClient(failingServer.URL, "text", keyEnv, "", 0.7, 5*time.Second)
+	if err != nil {
+		t.Fatalf("llm.NewRemoteClient: %v", err)
+	}
+	tool.remoteVision = remoteClient
+	tool.localVision = newTestVisionLocalClient(t, "a cow, described locally")
+
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+	if _, err := filesStore.Save("session-1", "cow.png", bytes.NewReader(onePixelPNG)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	result, err := tool.Execute(ctx, map[string]any{"action": "describe", "filename": "cow.png"})
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if got := result.(map[string]any)["description"]; got != "a cow, described locally" {
+		t.Errorf("description = %#v, want the local fallback's answer", got)
 	}
 }

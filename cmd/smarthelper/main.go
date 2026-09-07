@@ -29,6 +29,7 @@ import (
 	"github.com/roman220/bosun-smarthelper/internal/mcp"
 	"github.com/roman220/bosun-smarthelper/internal/metrics"
 	"github.com/roman220/bosun-smarthelper/internal/notifications"
+	"github.com/roman220/bosun-smarthelper/internal/persondetect"
 	"github.com/roman220/bosun-smarthelper/internal/sandbox"
 	"github.com/roman220/bosun-smarthelper/internal/settings"
 	"github.com/roman220/bosun-smarthelper/internal/tools"
@@ -75,7 +76,7 @@ func mcpCmd() *cobra.Command {
 			}
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			registry, _, _, _, _ := buildRegistry(cfg, logger)
+			registry, _, _, _, _ := buildRegistry(cfg, logger, nil, nil)
 
 			server := mcp.NewServer(cfg.MCP.ServerName, version, registry, logger)
 			server.SetErrorLog(openErrorLog(cfg, logger))
@@ -146,7 +147,7 @@ func serveCmd() *cobra.Command {
 			live := settingsStore.Get()
 			router.SetTemperatures(live.RemoteTemperature, live.LocalTemperature)
 
-			registry, docStore, adventureStore, fileDumpStore, chatFilesStore := buildRegistry(cfg, logger)
+			registry, docStore, adventureStore, fileDumpStore, chatFilesStore := buildRegistry(cfg, logger, router.RemoteClient(), router.LocalClient())
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(live.NameRU, live.NameEN, live.StylePrompt)
 			// Shared with every background scheduler started below
@@ -353,6 +354,19 @@ func serveCmd() *cobra.Command {
 				}
 				cameraManager := cameras.NewManager(cameraConfigs, logger)
 				cameraManager.Start(cmd.Context())
+
+				if cfg.PersonDetect.BaseURL == "" {
+					logger.Info("persondetect.base_url not set; camera security mode disabled")
+				} else {
+					detectTimeout, err := time.ParseDuration(cfg.PersonDetect.Timeout)
+					if err != nil || detectTimeout <= 0 {
+						detectTimeout = 5 * time.Second
+					}
+					detectClient := persondetect.NewClient(cfg.PersonDetect.BaseURL, detectTimeout)
+					server.SetPersonDetectConfigured(true)
+					go runCameraSecurityChecker(cmd.Context(), cameraManager, detectClient, fileDumpStore, cfg, settingsStore, ttsEngine, logger, errLog, notificationStore)
+				}
+
 				if cameraDataDir, err := resolveCameraDataDir(); err != nil {
 					logger.Warn("could not resolve camera data directory; archive browsing/recording disabled", "error", err)
 				} else {
@@ -405,7 +419,7 @@ func chatCmd() *cobra.Command {
 			// when online, falling back to the local model when offline.
 			router.CheckConnectivity(cmd.Context())
 
-			registry, _, _, _, _ := buildRegistry(cfg, logger)
+			registry, _, _, _, _ := buildRegistry(cfg, logger, router.RemoteClient(), router.LocalClient())
 			ag := agent.New(router, registry, router.NetworkAvailable)
 			ag.SetPersona(cfg.Assistant.NameRU, cfg.Assistant.NameEN, cfg.Assistant.StylePrompt)
 			ag.SetErrorLog(openErrorLog(cfg, logger))
