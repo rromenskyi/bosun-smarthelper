@@ -131,6 +131,17 @@
       scrollbar-color: rgba(141, 224, 183, .28) transparent;
     }
     .empty { max-width: 540px; margin: 12vh auto 0; text-align: center; color: var(--muted); }
+    /* Marks where compaction (docs/settings.md) folded everything before
+       it into a summary the model sees instead of the original text —
+       purely informational, the messages themselves render unchanged on
+       both sides of it (full history is always what's stored/shown). */
+    .history-summary-divider {
+      display: flex; align-items: center; gap: 10px; margin: 14px 0;
+      color: var(--muted); font-size: 11px; text-align: center;
+    }
+    .history-summary-divider::before, .history-summary-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--line);
+    }
     .empty strong { display: block; color: var(--text); font-size: clamp(24px, 6vw, 42px); letter-spacing: -.04em; margin-bottom: 10px; }
     /* Same overflow safety net as .composer above — a user bubble is
        right-aligned via justify-content: flex-end, so if it's ever wider
@@ -638,6 +649,14 @@
             <span id="settings-dynamic-topics-label">Напоминать модели о темах в файлах</span>
           </label>
           <p class="docs-hint" id="settings-dynamic-topics-hint">Модель увидит короткий список папок в файлах и сначала проверит их, а не будет гадать или сразу лезть в интернет.</p>
+          <label class="settings-label" id="settings-label-history-summary">Сжатие длинной истории</label>
+          <label class="settings-label" id="settings-label-history-summary-threshold">Порог для сжатия (токенов)</label>
+          <input type="number" id="settings-history-summary-threshold" min="0" step="500" placeholder="6000">
+          <label class="settings-label" id="settings-label-history-summary-head">Начало без сжатия (токенов)</label>
+          <input type="number" id="settings-history-summary-head" min="0" step="100" placeholder="1500">
+          <label class="settings-label" id="settings-label-history-summary-tail">Конец без сжатия (токенов)</label>
+          <input type="number" id="settings-history-summary-tail" min="0" step="100" placeholder="2000">
+          <p class="docs-hint" id="settings-history-summary-hint">Очень длинный чат замедляет ответы и может упереться в лимит модели — старые сообщения из середины сворачиваются в краткий пересказ, начало и конец остаются как есть. Полная переписка никуда не девается — старпом может найти её через search_history.</p>
           <p class="docs-hint" id="settings-ca-cert-hint" hidden>
             <a href="/ca.pem" id="settings-ca-cert-link" download="bosun-ca.pem">Скачать сертификат для HTTPS</a>
           </p>
@@ -1676,6 +1695,11 @@
       document.querySelector('#settings-tags-hint').textContent = text[locale].settingsTagsHint;
       document.querySelector('#settings-dynamic-topics-label').textContent = text[locale].settingsDynamicTopicsLabel;
       document.querySelector('#settings-dynamic-topics-hint').textContent = text[locale].settingsDynamicTopicsHint;
+      document.querySelector('#settings-label-history-summary').textContent = text[locale].settingsLabelHistorySummary;
+      document.querySelector('#settings-label-history-summary-threshold').textContent = text[locale].settingsHistorySummaryThresholdLabel;
+      document.querySelector('#settings-label-history-summary-head').textContent = text[locale].settingsHistorySummaryHeadLabel;
+      document.querySelector('#settings-label-history-summary-tail').textContent = text[locale].settingsHistorySummaryTailLabel;
+      document.querySelector('#settings-history-summary-hint').textContent = text[locale].settingsHistorySummaryHint;
       document.querySelector('#settings-save-button').textContent = text[locale].settingsSave;
       document.querySelector('#settings-saved-hint').textContent = text[locale].settingsSaved;
       document.querySelector('#settings-close').textContent = text[locale].settingsClose;
@@ -1940,6 +1964,9 @@
       document.querySelector('#settings-local-temp').value = settings.local_temperature;
       document.querySelector('#settings-canonical-tags').value = (settings.canonical_tags || []).join(', ');
       document.querySelector('#settings-dynamic-topics').checked = !!settings.dynamic_topics_enabled;
+      document.querySelector('#settings-history-summary-threshold').value = settings.history_summary_threshold_tokens || '';
+      document.querySelector('#settings-history-summary-head').value = settings.history_summary_head_tokens || '';
+      document.querySelector('#settings-history-summary-tail').value = settings.history_summary_tail_tokens || '';
       document.querySelector('#settings-notifications-alert').checked = !!settings.notifications_alert_enabled;
       notificationsAlertEnabled = !!settings.notifications_alert_enabled;
       document.querySelector('#settings-camera-security-block').hidden = !data.camera_security_configured;
@@ -2418,6 +2445,9 @@
         local_temperature: parseFloat(document.querySelector('#settings-local-temp').value),
         canonical_tags: tags,
         dynamic_topics_enabled: document.querySelector('#settings-dynamic-topics').checked,
+        history_summary_threshold_tokens: parseInt(document.querySelector('#settings-history-summary-threshold').value, 10) || 0,
+        history_summary_head_tokens: parseInt(document.querySelector('#settings-history-summary-head').value, 10) || 0,
+        history_summary_tail_tokens: parseInt(document.querySelector('#settings-history-summary-tail').value, 10) || 0,
         backup_auto_enabled: document.querySelector('#settings-backup-auto').checked,
         backup_interval_hours: parseInt(document.querySelector('#settings-backup-interval').value, 10),
         alerts_telegram_enabled: document.querySelector('#settings-alerts-telegram').checked,
@@ -3030,7 +3060,13 @@
         updateTemporaryIndicator();
         if (Array.isArray(data.messages) && data.messages.length) {
           let lastUser = '';
-          data.messages.forEach(message => {
+          data.messages.forEach((message, index) => {
+            if (data.history_summarized_through && index === data.history_summarized_through) {
+              const divider = document.createElement('div');
+              divider.className = 'history-summary-divider';
+              divider.textContent = text[language.value].historySummaryDivider;
+              messages.appendChild(divider);
+            }
             if (message.role === 'user') {
               lastUser = message.content;
               addMessage('user', message.content);

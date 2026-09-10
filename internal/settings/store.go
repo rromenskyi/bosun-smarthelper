@@ -77,6 +77,22 @@ type Data struct {
 	// cmd/smarthelper's wiring) rather than a busy-loop.
 	CameraSecurityEnabled         bool `json:"camera_security_enabled,omitempty"`
 	CameraSecurityIntervalSeconds int  `json:"camera_security_interval_seconds,omitempty"`
+	// HistorySummary{Head,Tail,Threshold}Tokens control conversation
+	// history compaction (see internal/agent's Summarize and
+	// internal/webui's compaction orchestration, docs/settings.md) — a
+	// long-running chat's full history is sent on every turn, and this
+	// deployment has hit real, live failures from that: a remote backend
+	// with only an 8192-token context flatly rejecting an oversized
+	// request, and separately, an oversized prompt just taking too long
+	// to process (especially on the local model, which is CPU-bound and
+	// far slower per token than remote). All three are 0 → a built-in
+	// default (see the compaction code for the actual numbers) rather
+	// than an unconfigured value meaning "off": unlike most toggles in
+	// this struct, silently sending an ever-growing raw history forever
+	// isn't a safe default to require opting out of.
+	HistorySummaryHeadTokens      int `json:"history_summary_head_tokens,omitempty"`
+	HistorySummaryTailTokens      int `json:"history_summary_tail_tokens,omitempty"`
+	HistorySummaryThresholdTokens int `json:"history_summary_threshold_tokens,omitempty"`
 }
 
 // AlertsThresholdRule is one web-managed metric threshold — see

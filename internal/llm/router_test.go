@@ -284,10 +284,26 @@ func TestRetryableRemoteError(t *testing.T) {
 		t.Error("HTTP 429 should be retryable")
 	}
 	if !isRetryableRemoteError(&httpStatusError{statusCode: http.StatusBadGateway}) {
-		t.Error("HTTP 502 should be retryable")
+		t.Error("a plain HTTP 502 (no upstream-routing body) should be retryable")
 	}
 	if isRetryableRemoteError(&httpStatusError{statusCode: http.StatusUnauthorized}) {
 		t.Error("HTTP 401 should not be retryable")
+	}
+}
+
+func TestRetryableRemoteErrorSkipsUpstreamBackendRoutingFailures(t *testing.T) {
+	// The exact shape confirmed live: the proxy's own backend selection
+	// picked one that rejected the request outright, wrapped as a 502.
+	body := `{"error":{"message":"upstream ollama returned 400: {\"error\":{\"message\":\"Multimodal data provided, but model does not support multimodal requests.\"}}","type":"upstream_error"}}`
+	if isRetryableRemoteError(&httpStatusError{statusCode: http.StatusBadGateway, body: body}) {
+		t.Error("an upstream backend-routing failure should not be retried — retrying the same proxy risks the same routing outcome")
+	}
+	// A 5xx that merely happens to mention "upstream" without the
+	// specific wrapper shape (no leading quote before it) should still
+	// retry normally — this is a narrow pattern match, not a blanket
+	// "any mention of upstream" rule.
+	if !isRetryableRemoteError(&httpStatusError{statusCode: http.StatusBadGateway, body: "gateway timeout talking to the upstream server"}) {
+		t.Error("a generic 502 mentioning upstream in prose (not the JSON wrapper shape) should still be retryable")
 	}
 }
 

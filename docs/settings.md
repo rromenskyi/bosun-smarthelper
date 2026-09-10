@@ -127,3 +127,46 @@ Every field applies immediately, without a restart:
 If the settings page's gear icon doesn't appear, the frontend hid it
 because `GET /api/settings` reported `enabled: false` — the same pattern
 the documents icon uses (see `docs/memo-search.md`).
+
+## Long conversation compaction
+
+`history_summary_threshold_tokens`, `history_summary_head_tokens`, and
+`history_summary_tail_tokens` control conversation history compaction
+(`agent.CompactHistory`, `internal/webui/history_summary.go`) — a
+personal-appliance mitigation for a real, live failure this deployment
+hit twice: a long-running chat sends its full, ever-growing history on
+every turn, and eventually that either gets flatly rejected by a remote
+backend with a small context window, or just takes too long to process
+(especially on the CPU-bound local model, which is far slower per token
+than remote).
+
+All three default to 0, which means "use the built-in default" (see
+`agent.CompactHistory`'s own constants), not "off" — unlike most toggles
+in `settings.Data`, silently sending an unbounded history forever isn't
+a safe default to require opting out of.
+
+**How it works**: below the threshold, history is sent exactly as it
+always was — this is the common case, and the only one for most
+conversations. Past it, the shape sent to the LLM becomes head (the
+conversation's own beginning, verbatim) + one synthetic summary message
++ tail (the most recent messages, verbatim) — full detail at both ends,
+everything in between folded into prose. Only the portion newly crossed
+into "middle" since the last compaction is ever actually summarized
+(combined with the existing summary via one plain LLM call), so a
+long-running conversation's summarization cost stays bounded per turn
+rather than re-reading everything from scratch each time.
+
+**Nothing is ever deleted.** Compaction only changes what's sent to the
+LLM for one turn — the full, original history is exactly what's stored,
+what `GET /api/history` returns, and what the web UI displays. The
+`search_history` tool (`internal/tools/search_history.go`) is the
+model's way to reach back into a summarized-away part of the
+conversation on demand — e.g. when the user says "didn't I already tell
+you..." and the exact original wording matters more than the summary's
+paraphrase.
+
+**In the web UI**, `GET /api/history`'s `history_summarized_through`
+field (an index into `messages`, omitted if nothing's been summarized
+yet) tells the page where to draw a quiet divider — informational only;
+the messages themselves render identically on both sides of it, since
+the stored/displayed history was never touched.

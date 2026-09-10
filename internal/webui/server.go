@@ -318,6 +318,16 @@ type chatSession struct {
 	// docs/adventure.md and internal/webui/adventure.go.
 	AdventureMode        bool
 	AdventureSessionName string
+
+	// HistorySummary/HistorySummarizedThroughIndex are compaction state
+	// (see agent.Agent.CompactHistory, docs/settings.md) — a folded-prose
+	// stand-in for History[headEnd:HistorySummarizedThroughIndex], used
+	// only to build the outgoing prompt once History grows past the
+	// configured threshold. History itself is never touched by this —
+	// still the complete record search_history and the web UI's history
+	// view both read from.
+	HistorySummary                string
+	HistorySummarizedThroughIndex int
 }
 
 // HistoryBudget caps how much conversation history is kept for one provider.
@@ -668,6 +678,15 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if s.sessionIsEphemeral(sessionID) {
 		response["temporary"] = true
 	}
+	// Full history is always what's returned above — compaction (see
+	// compactHistoryForTurn) only ever shrinks what's sent to the LLM,
+	// never what's stored or shown here. This index just tells the UI
+	// where to draw a divider marking "everything before this point is
+	// folded into a summary the model sees instead of the original text"
+	// — 0 (the zero value, omitted) means nothing's ever been summarized.
+	if _, throughIndex := s.historySummaryState(sessionID); throughIndex > 0 {
+		response["history_summarized_through"] = throughIndex
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -824,6 +843,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	history := s.loadHistory(sessionID)
 	// Saved now, not after the answer comes back — see saveUserMessage.
 	s.saveUserMessage(sessionID, request.Message, request.Temporary)
+	history = s.compactHistoryForTurn(ctx, sessionID, history)
 	if servedLocally {
 		// The local model is about to serve this request: trim to its small
 		// budget for the outgoing call only. The full history stays in the

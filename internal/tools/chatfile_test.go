@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -382,5 +383,129 @@ func TestChatFileToolDescribeFallsBackToLocalWhenRemoteFails(t *testing.T) {
 	}
 	if got := result.(map[string]any)["description"]; got != "a cow, described locally" {
 		t.Errorf("description = %#v, want the local fallback's answer", got)
+	}
+}
+
+func TestChatFileToolDownloadURLSavesFile(t *testing.T) {
+	origCheck := checkPublicURLFunc
+	checkPublicURLFunc = func(*url.URL) error { return nil } // httptest.Server is necessarily loopback
+	t.Cleanup(func() { checkPublicURLFunc = origCheck })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "generator manual contents")
+	}))
+	defer server.Close()
+
+	tool, filesStore, _, _ := newChatFileTestTool(t)
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+
+	result, err := tool.Execute(ctx, map[string]any{
+		"action": "download_url", "url": server.URL + "/docs/manual.pdf",
+	})
+	if err != nil {
+		t.Fatalf("download_url: %v", err)
+	}
+	view := result.(map[string]any)
+	if view["filename"] != "manual.pdf" {
+		t.Errorf("filename = %#v, want manual.pdf", view["filename"])
+	}
+
+	saved, err := filesStore.Read("session-1", "manual.pdf")
+	if err != nil {
+		t.Fatalf("Read saved file: %v", err)
+	}
+	if string(saved) != "generator manual contents" {
+		t.Errorf("saved content = %q", saved)
+	}
+}
+
+func TestChatFileToolDownloadURLRespectsFilenameOverride(t *testing.T) {
+	origCheck := checkPublicURLFunc
+	checkPublicURLFunc = func(*url.URL) error { return nil }
+	t.Cleanup(func() { checkPublicURLFunc = origCheck })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "content")
+	}))
+	defer server.Close()
+
+	tool, _, _, _ := newChatFileTestTool(t)
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+
+	result, err := tool.Execute(ctx, map[string]any{
+		"action": "download_url", "url": server.URL + "/file", "filename": "custom-name.txt",
+	})
+	if err != nil {
+		t.Fatalf("download_url: %v", err)
+	}
+	if got := result.(map[string]any)["filename"]; got != "custom-name.txt" {
+		t.Errorf("filename = %#v, want custom-name.txt", got)
+	}
+}
+
+func TestChatFileToolDownloadURLRejectsNonHTTPScheme(t *testing.T) {
+	tool, _, _, _ := newChatFileTestTool(t)
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+	if _, err := tool.Execute(ctx, map[string]any{"action": "download_url", "url": "file:///etc/passwd"}); err == nil {
+		t.Error("expected an error for a non-http(s) scheme")
+	}
+}
+
+func TestChatFileToolDownloadURLRequiresURL(t *testing.T) {
+	tool, _, _, _ := newChatFileTestTool(t)
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+	if _, err := tool.Execute(ctx, map[string]any{"action": "download_url"}); err == nil {
+		t.Error("expected an error when url is missing")
+	}
+}
+
+func TestChatFileToolDownloadURLRejectsPrivateAddresses(t *testing.T) {
+	// checkPublicURLFunc is NOT overridden here — this exercises the real
+	// security check against a genuinely local server.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "should never be reached")
+	}))
+	defer server.Close()
+
+	tool, _, _, _ := newChatFileTestTool(t)
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+	if _, err := tool.Execute(ctx, map[string]any{"action": "download_url", "url": server.URL}); err == nil {
+		t.Error("expected an error downloading from a loopback address")
+	}
+}
+
+func TestCheckPublicURLRejectsLoopbackAndPrivate(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "localhost", "10.0.0.5", "192.168.1.1", "169.254.1.1", "0.0.0.0"} {
+		u := &url.URL{Scheme: "http", Host: host}
+		if err := checkPublicURL(u); err == nil {
+			t.Errorf("checkPublicURL(%q) = nil, want an error", host)
+		}
+	}
+}
+
+func TestCheckPublicURLAllowsPublicAddress(t *testing.T) {
+	u := &url.URL{Scheme: "http", Host: "8.8.8.8"}
+	if err := checkPublicURL(u); err != nil {
+		t.Errorf("checkPublicURL(8.8.8.8) = %v, want nil", err)
+	}
+}
+
+func TestChatFileToolDownloadURLRejectsOversizedFile(t *testing.T) {
+	origCheck := checkPublicURLFunc
+	checkPublicURLFunc = func(*url.URL) error { return nil }
+	t.Cleanup(func() { checkPublicURLFunc = origCheck })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := make([]byte, 1<<20)
+		for written := 0; written < maxDownloadBytes+(1<<20); written += len(chunk) {
+			w.Write(chunk)
+		}
+	}))
+	defer server.Close()
+
+	tool, _, _, _ := newChatFileTestTool(t)
+	ctx := ContextWithSessionID(context.Background(), "session-1")
+	if _, err := tool.Execute(ctx, map[string]any{"action": "download_url", "url": server.URL}); err == nil {
+		t.Error("expected an error for a file over the size cap")
 	}
 }

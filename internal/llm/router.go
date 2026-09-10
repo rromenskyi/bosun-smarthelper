@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -487,10 +488,29 @@ func (r *Router) chatStreamRemoteWithRetry(
 func isRetryableRemoteError(err error) bool {
 	var statusErr *httpStatusError
 	if errors.As(err, &statusErr) {
+		if isUpstreamBackendRoutingError(statusErr) {
+			return false
+		}
 		return statusErr.statusCode == http.StatusTooManyRequests || statusErr.statusCode >= 500
 	}
 	var netErr net.Error
 	return errors.As(err, &netErr)
+}
+
+// isUpstreamBackendRoutingError recognizes this deployment's remote proxy
+// wrapping one of ITS OWN backend's rejections as a 5xx — confirmed live,
+// a 502 body of {"error":{"message":"upstream ollama returned 400:
+// ...multimodal...not supported...","type":"upstream_error"}}. A plain
+// 5xx is worth retrying (a transient blip); this one isn't — the proxy
+// fans requests across multiple backends and this specific failure means
+// it picked one that can't serve the request at all, which retrying
+// against the same proxy has a real chance of hitting again, burning the
+// whole retry budget's several seconds of backoff before an inevitable
+// fallback to local anyway. Scoped narrowly (5xx + this exact wrapper
+// shape) so an ordinary 502/503 from a genuinely overloaded or
+// restarting backend still retries as before.
+func isUpstreamBackendRoutingError(err *httpStatusError) bool {
+	return err.statusCode >= 500 && strings.Contains(err.body, `"upstream `)
 }
 
 func (r *Router) setActiveProvider(provider string) {

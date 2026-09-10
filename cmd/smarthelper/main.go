@@ -185,6 +185,10 @@ func serveCmd() *cobra.Command {
 				MaxSessions: cfg.Web.MaxSessions,
 				StorePath:   storePath,
 			})
+			// Registered here rather than in buildRegistry: it needs
+			// *webui.Server itself (as a tools.HistoryProvider), which
+			// doesn't exist yet at that point in setup.
+			registry.Register(tools.NewSearchHistoryTool(server))
 			server.SetDocumentStore(docStore)
 			server.SetToolRegistry(registry)
 			server.SetSettingsStore(settingsStore)

@@ -47,11 +47,30 @@ of it instead:
 
 ## The `chat_file` tool
 
-Five actions, all scoped to the current chat session
+Six actions, all scoped to the current chat session
 (`tools.SessionIDFromContext` — the same mechanism `run_code` already
 uses to scope a sandbox workspace per conversation):
 
 - `list` — names and sizes of whatever's currently attached.
+- `download_url` — fetches a file from a public http(s) URL (e.g. one a
+  `web_search` call turned up) and attaches it exactly as if the user had
+  pasted it in, so it's then usable with `add_to_rag`/`add_to_memo` like
+  any other attachment — the bridge that makes "find the manual for X,
+  add it to the manuals folder" work in one turn. `run_code`'s sandbox
+  already has full network access, but a file it downloads is trapped in
+  that sandbox's own workspace with no path out to `chat_file`/RAG —
+  this fetches server-side instead, with nowhere for a file to get
+  stuck. Every resolved IP (including on each redirect hop, up to 5) is
+  checked against `checkPublicURL` and rejected if it's loopback,
+  private, link-local, or unspecified — this server fetches whatever URL
+  the model was told about, which could be echoed back from a page's own
+  content (prompt injection) or just wrong, so without this a request
+  could reach an internal service (this LAN's other devices, this host's
+  own other ports) that was never meant to be reachable from a chat
+  request. Capped at the same 25MB `internal/webui/chatfiles.go` upload
+  endpoint uses (`maxDownloadBytes`) and a 30s total timeout
+  (`downloadTimeout`); `filename` is optional, defaulting to the URL's
+  own last path segment.
 - `describe` — answers "what's in this photo" directly: a one-off
   vision request (the raw image as a base64 `image_url` content part,
   plus a text prompt — `prompt` is optional, defaulting to a general
