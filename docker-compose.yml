@@ -106,6 +106,7 @@ services:
       -hf mradermacher/gemma-4-E2B-it-GGUF:Q4_K_M
       --alias default --host 127.0.0.1 --port 1234
       -c 8192 -np 1 -t 4 --jinja --skip-chat-parsing --reasoning off
+      -ctk q4_0 -ctv q4_0
 
   llama-embed:
     build: ./deploy/llama
