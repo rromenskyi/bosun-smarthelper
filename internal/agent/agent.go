@@ -263,6 +263,9 @@ func (a *Agent) AskWithHistoryStreaming(
 	online := a.isOnline(ctx)
 	toolDefs := a.toolDefinitions(online)
 	messages := a.buildMessages(userMessage, history, language, online)
+	if hint := responseHint(ctx); hint != "" {
+		messages[0].Content += " " + hint
+	}
 
 	// A separate cancellable context so a detected repetition loop (below)
 	// can abort the in-flight request instead of just hiding its output —

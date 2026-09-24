@@ -168,6 +168,7 @@ type Server struct {
 	deviceEnabled          bool
 	deviceToken            string
 	deviceMaxUtterance     time.Duration
+	deviceResponseHint     string
 	providerOverride       providerOverrideController
 	metricsStore           *metrics.Store
 	metricsLabels          map[string]MetricLabel

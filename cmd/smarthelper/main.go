@@ -276,7 +276,7 @@ func serveCmd() *cobra.Command {
 						logger.Warn("voice.devices.token_env is set but the env var is empty; devices connect without a token", "env", env)
 					}
 				}
-				server.SetDeviceOptions(true, deviceToken, time.Duration(cfg.Voice.Devices.MaxUtteranceSeconds)*time.Second)
+				server.SetDeviceOptions(true, deviceToken, time.Duration(cfg.Voice.Devices.MaxUtteranceSeconds)*time.Second, cfg.Voice.Devices.ResponseHint)
 				logger.Info("voice devices enabled", "endpoint", "/api/device", "token", deviceToken != "")
 			}
 

@@ -143,6 +143,10 @@ web:
 #                                              # "Authorization: Bearer <token>"); empty = no token,
 #                                              # trusted LAN only.
 #     max_utterance_seconds: 30                # Longer utterances are cut off.
+#     response_hint: "This is a spoken conversation through a speaker: answer in one to
+#       three short sentences of plain speech — no lists, tables, links, code or markdown."
+#                                              # Appended to the system prompt for device turns
+#                                              # (~35 tokens — see docs/token-budget.md); "" disables.
 
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:

@@ -359,6 +359,10 @@ type DevicesConfig struct {
 	Enabled             bool   `mapstructure:"enabled"`
 	TokenEnv            string `mapstructure:"token_env"`
 	MaxUtteranceSeconds int    `mapstructure:"max_utterance_seconds"`
+	// ResponseHint is appended to the system prompt for device turns: a reply
+	// that suits a chat window (lists, links, long) is slow to generate and
+	// synthesize and tiring to listen to. Empty disables it.
+	ResponseHint string `mapstructure:"response_hint"`
 }
 
 // TTSConfig points at a built `piper_exe` (patched to emit 16-bit PCM
@@ -707,6 +711,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("voice.devices.enabled", false)
 	v.SetDefault("voice.devices.token_env", "")
 	v.SetDefault("voice.devices.max_utterance_seconds", 30)
+	v.SetDefault("voice.devices.response_hint", "This is a spoken conversation through a speaker: answer in one to three short sentences of plain speech — no lists, tables, links, code or markdown.")
 	v.SetDefault("sandbox.scratch_dir", "/data/sandbox/workspaces")
 	v.SetDefault("sandbox.state_dir", "/data/sandbox/state")
 	v.SetDefault("sandbox.session_ttl", "15m")
