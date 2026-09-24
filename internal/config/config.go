@@ -342,8 +342,23 @@ type DocumentsConfig struct {
 // TTS.ModelPath empty disables /api/tts; STT.BaseURL empty disables
 // /api/stt. Independent of each other.
 type VoiceConfig struct {
-	TTS TTSConfig `mapstructure:"tts"`
-	STT STTConfig `mapstructure:"stt"`
+	TTS     TTSConfig     `mapstructure:"tts"`
+	STT     STTConfig     `mapstructure:"stt"`
+	Devices DevicesConfig `mapstructure:"devices"`
+}
+
+// DevicesConfig enables GET /api/device, the WebSocket link hardware voice
+// front-ends (e.g. the ESP32 speaker, github.com/rromenskyi/esp32-speaker)
+// use to talk to the agent: the device streams microphone audio, Bosun runs
+// the same STT -> agent -> TTS path as the web UI's voice button and streams
+// the spoken reply back. See docs/devices.md. Requires both voice.tts and
+// voice.stt. TokenEnv names the env var holding a shared device token
+// (sent as "Authorization: Bearer <token>"); empty means no token — the
+// same trusted-LAN model as the rest of the web UI.
+type DevicesConfig struct {
+	Enabled             bool   `mapstructure:"enabled"`
+	TokenEnv            string `mapstructure:"token_env"`
+	MaxUtteranceSeconds int    `mapstructure:"max_utterance_seconds"`
 }
 
 // TTSConfig points at a built `piper_exe` (patched to emit 16-bit PCM
@@ -689,6 +704,9 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("sandbox.url", "http://127.0.0.1:8090")
 	v.SetDefault("sandbox.listen_addr", "127.0.0.1:8090")
+	v.SetDefault("voice.devices.enabled", false)
+	v.SetDefault("voice.devices.token_env", "")
+	v.SetDefault("voice.devices.max_utterance_seconds", 30)
 	v.SetDefault("sandbox.scratch_dir", "/data/sandbox/workspaces")
 	v.SetDefault("sandbox.state_dir", "/data/sandbox/state")
 	v.SetDefault("sandbox.session_ttl", "15m")

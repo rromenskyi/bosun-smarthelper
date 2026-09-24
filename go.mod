@@ -3,6 +3,7 @@ module github.com/roman220/bosun-smarthelper
 go 1.26.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/joho/godotenv v1.5.1
 	github.com/rromenskyi/go-adventure v0.0.0-20260825044148-2ba6eba77a39
 	github.com/shirou/gopsutil/v4 v4.24.9

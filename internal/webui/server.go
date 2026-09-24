@@ -165,6 +165,9 @@ type Server struct {
 	caCertFile             string
 	ttsEngine              voice.TTSEngine
 	sttEngine              voice.STTEngine
+	deviceEnabled          bool
+	deviceToken            string
+	deviceMaxUtterance     time.Duration
 	providerOverride       providerOverrideController
 	metricsStore           *metrics.Store
 	metricsLabels          map[string]MetricLabel
@@ -511,6 +514,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /ca.pem", s.handleCACert)
 	mux.HandleFunc("POST /api/tts", s.handleTTS)
 	mux.HandleFunc("POST /api/stt", s.handleSTT)
+	mux.HandleFunc("GET /api/device", s.handleDevice)
 	mux.HandleFunc("POST /api/feedback", s.handleFeedback)
 	mux.HandleFunc("POST /api/client-error", s.handleClientError)
 	mux.HandleFunc("POST /api/provider-override", s.handleProviderOverride)

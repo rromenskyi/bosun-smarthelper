@@ -123,3 +123,4 @@ top-level tour has room for. Grouped by what you're trying to do.
 - **`../SPEC.md`** — the full roadmap: what's shipped, what's next.
 - **`../AGENTS.md`** — code style and testing expectations for anyone
   (human or agent) changing this codebase.
+- [devices.md](devices.md) — hardware voice devices (ESP32 speaker) over `/api/device`
