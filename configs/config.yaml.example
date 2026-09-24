@@ -136,6 +136,13 @@ web:
                                                 # see docker-compose.yml's whisper-stt
                                                 # service and docs/voice.md
 #     language: "ru"
+#   devices:                                   # GET /api/device: WebSocket link for hardware voice
+#     enabled: false                           # front-ends (ESP32 speaker) — see docs/devices.md.
+#                                              # Needs both tts and stt above.
+#     token_env: ""                            # Env var holding a shared device token (devices send
+#                                              # "Authorization: Bearer <token>"); empty = no token,
+#                                              # trusted LAN only.
+#     max_utterance_seconds: 30                # Longer utterances are cut off.
 
 # Persistent local memos. Empty path uses ~/.local/share/bosun/memos.json.
 memo:

@@ -269,6 +269,16 @@ func serveCmd() *cobra.Command {
 			case localSTT != nil:
 				server.SetSTTEngine(localSTT)
 			}
+			if cfg.Voice.Devices.Enabled {
+				deviceToken := ""
+				if env := cfg.Voice.Devices.TokenEnv; env != "" {
+					if deviceToken = os.Getenv(env); deviceToken == "" {
+						logger.Warn("voice.devices.token_env is set but the env var is empty; devices connect without a token", "env", env)
+					}
+				}
+				server.SetDeviceOptions(true, deviceToken, time.Duration(cfg.Voice.Devices.MaxUtteranceSeconds)*time.Second)
+				logger.Info("voice devices enabled", "endpoint", "/api/device", "token", deviceToken != "")
+			}
 
 			if cfg.Metrics.Enabled {
 				metricsStore, err := metrics.Open(cfg.Metrics.StorePath)

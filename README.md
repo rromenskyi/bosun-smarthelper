@@ -85,6 +85,11 @@ In daily use, not just a prototype. Working today:
   (whisper.cpp) into the same chat flow a typed message uses, auto-speaking
   the reply back — fully offline, no Python anywhere in the path — see
   `docs/voice.md`.
+- **Voice devices** — a hardware speaker (the ESP32-S3 firmware at
+  [rromenskyi/esp32-speaker](https://github.com/rromenskyi/esp32-speaker))
+  connects over a WebSocket (`/api/device`), streams push-to-talk speech and
+  plays the spoken answer — the same STT → agent → TTS path as the 🎤 button,
+  one persistent chat session per device — see `docs/devices.md`.
 - **Remote access via Cloudflare Tunnel** — an outbound-only `cloudflared`
   connector exposes a dedicated domain without forwarding any router
   ports, additive to (not a replacement for) direct LAN access — see
