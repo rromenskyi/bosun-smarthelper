@@ -583,3 +583,21 @@ func TestAgent_Ask_ExceedsIterationLimit(t *testing.T) {
 		t.Fatal("expected an error when the model never stops calling tools")
 	}
 }
+
+func TestResponseHintExtendsSystemPrompt(t *testing.T) {
+	client := &fakeClient{responses: []*llm.Response{{Content: "ok"}, {Content: "ok"}}}
+	ag := New(client, tools.NewRegistry())
+	ctx := WithResponseHint(context.Background(), "Answer in one sentence.")
+	if _, _, err := ag.AskWithHistory(ctx, "hi", nil, "en"); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if system := client.seen[0][0].Content; !strings.HasSuffix(system, " Answer in one sentence.") {
+		t.Fatalf("system prompt does not end with the hint: %q", system)
+	}
+	if _, _, err := ag.AskWithHistory(context.Background(), "hi", nil, "en"); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if strings.Contains(client.seen[1][0].Content, "one sentence") {
+		t.Fatal("hint leaked into a turn without it")
+	}
+}

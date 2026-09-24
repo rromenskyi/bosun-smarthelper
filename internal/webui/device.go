@@ -35,13 +35,14 @@ const (
 
 // SetDeviceOptions enables GET /api/device (see config.DevicesConfig).
 // token empty means devices aren't authenticated.
-func (s *Server) SetDeviceOptions(enabled bool, token string, maxUtterance time.Duration) {
+func (s *Server) SetDeviceOptions(enabled bool, token string, maxUtterance time.Duration, responseHint string) {
 	if maxUtterance <= 0 {
 		maxUtterance = 30 * time.Second
 	}
 	s.deviceEnabled = enabled
 	s.deviceToken = token
 	s.deviceMaxUtterance = maxUtterance
+	s.deviceResponseHint = responseHint
 }
 
 type deviceMessage struct {
@@ -198,7 +199,10 @@ func (l *deviceLink) stopTurn() {
 	l.mu.Unlock()
 }
 
-// turn runs one utterance through STT -> agent -> TTS and streams the reply.
+// turn runs one utterance through STT -> agent -> TTS. The agent's answer is
+// streamed and spoken sentence by sentence: the first sentence plays while the
+// model is still writing the rest, instead of after the whole reply has been
+// generated and synthesized.
 func (l *deviceLink) turn(ctx context.Context, audio []byte) error {
 	start := time.Now()
 	l.send(ctx, deviceMessage{Type: "thinking"})
@@ -218,47 +222,146 @@ func (l *deviceLink) turn(ctx context.Context, audio []byte) error {
 		language = l.s.getDefaultLanguage()
 	}
 
-	answer, err := l.s.deviceAsk(ctx, l.session, text, language)
-	if err != nil {
-		return fmt.Errorf("ask: %w", err)
+	sentences := make(chan string, 32)
+	spoken := make(chan speakResult, 1)
+	go func() { spoken <- l.speak(ctx, sentences) }()
+	splitter := sentenceSplitter{emit: func(s string) { sentences <- s }}
+	_, askErr := l.s.deviceAsk(agent.WithResponseHint(ctx, l.s.deviceResponseHint), l.session, text, language, splitter.feed)
+	splitter.flush()
+	close(sentences)
+	result := <-spoken
+	if askErr != nil {
+		return fmt.Errorf("ask: %w", askErr)
 	}
-	askDone := time.Now()
-
-	spoken := stripMarkdownForSpeech(answer)
-	if spoken == "" {
-		l.send(ctx, deviceMessage{Type: "error", Message: "empty answer"})
-		return nil
+	if result.err != nil {
+		return result.err
 	}
-	wav, err := l.s.ttsEngine.Synthesize(ctx, spoken)
-	if err != nil {
-		return fmt.Errorf("synthesize: %w", err)
-	}
-	pcm, err := wavToDevicePCM(ctx, wav)
-	if err != nil {
-		return fmt.Errorf("convert reply audio: %w", err)
-	}
-	ttsDone := time.Now()
-
-	if err := l.send(ctx, deviceMessage{Type: "speak", State: "start"}); err != nil {
-		return err
-	}
-	// Faster than real time; the device buffers and pushes back over TCP.
-	for i := 0; i < len(pcm); i += deviceFrameBytes {
-		end := min(i+deviceFrameBytes, len(pcm))
-		if err := l.conn.Write(ctx, websocket.MessageBinary, pcm[i:end]); err != nil {
-			return err
-		}
-	}
-	l.send(ctx, deviceMessage{Type: "speak", State: "stop"})
 	l.s.logger.Info("device turn",
 		"device", l.name,
 		"utterance_ms", len(audio)*1000/(deviceSampleRate*2),
 		"text", text,
 		"stt_ms", sttDone.Sub(start).Milliseconds(),
-		"agent_ms", askDone.Sub(sttDone).Milliseconds(),
-		"tts_ms", ttsDone.Sub(askDone).Milliseconds(),
-		"reply_ms", len(pcm)*1000/(deviceSampleRate*2))
+		"first_audio_ms", result.firstAudio.Sub(start).Milliseconds(),
+		"total_ms", time.Since(start).Milliseconds(),
+		"sentences", result.sentences,
+		"reply_ms", result.pcmBytes*1000/(deviceSampleRate*2))
 	return nil
+}
+
+type speakResult struct {
+	firstAudio time.Time
+	sentences  int
+	pcmBytes   int
+	err        error
+}
+
+// speak synthesizes each sentence as it arrives and streams it to the device,
+// framing the whole reply in one speak start/stop.
+func (l *deviceLink) speak(ctx context.Context, sentences <-chan string) (r speakResult) {
+	defer func() {
+		for range sentences { // unblock the producer after an early return
+		}
+	}()
+	for sentence := range sentences {
+		text := stripMarkdownForSpeech(sentence)
+		if text == "" {
+			continue
+		}
+		wav, err := l.s.ttsEngine.Synthesize(ctx, text)
+		if err != nil {
+			r.err = fmt.Errorf("synthesize: %w", err)
+			return r
+		}
+		pcm, err := wavToDevicePCM(ctx, wav)
+		if err != nil {
+			r.err = fmt.Errorf("convert reply audio: %w", err)
+			return r
+		}
+		if r.sentences == 0 {
+			r.firstAudio = time.Now()
+			if r.err = l.send(ctx, deviceMessage{Type: "speak", State: "start"}); r.err != nil {
+				return r
+			}
+		}
+		// Faster than real time; the device buffers and pushes back over TCP.
+		for i := 0; i < len(pcm); i += deviceFrameBytes {
+			end := min(i+deviceFrameBytes, len(pcm))
+			if r.err = l.conn.Write(ctx, websocket.MessageBinary, pcm[i:end]); r.err != nil {
+				return r
+			}
+		}
+		r.sentences++
+		r.pcmBytes += len(pcm)
+	}
+	if r.sentences == 0 {
+		if ctx.Err() == nil {
+			l.send(ctx, deviceMessage{Type: "error", Message: "empty answer"})
+		}
+		return r
+	}
+	r.err = l.send(ctx, deviceMessage{Type: "speak", State: "stop"})
+	return r
+}
+
+// sentenceSplitter turns a stream of text deltas into speakable chunks: it
+// emits at sentence ends once a chunk is long enough to be worth a TTS call
+// (Piper starts a process per call), and flushes the remainder at the end.
+type sentenceSplitter struct {
+	buf  strings.Builder
+	emit func(string)
+}
+
+const (
+	minSpokenChunk = 40  // bytes (~20 Cyrillic letters): don't synthesize "Да." on its own
+	maxSpokenChunk = 300 // break very long run-on text at a comma or space
+)
+
+func (s *sentenceSplitter) feed(delta string) {
+	s.buf.WriteString(delta)
+	for {
+		text := s.buf.String()
+		cut := sentenceCut(text)
+		if cut < 0 {
+			return
+		}
+		s.buf.Reset()
+		s.buf.WriteString(text[cut:])
+		if chunk := strings.TrimSpace(text[:cut]); chunk != "" {
+			s.emit(chunk)
+		}
+	}
+}
+
+func (s *sentenceSplitter) flush() {
+	if chunk := strings.TrimSpace(s.buf.String()); chunk != "" {
+		s.emit(chunk)
+	}
+	s.buf.Reset()
+}
+
+// sentenceCut returns the index just past the first sentence end at or after
+// minSpokenChunk bytes (a ".!?…" or newline followed by whitespace), a comma/
+// space break past maxSpokenChunk, or -1 if the text should keep accumulating.
+func sentenceCut(text string) int {
+	for i, r := range text {
+		if i < minSpokenChunk {
+			continue
+		}
+		switch r {
+		case '.', '!', '?', '…', '\n':
+			next := i + len(string(r))
+			if next < len(text) && (text[next] == ' ' || text[next] == '\n') {
+				return next
+			}
+		}
+	}
+	if len(text) > maxSpokenChunk {
+		if i := strings.LastIndexAny(text[:maxSpokenChunk], ",;: "); i > minSpokenChunk {
+			return i + 1
+		}
+		return maxSpokenChunk
+	}
+	return -1
 }
 
 func (l *deviceLink) send(ctx context.Context, m deviceMessage) error {
@@ -266,9 +369,10 @@ func (l *deviceLink) send(ctx context.Context, m deviceMessage) error {
 	return l.conn.Write(ctx, websocket.MessageText, data)
 }
 
-// deviceAsk mirrors the non-streaming half of handleChat for a transcribed
-// utterance: per-session history, local-model queueing, persisted turns.
-func (s *Server) deviceAsk(ctx context.Context, sessionID, message, language string) (string, error) {
+// deviceAsk runs a transcribed utterance through the agent like handleChat:
+// per-session history, local-model queueing, persisted turns. onProse gets the
+// answer's prose as it streams (all at once if the asker can't stream).
+func (s *Server) deviceAsk(ctx context.Context, sessionID, message, language string, onProse func(string)) (string, error) {
 	if s.status().Provider == "local" {
 		turn, _ := s.local.join()
 		select {
@@ -288,13 +392,25 @@ func (s *Server) deviceAsk(ctx context.Context, sessionID, message, language str
 	var answer string
 	var stats agent.TurnStats
 	var err error
-	if conversational, ok := s.asker.(conversationAsker); ok {
+	streamed := false
+	if streamer, ok := s.asker.(streamingConversationAsker); ok {
+		streamed = true
+		answer, stats, err = streamer.AskWithHistoryStreaming(ctx, message, history, language, func(e agent.StepEvent) {
+			// Only the answer's prose is spoken; "fold" deltas are tool-call details.
+			if e.Type == "delta" && e.Delta.Kind == "prose" {
+				onProse(e.Delta.Text)
+			}
+		})
+	} else if conversational, ok := s.asker.(conversationAsker); ok {
 		answer, stats, err = conversational.AskWithHistory(ctx, message, history, language)
 	} else {
 		answer, stats, err = s.asker.Ask(ctx, message)
 	}
 	if err != nil {
 		return "", err
+	}
+	if !streamed {
+		onProse(answer)
 	}
 	s.saveAssistantReply(sessionID, answer, stats, time.Since(start).Milliseconds())
 	return answer, nil

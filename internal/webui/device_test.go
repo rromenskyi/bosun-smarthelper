@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/roman220/bosun-smarthelper/internal/agent"
+	"github.com/roman220/bosun-smarthelper/internal/llm"
 	"github.com/roman220/bosun-smarthelper/internal/voice"
 )
 
@@ -18,7 +21,7 @@ func newDeviceTestServer(t *testing.T, asker *fakeAsker, stt *fakeSTTEngine, tts
 	server := NewServer(asker, nil, 5*time.Second, "ru", nil)
 	server.SetSTTEngine(stt)
 	server.SetTTSEngine(tts)
-	server.SetDeviceOptions(true, token, 10*time.Second)
+	server.SetDeviceOptions(true, token, 10*time.Second, "")
 	ts := httptest.NewServer(server.Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -184,5 +187,105 @@ func TestDeviceSessionID(t *testing.T) {
 		if got := deviceSessionID(in); got != want || !validSessionID(got) {
 			t.Errorf("deviceSessionID(%q) = %q (valid=%v), want %q", in, got, validSessionID(got), want)
 		}
+	}
+}
+
+func TestSentenceSplitter(t *testing.T) {
+	var got []string
+	s := sentenceSplitter{emit: func(c string) { got = append(got, c) }}
+	for _, delta := range []string{"Да. ", "Сегодня ясно, ветер слабый, около ", "трёх метров в секунду. Волна ", "полметра! Хорошего ", "хода."} {
+		s.feed(delta)
+	}
+	s.flush()
+	want := []string{
+		"Да. Сегодня ясно, ветер слабый, около трёх метров в секунду.",
+		"Волна полметра! Хорошего хода.",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("chunks:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestSentenceSplitterBreaksRunOnText(t *testing.T) {
+	var got []string
+	s := sentenceSplitter{emit: func(c string) { got = append(got, c) }}
+	s.feed(strings.Repeat("слово ", 80)) // 480 bytes, no sentence end
+	if len(got) == 0 || len(got[0]) > maxSpokenChunk {
+		t.Fatalf("run-on text not broken up: %d chunks, first %d bytes", len(got), len(got))
+	}
+}
+
+// streamingAsker emits its answer as deltas, pausing between them, so the test
+// can see that speech starts before the answer is complete.
+type streamingAsker struct {
+	fakeAsker
+	deltas []string
+	pause  time.Duration
+}
+
+func (f *streamingAsker) AskWithHistoryStreaming(ctx context.Context, message string, _ []agent.HistoryMessage, _ string, onEvent func(agent.StepEvent)) (string, agent.TurnStats, error) {
+	f.seen = message
+	onEvent(agent.StepEvent{Type: "delta", Delta: llm.StreamDelta{Kind: "fold", Text: "tool call details"}})
+	for _, d := range f.deltas {
+		onEvent(agent.StepEvent{Type: "delta", Delta: llm.StreamDelta{Kind: "prose", Text: d}})
+		time.Sleep(f.pause)
+	}
+	return strings.Join(f.deltas, ""), agent.TurnStats{}, nil
+}
+
+type recordingTTS struct {
+	mu    sync.Mutex
+	texts []string
+	times []time.Time
+}
+
+func (r *recordingTTS) Synthesize(_ context.Context, text string) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.texts = append(r.texts, text)
+	r.times = append(r.times, time.Now())
+	return pcm16ToWAV(make([]byte, deviceFrameBytes), deviceSampleRate), nil
+}
+
+func TestDeviceSpeaksSentencesWhileStreaming(t *testing.T) {
+	asker := &streamingAsker{
+		deltas: []string{"Первое предложение ответа достаточно длинное. ", "Второе тоже **важное** и довольно длинное. ", "Третье."},
+		pause:  150 * time.Millisecond,
+	}
+	tts := &recordingTTS{}
+	server := NewServer(asker, nil, 5*time.Second, "ru", nil)
+	server.SetSTTEngine(&fakeSTTEngine{transcript: voice.Transcript{Text: "вопрос", Language: "ru"}})
+	server.SetTTSEngine(tts)
+	server.SetDeviceOptions(true, "", 10*time.Second, "")
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	conn, _, err := dialDevice(t, ts, "")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+	sendJSON(t, conn, map[string]any{"type": "hello", "device": "d1"})
+	readUntil(t, conn, "hello", "")
+	start := time.Now()
+	sendJSON(t, conn, map[string]any{"type": "listen", "state": "start"})
+	conn.Write(context.Background(), websocket.MessageBinary, make([]byte, deviceSampleRate)) // 0.5 s
+	sendJSON(t, conn, map[string]any{"type": "listen", "state": "stop"})
+	_, audio := readUntil(t, conn, "speak", "stop")
+
+	tts.mu.Lock()
+	defer tts.mu.Unlock()
+	// Each finished sentence goes to TTS as soon as it's complete; the short
+	// tail is spoken on its own at the end (earlier chunks are already playing).
+	want := []string{"Первое предложение ответа достаточно длинное.", "Второе тоже важное и довольно длинное.", "Третье."}
+	if strings.Join(tts.texts, "|") != strings.Join(want, "|") {
+		t.Fatalf("synthesized %q, want %q", tts.texts, want)
+	}
+	// The first sentence must be synthesized before the asker finished (3 × 150 ms).
+	if first := tts.times[0].Sub(start); first > 300*time.Millisecond {
+		t.Errorf("first sentence synthesized %v after listen stop; not streaming", first)
+	}
+	if len(audio) != 3*deviceFrameBytes {
+		t.Errorf("reply audio %d bytes, want %d", len(audio), 3*deviceFrameBytes)
 	}
 }
