@@ -45,7 +45,12 @@ reply is slow to generate, slow to synthesize on weak hardware and tiring to
 listen to. It costs ~35 prompt tokens on the local model; `""` disables it.
 Markdown is stripped before TTS either way, as for the web UI's 🔊.
 
-An `abort` from the device (the user interrupted) cancels the turn in flight.
+While a turn is in progress Bosun repeats `thinking` every 5 s until the reply
+starts, so a device can wait as long as the server is alive (slow agents take a
+minute or more) and give up only when the heartbeat stops.
+
+An `abort` from the device (the user interrupted) cancels the turn in flight,
+and so does a new `listen start`: requests don't queue, the newest wins.
 Utterances shorter than 250 ms are answered with an `error` (a mis-press).
 
 ## Sessions

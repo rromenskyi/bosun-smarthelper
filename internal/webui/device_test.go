@@ -289,3 +289,53 @@ func TestDeviceSpeaksSentencesWhileStreaming(t *testing.T) {
 		t.Errorf("reply audio %d bytes, want %d", len(audio), 3*deviceFrameBytes)
 	}
 }
+
+// slowAsker answers after a delay, so the thinking heartbeat must fire meanwhile.
+type slowAsker struct {
+	answer string
+	delay  time.Duration
+}
+
+func (f *slowAsker) Ask(ctx context.Context, message string) (string, agent.TurnStats, error) {
+	time.Sleep(f.delay)
+	return f.answer, agent.TurnStats{}, nil
+}
+
+func TestDeviceThinkingHeartbeat(t *testing.T) {
+	server := NewServer(&slowAsker{answer: "Готово, ответ достаточно длинный для одного фрагмента.", delay: 400 * time.Millisecond},
+		nil, 5*time.Second, "ru", nil)
+	server.SetSTTEngine(&fakeSTTEngine{transcript: voice.Transcript{Text: "вопрос", Language: "ru"}})
+	server.SetTTSEngine(&fakeTTSEngine{audio: pcm16ToWAV(make([]byte, deviceFrameBytes), deviceSampleRate)})
+	server.SetDeviceOptions(true, "", 10*time.Second, "")
+	server.deviceThinkingInterval = 50 * time.Millisecond
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	conn, _, err := dialDevice(t, ts, "")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+	sendJSON(t, conn, map[string]any{"type": "hello", "device": "d1"})
+	readUntil(t, conn, "hello", "")
+	sendJSON(t, conn, map[string]any{"type": "listen", "state": "start"})
+	conn.Write(context.Background(), websocket.MessageBinary, make([]byte, deviceSampleRate))
+	sendJSON(t, conn, map[string]any{"type": "listen", "state": "stop"})
+	texts, _ := readUntil(t, conn, "speak", "stop")
+
+	thinking, afterStart := 0, false
+	for _, m := range texts {
+		switch {
+		case m.Type == "speak" && m.State == "start":
+			afterStart = true
+		case m.Type == "thinking" && afterStart:
+			t.Fatal("thinking heartbeat continued after the reply started")
+		case m.Type == "thinking":
+			thinking++
+		}
+	}
+	// 400 ms of agent time at a 50 ms interval: the initial message plus several beats.
+	if thinking < 4 {
+		t.Fatalf("got %d thinking messages before the reply, want >= 4", thinking)
+	}
+}
