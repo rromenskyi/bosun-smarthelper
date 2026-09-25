@@ -1259,6 +1259,28 @@ func (s *Server) saveUserMessage(sessionID, userMessage string, temporary bool) 
 	s.persistLocked()
 }
 
+// dropUnansweredUserMessage undoes saveUserMessage for a turn that ended
+// without a reply (cancelled by a newer utterance, or failed): the question
+// shouldn't linger in the history the next turn is built from. It only removes
+// the last entry, and only if it is exactly this unanswered user message; a
+// session left empty is deleted.
+func (s *Server) dropUnansweredUserMessage(sessionID, userMessage string) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	session, ok := s.sessions[sessionID]
+	n := len(session.History)
+	if !ok || n == 0 || session.History[n-1].Role != "user" || session.History[n-1].Content != userMessage {
+		return
+	}
+	session.History = session.History[:n-1]
+	if len(session.History) == 0 {
+		delete(s.sessions, sessionID)
+	} else {
+		s.sessions[sessionID] = session
+	}
+	s.persistLocked()
+}
+
 // maxSessionTitleChars bounds the auto-generated session title (see
 // saveUserMessage) — long enough to be recognizable in the session picker,
 // short enough that a pasted essay as a first message doesn't make an

@@ -339,3 +339,89 @@ func TestDeviceThinkingHeartbeat(t *testing.T) {
 		t.Fatalf("got %d thinking messages before the reply, want >= 4", thinking)
 	}
 }
+
+// ctxAsker blocks until its context is cancelled for the first question and
+// answers the second at once — a superseded turn.
+type ctxAsker struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (f *ctxAsker) Ask(ctx context.Context, message string) (string, agent.TurnStats, error) {
+	f.mu.Lock()
+	f.calls++
+	first := f.calls == 1
+	f.mu.Unlock()
+	if first {
+		<-ctx.Done()
+		return "", agent.TurnStats{}, ctx.Err()
+	}
+	return "Второй ответ достаточно длинный, чтобы быть одним фрагментом.", agent.TurnStats{}, nil
+}
+
+// sequentialSTT returns a different transcript per call.
+type sequentialSTT struct {
+	mu    sync.Mutex
+	texts []string
+}
+
+func (f *sequentialSTT) Transcribe(_ context.Context, _ []byte) (voice.Transcript, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t := f.texts[0]
+	f.texts = f.texts[1:]
+	return voice.Transcript{Text: t, Language: "ru"}, nil
+}
+
+func TestDeviceSupersededQuestionLeavesNoHistory(t *testing.T) {
+	server := NewServer(&ctxAsker{}, nil, 5*time.Second, "ru", nil)
+	server.SetSTTEngine(&sequentialSTT{texts: []string{"первый вопрос", "второй вопрос"}})
+	server.SetTTSEngine(&fakeTTSEngine{audio: pcm16ToWAV(make([]byte, deviceFrameBytes), deviceSampleRate)})
+	server.SetDeviceOptions(true, "", 10*time.Second, "")
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	conn, _, err := dialDevice(t, ts, "")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+	sendJSON(t, conn, map[string]any{"type": "hello", "device": "d1"})
+	readUntil(t, conn, "hello", "")
+	utter := func() {
+		sendJSON(t, conn, map[string]any{"type": "listen", "state": "start"})
+		conn.Write(context.Background(), websocket.MessageBinary, make([]byte, deviceSampleRate))
+		sendJSON(t, conn, map[string]any{"type": "listen", "state": "stop"})
+	}
+	utter()
+	readUntil(t, conn, "thinking", "") // the first turn is running (blocked in the agent)
+	time.Sleep(50 * time.Millisecond)
+	utter() // supersedes it
+	readUntil(t, conn, "speak", "stop")
+
+	history := server.loadHistory(deviceSessionID("d1"))
+	var got []string
+	for _, m := range history {
+		got = append(got, m.Role+":"+m.Content)
+	}
+	want := []string{"user:второй вопрос", "assistant:Второй ответ достаточно длинный, чтобы быть одним фрагментом."}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("history:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestDropUnansweredUserMessageOnlyRemovesThatMessage(t *testing.T) {
+	server := NewServer(&fakeAsker{}, nil, time.Second, "ru", nil)
+	server.saveUserMessage("sess-0001", "вопрос", false)
+	server.saveAssistantReply("sess-0001", "ответ", agent.TurnStats{}, 1)
+	server.dropUnansweredUserMessage("sess-0001", "вопрос") // last entry is the reply: no-op
+	if n := len(server.loadHistory("sess-0001")); n != 2 {
+		t.Fatalf("answered question removed: %d entries left", n)
+	}
+	server.saveUserMessage("sess-0001", "ещё", false)
+	server.dropUnansweredUserMessage("sess-0001", "другое") // different text: no-op
+	server.dropUnansweredUserMessage("sess-0001", "ещё")
+	if n := len(server.loadHistory("sess-0001")); n != 2 {
+		t.Fatalf("got %d entries, want 2", n)
+	}
+}
