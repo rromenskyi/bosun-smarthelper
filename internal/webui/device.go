@@ -397,7 +397,9 @@ func (l *deviceLink) send(ctx context.Context, m deviceMessage) error {
 }
 
 // deviceAsk runs a transcribed utterance through the agent like handleChat:
-// per-session history, local-model queueing, persisted turns. onProse gets the
+// per-session history, local-model queueing, persisted turns. A turn that ends
+// without an answer (superseded by a newer utterance, or failed) leaves no
+// trace in the history. onProse gets the
 // answer's prose as it streams (all at once if the asker can't stream).
 func (s *Server) deviceAsk(ctx context.Context, sessionID, message, language string, onProse func(string)) (string, error) {
 	if s.status().Provider == "local" {
@@ -434,6 +436,7 @@ func (s *Server) deviceAsk(ctx context.Context, sessionID, message, language str
 		answer, stats, err = s.asker.Ask(ctx, message)
 	}
 	if err != nil {
+		s.dropUnansweredUserMessage(sessionID, message)
 		return "", err
 	}
 	if !streamed {
