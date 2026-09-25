@@ -33,6 +33,11 @@ const (
 	deviceProtocol     = 1
 )
 
+// While a turn is in progress (STT, agent, TTS) the device gets a "thinking"
+// message this often, so it keeps waiting for as long as the server is alive
+// instead of giving up on a fixed timeout. Per server (tests shorten it).
+const defaultDeviceThinkingInterval = 5 * time.Second
+
 // SetDeviceOptions enables GET /api/device (see config.DevicesConfig).
 // token empty means devices aren't authenticated.
 func (s *Server) SetDeviceOptions(enabled bool, token string, maxUtterance time.Duration, responseHint string) {
@@ -43,6 +48,9 @@ func (s *Server) SetDeviceOptions(enabled bool, token string, maxUtterance time.
 	s.deviceToken = token
 	s.deviceMaxUtterance = maxUtterance
 	s.deviceResponseHint = responseHint
+	if s.deviceThinkingInterval <= 0 {
+		s.deviceThinkingInterval = defaultDeviceThinkingInterval
+	}
 }
 
 type deviceMessage struct {
@@ -206,6 +214,24 @@ func (l *deviceLink) stopTurn() {
 func (l *deviceLink) turn(ctx context.Context, audio []byte) error {
 	start := time.Now()
 	l.send(ctx, deviceMessage{Type: "thinking"})
+	speaking := make(chan struct{})
+	var speakingOnce sync.Once
+	stopHeartbeat := func() { speakingOnce.Do(func() { close(speaking) }) }
+	defer stopHeartbeat()
+	go func() {
+		t := time.NewTicker(l.s.deviceThinkingInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				l.send(ctx, deviceMessage{Type: "thinking"})
+			case <-speaking:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	transcript, err := l.s.sttEngine.Transcribe(ctx, pcm16ToWAV(audio, deviceSampleRate))
 	if err != nil {
@@ -224,7 +250,7 @@ func (l *deviceLink) turn(ctx context.Context, audio []byte) error {
 
 	sentences := make(chan string, 32)
 	spoken := make(chan speakResult, 1)
-	go func() { spoken <- l.speak(ctx, sentences) }()
+	go func() { spoken <- l.speak(ctx, sentences, stopHeartbeat) }()
 	splitter := sentenceSplitter{emit: func(s string) { sentences <- s }}
 	_, askErr := l.s.deviceAsk(agent.WithResponseHint(ctx, l.s.deviceResponseHint), l.session, text, language, splitter.feed)
 	splitter.flush()
@@ -257,7 +283,7 @@ type speakResult struct {
 
 // speak synthesizes each sentence as it arrives and streams it to the device,
 // framing the whole reply in one speak start/stop.
-func (l *deviceLink) speak(ctx context.Context, sentences <-chan string) (r speakResult) {
+func (l *deviceLink) speak(ctx context.Context, sentences <-chan string, onFirstAudio func()) (r speakResult) {
 	defer func() {
 		for range sentences { // unblock the producer after an early return
 		}
@@ -278,6 +304,7 @@ func (l *deviceLink) speak(ctx context.Context, sentences <-chan string) (r spea
 			return r
 		}
 		if r.sentences == 0 {
+			onFirstAudio() // no "thinking" once the reply has started
 			r.firstAudio = time.Now()
 			if r.err = l.send(ctx, deviceMessage{Type: "speak", State: "start"}); r.err != nil {
 				return r
@@ -312,7 +339,7 @@ type sentenceSplitter struct {
 }
 
 const (
-	minSpokenChunk = 40  // bytes (~20 Cyrillic letters): don't synthesize "Да." on its own
+	minSpokenChunk = 40  // bytes (~20 Cyrillic letters): don't synthesize a one-word "Yes." alone
 	maxSpokenChunk = 300 // break very long run-on text at a comma or space
 )
 
